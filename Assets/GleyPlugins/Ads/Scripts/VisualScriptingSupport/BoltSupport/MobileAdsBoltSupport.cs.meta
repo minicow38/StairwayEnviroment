@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: dc07e7c6b1cff8e4183d6326149c3c32
+timeCreated: 1564673791
+licenseType: Store
+MonoImporter:
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 102892
+  packageName: Mobile Ads (GDPR & iOS 14.5 Compliant)
+  packageVersion: 1.10.12
+  assetPath: Assets/GleyPlugins/Ads/Scripts/VisualScriptingSupport/BoltSupport/MobileAdsBoltSupport.cs
+  uploadId: 594571
