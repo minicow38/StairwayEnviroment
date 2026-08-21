@@ -1946,7 +1946,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 70eedbc2f3d37f346a43b7c8f6f8b892, type: 2}
+  - {fileID: 2100000, guid: 84f58807086dc9c4ea94ba16c6ca7054, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -2053,7 +2053,7 @@ TrailRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 0}
+  - {fileID: 2100000, guid: 84f58807086dc9c4ea94ba16c6ca7054, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -2092,13 +2092,13 @@ TrailRenderer:
         inWeight: 0
         outWeight: 0.15963808
       - serializedVersion: 3
-        time: 0.9977417
-        value: 0.12308258
-        inSlope: -0.81468624
-        outSlope: -0.81468624
+        time: 1
+        value: 0.83265233
+        inSlope: -0.79872686
+        outSlope: -0.79872686
         tangentMode: 0
         weightedMode: 0
-        inWeight: 0.08309622
+        inWeight: 0.22017075
         outWeight: 0.33333334
       m_PreInfinity: 2
       m_PostInfinity: 2
@@ -2157,6 +2157,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5129f7960e33af34b9400ec071551a35, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  trail: {fileID: 0}
+  targetBody: {fileID: 0}
+  targetLength: 0.8
+  minTime: 0.03
+  maxTime: 0.2
 --- !u!1001 &772866020
 PrefabInstance:
   m_ObjectHideFlags: 0
