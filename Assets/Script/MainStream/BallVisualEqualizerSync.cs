@@ -647,6 +647,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     private void Start()
     {
+        Debug.Log("######## BallVisualEqualizerSync START ########");
         ResolveReferences();
         InitializeSubjectMotionEstimate();
 
@@ -958,6 +959,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         float sourceEnergyJoule,
         float envelopeEntryHeight)
     {
+        Debug.Log("######## ReleaseToEnvelopeSimulation ENTER ########");
+
         ResolveReferences();
 
         // ------------------------------------------------------------
@@ -1211,8 +1214,19 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"detectCollisions={ballVisualEqualizer.detectCollisions} " +
             $"collisionMode={ballVisualEqualizer.collisionDetectionMode}",
             this);
+        Debug.Log("######## BEFORE ARM ########");
 
+        bool envelopeReady1 =
+            negativeEnvelope.ArmFromBallVisualEnergy(
+                sourceEnergyJoule,
+                envelopeEntryHeight,
+                equalizerLaunchVelocity);
 
+        Debug.Log(
+            "######## AFTER ARM envelopeReady=" +
+            envelopeReady1 +
+            " ########"
+        );
         return true;
     }
 

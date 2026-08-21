@@ -125,7 +125,6 @@ public sealed class SlopeStick3D : MonoBehaviour
         public static SurfaceBasis Create(Vector3 normalInput, Vector3 preferredTangent, Vector3 fallbackTangent)
         {
             SurfaceBasis basis = default;
-
             Vector3 normal = normalInput.sqrMagnitude > 0.000001f ? normalInput.normalized : Vector3.up;
             Vector3 tangent = Vector3.ProjectOnPlane(preferredTangent, normal);
 
@@ -936,6 +935,7 @@ public sealed class SlopeStick3D : MonoBehaviour
     IEnumerator DelayStart()
     {
         yield return new WaitForSeconds(.8f);
+        initialHeading = new Vector3(0, 0, 1);
         Time.timeScale = 0.5f;
 
         GameObject startSlab = GameObject.Find("CollisionStageRoot/__GeneratedPhysics/ArcSlab2_0_Physics");
@@ -1924,6 +1924,11 @@ public sealed class SlopeStick3D : MonoBehaviour
         }
         else
         {
+            if (rb.velocity.y < -25f)
+            {
+                StartCoroutine(DelayStart());
+            }
+            
             consecutiveGroundMissFrames++;
             groundNormal = Vector3.up;
             groundKind = GroundKind.Air;

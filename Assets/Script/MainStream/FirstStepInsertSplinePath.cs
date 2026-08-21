@@ -80,7 +80,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     readonly int[] startPattern =
     {
-        -1, 0, -3, 0, -3, 0, -3, 0, -3, 0, -1, 0, -1, 0, 0, 0, 0
+        -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
 
     static readonly Vector3[] Dirs =
