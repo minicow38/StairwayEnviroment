@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 62c35d98205a0fb4692ad3f222b56997
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 102892
+  packageName: Mobile Ads (GDPR & iOS 14.5 Compliant)
+  packageVersion: 1.10.12
+  assetPath: Assets/GleyPlugins/Common/Editor/ImportRequiredPackages.cs
+  uploadId: 594571

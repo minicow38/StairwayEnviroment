@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 9eefe1e90641ee74697c834c5b29fdd1
+timeCreated: 1538500848
+licenseType: Store
+MonoImporter:
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 102892
+  packageName: Mobile Ads (GDPR & iOS 14.5 Compliant)
+  packageVersion: 1.10.12
+  assetPath: Assets/GleyPlugins/Ads/Scripts/SupportedAdvertisers/CustomAppLovin.cs
+  uploadId: 594571
