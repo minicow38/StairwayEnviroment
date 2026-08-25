@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 2c90052204c5ac74a99509bbfc031793
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 102892
+  packageName: Mobile Ads (GDPR & iOS 14.5 Compliant)
+  packageVersion: 1.10.12
+  assetPath: Assets/GleyPlugins/Ads/Scripts/VisualScriptingSupport/PlayMakerSupport/Actions/ShowInterstitial.cs
+  uploadId: 594571

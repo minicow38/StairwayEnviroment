@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: f5e894fae0bdb364986cc3dcba1548e2
+timeCreated: 1527097004
+licenseType: Store
+MonoImporter:
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 102892
+  packageName: Mobile Ads (GDPR & iOS 14.5 Compliant)
+  packageVersion: 1.10.12
+  assetPath: Assets/GleyPlugins/Ads/Scripts/AdvertiserSettings.cs
+  uploadId: 594571

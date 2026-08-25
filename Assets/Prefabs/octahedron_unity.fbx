@@ -1,0 +1,81 @@
+; FBX 7.4.0 project file
+; Generated from uploaded GLB for Unity
+
+FBXHeaderExtension:  {
+    FBXHeaderVersion: 1003
+    FBXVersion: 7400
+    Creator: "OpenAI"
+}
+
+GlobalSettings:  {
+    Version: 1000
+    Properties70:  {
+        P: "UpAxis", "int", "Integer", "",1
+        P: "UpAxisSign", "int", "Integer", "",1
+        P: "FrontAxis", "int", "Integer", "",2
+        P: "FrontAxisSign", "int", "Integer", "",-1
+        P: "CoordAxis", "int", "Integer", "",0
+        P: "CoordAxisSign", "int", "Integer", "",1
+        P: "UnitScaleFactor", "double", "Number", "",100
+        P: "OriginalUnitScaleFactor", "double", "Number", "",100
+    }
+}
+
+Definitions:  {
+    Version: 100
+    Count: 2
+    ObjectType: "Geometry" {
+        Count: 1
+    }
+    ObjectType: "Model" {
+        Count: 1
+    }
+}
+
+Objects:  {
+    Geometry: 100000, "Geometry::Octahedron", "Mesh" {
+        Vertices: *18 {
+            a: 0.707106769,0,0,-0.707106769,0,0,0,0,0.707106769,0,0,-0.707106769,0,0.707106769,0,0,-0.707106769,0
+        }
+        PolygonVertexIndex: *24 {
+            a: 2,5,-1,4,2,-1,3,5,-2,4,3,-2,4,1,-3,4,0,-4,1,5,-3,0,5,-4
+        }
+        GeometryVersion: 124
+        LayerElementNormal: 0 {
+            Version: 101
+            Name: ""
+            MappingInformationType: "ByPolygonVertex"
+            ReferenceInformationType: "Direct"
+            Normals: *72 {
+                a: 0.577350269,-0.577350269,0.577350269,0.577350269,-0.577350269,0.577350269,0.577350269,-0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,-0.577350269,-0.577350269,-0.577350269,-0.577350269,-0.577350269,-0.577350269,-0.577350269,-0.577350269,-0.577350269,-0.577350269,0.577350269,-0.577350269,-0.577350269,0.577350269,-0.577350269,-0.577350269,0.577350269,-0.577350269,-0.577350269,0.577350269,0.577350269,-0.577350269,0.577350269,0.577350269,-0.577350269,0.577350269,0.577350269,0.577350269,0.577350269,-0.577350269,0.577350269,0.577350269,-0.577350269,0.577350269,0.577350269,-0.577350269,-0.577350269,-0.577350269,0.577350269,-0.577350269,-0.577350269,0.577350269,-0.577350269,-0.577350269,0.577350269,0.577350269,-0.577350269,-0.577350269,0.577350269,-0.577350269,-0.577350269,0.577350269,-0.577350269,-0.577350269
+            }
+        }
+        Layer: 0 {
+            Version: 100
+            LayerElement:  {
+                Type: "LayerElementNormal"
+                TypedIndex: 0
+            }
+        }
+    }
+
+    Model: 100001, "Model::Octahedron", "Mesh" {
+        Version: 232
+        Properties70:  {
+            P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+        }
+        Shading: T
+        Culling: "CullingOff"
+    }
+}
+
+Connections:  {
+    C: "OO",100000,100001
+    C: "OO",100001,0
+}
+
+Takes:  {
+    Current: ""
+}
