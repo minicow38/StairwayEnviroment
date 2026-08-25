@@ -16,6 +16,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         public Transform Physics;
         public Transform Visual;
     }
+    
+    [SerializeField]
+    NearestKnotDetector knotDetector;
 
     public MainGameManager ActiveSlopeReciver;
     [Header("Source")] [SerializeField] Transform stairPlane;
@@ -85,7 +88,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     List<int> startPattern =new List<int>
     {
-        -1, 0, 0, -1, 0, -1, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0
+        -1, 0, 0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0,0,0,0
     };
 
     static readonly Vector3[] Dirs =
@@ -208,6 +211,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         StartCoroutine(DelayPylon());
         accumulatedSpline = lanes[Center];
+        if (knotDetector)
+            knotDetector.RebuildCache();
     }
 
     void EnsureWorkingBuffers()

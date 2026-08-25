@@ -62,11 +62,11 @@ public sealed class CorrespondSubject : MonoBehaviour
     public Vector3 mappedAngularVelocity;
     bool sameBodyErrorLogged;
     bool frameErrorLogged;
-
-   /* public bool IsVisualFrameTurning =>
+    
+    public bool IsVisualFrameTurning =>
         turnTween != null &&
         turnTween.IsActive() &&
-        turnTween.IsPlaying();*/
+        turnTween.IsPlaying();
 
     public Rigidbody InSubjectBody => inSubjectBody;
     public Rigidbody SubjectBody => subjectBody;
@@ -375,6 +375,7 @@ public sealed class CorrespondSubject : MonoBehaviour
 
         Vector3 visualRelative =
             visualStartPosition - pivot;
+    
 
         // StageRootがVisualPlayerRootと別系統の場合の開始姿勢
         bool rotateStageSeparately =
@@ -469,6 +470,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             .SetUpdate(UpdateType.Fixed)
             .OnComplete(() =>
             {
+                //Time.timeScale = 0.125f;
                 PointToPlane++;
                 Apply(1f);
                 turnTween = null;

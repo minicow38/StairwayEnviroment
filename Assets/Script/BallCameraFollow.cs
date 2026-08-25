@@ -5,7 +5,11 @@ public class BallCameraFollow : MonoBehaviour
 {
     [Header("References")]
     [SerializeField] Transform ball;
-
+    
+    bool wasTurning;
+    
+    
+    [SerializeField] CorrespondSubject respondSubject;
     [Header("Camera Follow")]
     [SerializeField] Vector3 offset = new Vector3(8f, 2.64f, 12f);
     [SerializeField] Vector3 fixedEulerAngles =
@@ -90,7 +94,9 @@ public class BallCameraFollow : MonoBehaviour
 
         if (!ball)
             yield break;
-
+        if (!respondSubject)
+            respondSubject = ball.GetComponent<CorrespondSubject>();
+        
         Vector3 normalPosition = ball.position + offset;
 
         transform.position = normalPosition;
@@ -109,7 +115,50 @@ public class BallCameraFollow : MonoBehaviour
 
         Vector3 normalCameraPosition =
             ball.position + offset;
+        bool turning =
+            respondSubject != null &&
+            respondSubject.IsVisualFrameTurning;
 
+        if (turning)
+        {
+            transform.position =
+                normalCameraPosition;
+
+            transform.rotation =
+                Quaternion.Euler(fixedEulerAngles);
+
+            cameraPositionVelocity =
+                Vector3.zero;
+
+            wasTurning = true;
+
+            LogCameraFollow(
+                turning: true,
+                justEnded: false);
+
+            return;
+        }
+
+// 旋回終了直後の最初のLateUpdate
+        if (wasTurning)
+        {
+            transform.position =
+                normalCameraPosition;
+
+            transform.rotation =
+                Quaternion.Euler(fixedEulerAngles);
+
+            cameraPositionVelocity =
+                Vector3.zero;
+
+            wasTurning = false;
+
+            LogCameraFollow(
+                turning: false,
+                justEnded: true);
+
+            return;
+        }
         UpdateOcclusionState(
             focus,
             normalCameraPosition
@@ -151,6 +200,7 @@ public class BallCameraFollow : MonoBehaviour
             desiredRotation,
             rotationFollow
         );
+        
     }
 
     void UpdateOcclusionState(
@@ -323,10 +373,30 @@ public class BallCameraFollow : MonoBehaviour
             Vector3.up
         );
     }
+    
 
     void OnOcclusionEnded()
     {
         if (logOcclusionState)
             Debug.Log("遮蔽終了");
+    }
+    void LogCameraFollow(
+        bool turning,
+        bool justEnded)
+    {
+        Vector3 target =
+            ball.position + offset;
+
+        Vector3 cameraError =
+            transform.position - target;
+
+        Debug.Log(
+            $"[CAMERA FOLLOW] " +
+            $"turning={turning} " +
+            $"justEnded={justEnded} " +
+            $"error={cameraError.magnitude:F4} " +
+            $"camera={transform.position:F4} " +
+            $"target={target:F4}"
+        );
     }
 }

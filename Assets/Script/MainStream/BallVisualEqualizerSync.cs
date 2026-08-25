@@ -2,6 +2,13 @@ using UnityEngine;
 
 public sealed class BallVisualEqualizerSync : MonoBehaviour
 {
+    // Experiment sampling constants.  Keep them internal so precision improves
+    // without expanding the Inspector parameter surface.
+    private const float ExperimentMinimumContactAlignment = 0.95f;
+    private const float ExperimentMinimumTransportRetention = 0.95f;
+    private const float StableNormalZeroCrossVelocityEpsilon = 0.01f;
+    private const float GeometryPeriodMinimumSpeed = 0.05f;
+
     // ================================================================
     // Hybrid state
     // ================================================================
@@ -229,9 +236,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private BallVisualNegativeEnvelopeCollider negativeEnvelope;
 
     // Dedicated Equalizer channel invariant.
-    // Equalizer solves contacts only against the generated LowerGuide and
-    // NegativeEnvelope.  Real stage / InSubject / BallVisual contacts are excluded.
-    // No Inspector tuning parameter is introduced.
+    // UpperはNegativeEnvelope、LowerはScene上の実Stairway Collider。
+    // InSubject / BallVisual / 非Stairway Stageとの衝突は除外する。
+    // LowerGuide Colliderは生成・使用しない。
 
     // ================================================================
     // Impact Map + Energy Contraction
@@ -419,7 +426,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField]
     private float currentCanonicalOscillationEnergy;
 
-    [Header("Periodic Boundary Drive Runtime - Read Only")]
+    [Header("Period Reference Runtime - Read Only")]
+    [Tooltip("常にfalse。T/2 deadline steeringは無効で、Tは観測基準だけに使います。")]
     [SerializeField]
     private bool forcedBoundaryDriveActive;
 
@@ -430,34 +438,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private float forcedBoundaryTimeCost;
 
     [SerializeField]
-    private int forcedBoundaryCycleCount;
-
-    [SerializeField]
     private float forcedBoundaryPeriod;
 
     [SerializeField]
     private float forcedBoundaryHalfPeriod;
 
     [SerializeField]
-    private int forcedBoundaryHalfCycleIndex;
-
-    [SerializeField]
-    private bool forcedBoundaryNextUpper = true;
-
-    [SerializeField]
-    private float forcedBoundaryNextTime;
-
-    [SerializeField]
     private float forcedBoundaryPhaseErrorSeconds;
-
-    [SerializeField]
-    private float forcedBoundaryTimeToBoundary;
-
-    [SerializeField]
-    private float forcedBoundaryDistance;
-
-    [SerializeField]
-    private float forcedBoundaryRequiredTotalNormalAcceleration;
 
     [SerializeField]
     private float forcedBoundaryAppliedPhaseAcceleration;
@@ -477,14 +464,145 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField]
     private float forcedBoundaryPlannedReleasePhaseAcceleration;
 
+    [Header("Period / Phase Observation Runtime - Read Only")]
+    [Tooltip("Tを1.0とした現在位相。Upper=0.00, Zero=0.25, Lower=0.50, Zero=0.75。")]
+    [SerializeField, Range(0f, 1f)]
+    private float oscillationPhase01 = 0.5f;
+
+    [Tooltip("16->8実験の現在サンプル番号n。Releaseをまたいで0..8を保持します。")]
     [SerializeField]
-    private float forcedBoundaryAutomaticAccelerationLimit;
+    private int oscillationCycleIndex;
+
+    [Tooltip("現在ReleaseでCanonical Upper + 実Stairwayの振幅サンプルを確定済みか。")]
+    [SerializeField]
+    private bool experimentSampleCompletedThisRelease;
+
+    [Tooltip("次Release開始時にnを1つ進める予約。Envelope途中でTだけを変更しないため遅延適用します。")]
+    [SerializeField]
+    private bool experimentCycleAdvancePending;
+
+    [Tooltip("8Tサンプルまで取得済み。以後は位相観測だけ継続します。")]
+    [SerializeField]
+    private bool maxGroundSpeedExperimentCompleted;
 
     [SerializeField]
-    private bool lowerBoundaryReflectionArmed;
+    private float oscillationPhaseOriginTime;
 
     [SerializeField]
-    private int forcedBoundaryRephaseCount;
+    private float oscillationPhaseOrigin01 = 0.5f;
+
+    [SerializeField]
+    private bool oscillationPhaseAnchorValid;
+
+    [Tooltip("実境界接触の位相誤差 / T。符号付き。")]
+    [SerializeField]
+    private float normalizedPhaseError01;
+
+    [SerializeField]
+    private float observedUpperPeriod;
+
+    [SerializeField]
+    private float observedLowerPeriod;
+
+    [SerializeField]
+    private float upperPeriodError01;
+
+    [SerializeField]
+    private float lowerPeriodError01;
+
+    [Header("Stable-N Amplitude Runtime - Read Only")]
+    [SerializeField]
+    private bool hasReferenceUpperExtremum;
+
+    [SerializeField]
+    private bool lowerSeenAfterReferenceUpper;
+
+    [SerializeField]
+    private float upperExtremumStableN;
+
+    [SerializeField]
+    private float lowerExtremumStableN;
+
+    [Tooltip("A_n = |xMax - xMin| / 2。Stable-N座標で測定。")]
+    [SerializeField]
+    private float measuredAmplitude;
+
+    [SerializeField]
+    private float previousMeasuredAmplitude;
+
+    [Tooltip("r_n = A_n / A_(n-1)。最初の周期は1。")]
+    [SerializeField]
+    private float amplitudeDecayRatio = 1f;
+
+    [SerializeField]
+    private int amplitudeCycleIndex = -1;
+
+    [Header("Stable-N Zero Crossing Runtime - Read Only")]
+    [Tooltip("FixedUpdate間のStable-N相対速度の符号反転で極値を確定します。衝突座標だけを極値扱いしません。")]
+    [SerializeField]
+    private bool stableNormalSampleValid;
+
+    [SerializeField]
+    private float previousStableNormalCoordinate;
+
+    [SerializeField]
+    private float previousStableNormalVelocity;
+
+    [SerializeField]
+    private float previousStableNormalSampleTime;
+
+    [SerializeField]
+    private bool pendingUpperExtremumValidation;
+
+    [SerializeField]
+    private bool pendingLowerExtremumValidation;
+
+    [SerializeField]
+    private float pendingExtremumImpactTime;
+
+    [SerializeField]
+    private float lastZeroCrossingStableN;
+
+    [SerializeField]
+    private float lastZeroCrossingTime;
+
+    [SerializeField]
+    private string lastZeroCrossingKind = "None";
+
+    [Header("Stair Geometry Period Runtime - Read Only")]
+    [SerializeField]
+    private bool hasPreviousAcceptedStairContact;
+
+    [SerializeField]
+    private Vector3 previousAcceptedStairPoint;
+
+    [SerializeField]
+    private float previousAcceptedStairTangentSpeed;
+
+    [SerializeField]
+    private float observedStairSpatialInterval;
+
+    [SerializeField]
+    private float observedGeometryPeriod;
+
+    [SerializeField]
+    private int observedSpatialPeriodMultiplicity = 1;
+
+    [Tooltip("実験データへ採用したCanonical Stair接触数。物理衝突総数とは別です。")]
+    [SerializeField]
+    private int acceptedExperimentStairContactCount;
+
+    [Header("maxGroundSpeed / Period Experiment Runtime - Read Only")]
+    [Tooltip("SlopeStickCore.maxGroundSpeedをEnvelope経由でREAD ONLY取得したV0。")]
+    [SerializeField]
+    private float sourceMaxGroundSpeedReadOnly;
+
+    [Tooltip("V(n)=V0*(1/2)^(n/8)。Coreには書き戻しません。")]
+    [SerializeField]
+    private float plannedMaxGroundSpeedForCycle;
+
+    [SerializeField]
+    private float plannedMaxGroundSpeedRatio = 1f;
 
     [SerializeField]
     private bool usingBallVisualAsSubjectProxy;
@@ -768,6 +886,21 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     public float AverageGameImpactQuality =>
         averageGameImpactQuality;
 
+    public float OscillationPhase01 =>
+        oscillationPhase01;
+
+    public int OscillationCycleIndex =>
+        oscillationCycleIndex;
+
+    public float MeasuredAmplitude =>
+        measuredAmplitude;
+
+    public float AmplitudeDecayRatio =>
+        amplitudeDecayRatio;
+
+    public float PlannedMaxGroundSpeedForCycle =>
+        plannedMaxGroundSpeedForCycle;
+
 
     // ================================================================
     // Unity
@@ -777,6 +910,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     {
         Debug.Log("######## BallVisualEqualizerSync START ########");
         ResolveReferences();
+        ResetMaxGroundSpeedPeriodExperimentState();
         RefreshVisualCollisionOwnership();
         InitializeSubjectMotionEstimate();
 
@@ -887,10 +1021,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         // may follow Subject; the N scalar remains owned exclusively by damping.
         // ------------------------------------------------------------
 
-        // Once the Release has survived one physics step without a Lower
-        // overlap, arm Lower as a genuine future damping boundary.  If an
-        // initial overlap existed, OnCollisionExit performs the same arm.
-        UpdateLowerBoundaryReflectionArm();
+        // Lower is the real Stairway; no synthetic LowerGuide departure arm exists.
+
+        // Sample the post-previous-physics Stable-N state before applying this
+        // frame's forces.  A boundary impulse appears here as a true sign reversal
+        // between the previous and current relative Stable-N velocity samples.
+        UpdateStableNormalZeroCrossingObservation();
 
         // E0 / H0 defines one Stable-N acceleration for this Release.
         // Gravity is compensated only on N so the total N acceleration is -aN;
@@ -900,6 +1036,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         ApplySubjectTransportConvergence();
         UpdateObserver();
         UpdateDynamicPhaseFromContacts();
+        UpdateOscillationPhaseRuntime();
     }
 
 
@@ -1428,6 +1565,19 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             EqualizerPhase.ReleaseArmed,
             "ReleaseRequested");
 
+        // A completed Upper+Stair sample advances the experiment only at the
+        // NEXT Release.  This guarantees that one generated Envelope uses one
+        // immutable T(n) from build to destruction.
+        ApplyPendingMaxGroundSpeedExperimentAdvance();
+
+        if (negativeEnvelope)
+        {
+            negativeEnvelope.SetMaxGroundSpeedExperimentCycle(
+                oscillationCycleIndex);
+        }
+
+        UpdateMaxGroundSpeedPeriodExperimentRuntime();
+
         // Envelope must exist before the Equalizer becomes Dynamic.
         bool envelopeReady =
             negativeEnvelope.ArmFromBallVisualEnergy(
@@ -1450,9 +1600,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             return false;
         }
 
-        // LowerGuide / UpperEnvelope are now the Equalizer's exclusive physical
-        // channel.  The guide was created by ArmFromBallVisualEnergy(), so refresh
-        // pairwise collision ownership again before switching the body Dynamic.
+        // UpperEnvelope + real Stairway are now the Equalizer's exclusive
+        // physical channel. Refresh pairwise ownership before Dynamic release.
         RefreshVisualCollisionOwnership();
 
         ResetImpactMapState();
@@ -1483,11 +1632,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         upperContactCount =
             0;
 
-        // Release starts on/very near the smooth LowerGuide.  That first
-        // overlap is a departure contact, not a Poincare impact.  Arm the
-        // Lower reflection only after the body has actually exited the guide.
-        lowerBoundaryReflectionArmed =
-            false;
+        // Lower is the real Stairway. The first genuine stair impact is valid.
 
         ballVisualEqualizer.detectCollisions =
             true;
@@ -1531,11 +1676,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             releasePosition,
             canonicalLaunchVelocity);
 
-        // Period T is the master. Geometry resolves S(T)*R + A(t), then
-        // Equalizer measures the ACTUAL Upper/Lower distance with SphereCast
-        // and solves only the Stable-N acceleration needed to hit the next
-        // boundary exactly T/2 after the previous real impact.
-        InitializeForcedBoundaryDrive();
+        // T remains the common geometry/observation clock. Lower timing is supplied
+        // by real Stairway collisions; there is no synthetic LowerGuide or T/2 steering.
+        InitializePeriodReference();
 
         UpdateCanonicalEnergyCoupling();
 
@@ -1557,7 +1700,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"transportLateral={transportLateralVelocity:F4} " +
             $"velocity={canonicalLaunchVelocity:F4} " +
             $"periodicDrive={forcedBoundaryDriveActive} " +
-            //$"halfT={forcedBoundaryHalfPeriod:F4}s",
+            $"T={forcedBoundaryPeriod:F4}s " +
+            $"halfT={forcedBoundaryHalfPeriod:F4}s",
             this);
 
         return true;
@@ -1711,28 +1855,21 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         forcedBoundaryDriveActive = false;
         forcedBoundaryReleaseTime = 0f;
         forcedBoundaryTimeCost = 0f;
-        forcedBoundaryCycleCount = 0;
         forcedBoundaryPeriod = 0f;
         forcedBoundaryHalfPeriod = 0f;
-        forcedBoundaryHalfCycleIndex = 0;
-        forcedBoundaryNextUpper = true;
-        forcedBoundaryNextTime = 0f;
         forcedBoundaryPhaseErrorSeconds = 0f;
-        forcedBoundaryTimeToBoundary = 0f;
-        forcedBoundaryDistance = 0f;
-        forcedBoundaryRequiredTotalNormalAcceleration = 0f;
         forcedBoundaryAppliedPhaseAcceleration = 0f;
         forcedBoundaryGamma = 0f;
         forcedBoundaryRadiusClearanceScale = 0f;
         forcedBoundaryPlannedReleaseSpan = 0f;
         forcedBoundaryPlannedReleaseTargetNormalSpeed = 0f;
         forcedBoundaryPlannedReleasePhaseAcceleration = 0f;
-        forcedBoundaryAutomaticAccelerationLimit = 0f;
-        forcedBoundaryRephaseCount = 0;
+
+        ResetPeriodPhaseObservation();
     }
 
 
-    private void InitializeForcedBoundaryDrive()
+    private void InitializePeriodReference()
     {
         ResetForcedBoundaryDrive();
 
@@ -1755,47 +1892,23 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             return;
         }
 
-        float fixedDt =
-            Mathf.Max(
-                0.0001f,
-                Time.fixedDeltaTime);
-
-        float minimumHalfPeriod =
-            fixedDt *
-            MinimumForcedBoundaryHalfCycleFixedSteps;
-
+        // IMPORTANT: Lower is a real Stairway collision.
+        // Do not solve a deadline acceleration toward Lower/Upper. T is only a
+        // reference clock for envelope geometry, phase error and cycle diagnostics.
         forcedBoundaryDriveActive =
-            halfPeriod >= minimumHalfPeriod;
-
-        if (!forcedBoundaryDriveActive)
-            return;
+            false;
 
         forcedBoundaryReleaseTime =
             Time.fixedTime;
 
-        // Tcost/gamma remain diagnostics for the exponential envelope only.
-        // They no longer terminate or reschedule the periodic boundary drive.
         forcedBoundaryTimeCost =
             timeCost;
-
-        forcedBoundaryCycleCount =
-            0;
 
         forcedBoundaryPeriod =
             period;
 
         forcedBoundaryHalfPeriod =
             halfPeriod;
-
-        forcedBoundaryHalfCycleIndex =
-            0;
-
-        forcedBoundaryNextUpper =
-            true;
-
-        forcedBoundaryNextTime =
-            forcedBoundaryReleaseTime +
-            forcedBoundaryHalfPeriod;
 
         forcedBoundaryGamma =
             gammaPerSecond;
@@ -1811,470 +1924,33 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         forcedBoundaryPlannedReleasePhaseAcceleration =
             releasePhaseAcceleration;
-
-        forcedBoundaryAutomaticAccelerationLimit =
-            2f *
-            Mathf.Max(
-                Mathf.Abs(releasePhaseAcceleration),
-                Mathf.Max(
-                    Mathf.Abs(releaseTargetNormalSpeed) /
-                    Mathf.Max(0.0001f, halfPeriod),
-                    canonicalNormalAcceleration));
-
-        Debug.Log(
-            $"[EQUALIZER PERIODIC DRIVE] " +
-            //$"T={forcedBoundaryPeriod:F4}s " +
-            //$"halfT={forcedBoundaryHalfPeriod:F4}s " +
-            $"clearanceScale={forcedBoundaryRadiusClearanceScale:F4}R " +
-            $"releaseSpan={forcedBoundaryPlannedReleaseSpan:F4}m " +
-            $"targetVN={forcedBoundaryPlannedReleaseTargetNormalSpeed:F4}m/s " +
-            $"phaseA0={forcedBoundaryPlannedReleasePhaseAcceleration:F4}m/s2 " +
-            $"phaseALimit={forcedBoundaryAutomaticAccelerationLimit:F4}m/s2 " +
-            $"Tcost={forcedBoundaryTimeCost:F4}s " +
-            $"gamma={forcedBoundaryGamma:F4}/s " +
-            $"next=Upper",
-            this);
-    }
-
-
-    private void RefreshPeriodicBoundaryPlanIfChanged()
-    {
-        if (!forcedBoundaryDriveActive ||
-            !negativeEnvelope)
-        {
-            return;
-        }
-
-        if (!negativeEnvelope.TryGetPeriodicContactPlan(
-                out float period,
-                out float halfPeriod,
-                out float timeCost,
-                out float gammaPerSecond,
-                out float radiusClearanceScale,
-                out float releaseSpan,
-                out float releaseTargetNormalSpeed,
-                out float releasePhaseAcceleration))
-        {
-            return;
-        }
-
-        bool timingChanged =
-            Mathf.Abs(period - forcedBoundaryPeriod) > 0.00001f ||
-            Mathf.Abs(halfPeriod - forcedBoundaryHalfPeriod) > 0.00001f;
-
-        forcedBoundaryTimeCost =
-            timeCost;
-
-        forcedBoundaryGamma =
-            gammaPerSecond;
-
-        forcedBoundaryRadiusClearanceScale =
-            radiusClearanceScale;
-
-        forcedBoundaryPlannedReleaseSpan =
-            releaseSpan;
-
-        forcedBoundaryPlannedReleaseTargetNormalSpeed =
-            releaseTargetNormalSpeed;
-
-        forcedBoundaryPlannedReleasePhaseAcceleration =
-            releasePhaseAcceleration;
-
-        forcedBoundaryAutomaticAccelerationLimit =
-            2f *
-            Mathf.Max(
-                Mathf.Abs(releasePhaseAcceleration),
-                Mathf.Max(
-                    Mathf.Abs(releaseTargetNormalSpeed) /
-                    Mathf.Max(0.0001f, halfPeriod),
-                    canonicalNormalAcceleration));
-
-        if (!timingChanged)
-            return;
-
-        forcedBoundaryPeriod =
-            period;
-
-        forcedBoundaryHalfPeriod =
-            halfPeriod;
-
-        forcedBoundaryNextTime =
-            Time.fixedTime +
-            forcedBoundaryHalfPeriod;
-
-        forcedBoundaryRephaseCount++;
-
-        Debug.Log(
-            $"[EQUALIZER PERIODIC PLAN UPDATED] " +
-            //$"T={forcedBoundaryPeriod:F4}s " +
-            //$"halfT={forcedBoundaryHalfPeriod:F4}s " +
-            $"heightScale={forcedBoundaryRadiusClearanceScale:F4}R " +
-            $"phaseALimit={forcedBoundaryAutomaticAccelerationLimit:F4}m/s2",
-            this);
-    }
-
-
-    private void ObserveForcedBoundaryImpact(
-        bool upperBoundary)
-    {
-        if (!forcedBoundaryDriveActive)
-            return;
-
-        float now =
-            Time.fixedTime;
-
-        forcedBoundaryPhaseErrorSeconds =
-            now -
-            forcedBoundaryNextTime;
-
-        bool expectedBoundary =
-            upperBoundary ==
-            forcedBoundaryNextUpper;
-
-        if (expectedBoundary)
-        {
-            forcedBoundaryHalfCycleIndex++;
-
-            forcedBoundaryCycleCount =
-                forcedBoundaryHalfCycleIndex / 2;
-
-            forcedBoundaryNextUpper =
-                !forcedBoundaryNextUpper;
-        }
-        else
-        {
-            // Unexpected real boundary: use the real impact as the new phase
-            // origin. The next leg still receives exactly T/2.
-            forcedBoundaryNextUpper =
-                !upperBoundary;
-        }
-
-        // Every leg starts from the ACTUAL boundary impact.  There is no
-        // absolute Release clock, so a late leg can never compress the next one.
-        forcedBoundaryNextTime =
-            now +
-            forcedBoundaryHalfPeriod;
-
-        Debug.Log(
-            $"[EQUALIZER PERIODIC IMPACT] " +
-            $"kind={(upperBoundary ? "Upper" : "Lower")} " +
-            $"expected={expectedBoundary} " +
-            $"phaseError={forcedBoundaryPhaseErrorSeconds:F5}s " +
-            $"halfIndex={forcedBoundaryHalfCycleIndex} " +
-            $"cycles={forcedBoundaryCycleCount} " +
-           // $"T={forcedBoundaryPeriod:F4}s " +
-            $"next={(forcedBoundaryNextUpper ? "Upper" : "Lower")}",
-            this);
-    }
-
-
-    private float ResolveEqualizerWorldRadiusForBoundaryDrive()
-    {
-        if (!ballVisualEqualizerCollider)
-            return 0f;
-
-        Vector3 scale =
-            ballVisualEqualizerCollider.transform.lossyScale;
-
-        float maximumScale =
-            Mathf.Max(
-                Mathf.Abs(scale.x),
-                Mathf.Max(
-                    Mathf.Abs(scale.y),
-                    Mathf.Abs(scale.z)));
-
-        return
-            Mathf.Max(
-                0f,
-                ballVisualEqualizerCollider.radius *
-                maximumScale);
-    }
-
-
-    private bool TryMeasureForcedBoundaryDistance(
-        bool upperBoundary,
-        Vector3 direction,
-        out float distance)
-    {
-        distance = 0f;
-
-        if (!ballVisualEqualizer ||
-            !ballVisualEqualizerCollider ||
-            direction.sqrMagnitude <= ImpactEnergyEpsilon)
-        {
-            return false;
-        }
-
-        direction.Normalize();
-
-        float radius =
-            ResolveEqualizerWorldRadiusForBoundaryDrive();
-
-        Vector3 origin =
-            ballVisualEqualizerCollider.transform.TransformPoint(
-                ballVisualEqualizerCollider.center);
-
-        float maximumDistance =
-            Mathf.Max(
-                2f,
-                canonicalReferenceHeight * 4f +
-                radius * 12f +
-                1f);
-
-        float castRadius =
-            Mathf.Max(
-                0.0001f,
-                radius * 0.985f);
-
-        RaycastHit[] sphereHits =
-            Physics.SphereCastAll(
-                origin,
-                castRadius,
-                direction,
-                maximumDistance,
-                Physics.AllLayers,
-                QueryTriggerInteraction.Ignore);
-
-        float bestDistance =
-            float.PositiveInfinity;
-
-        for (int i = 0;
-             i < sphereHits.Length;
-             i++)
-        {
-            Collider collider =
-                sphereHits[i].collider;
-
-            if (!collider ||
-                collider == ballVisualEqualizerCollider)
-            {
-                continue;
-            }
-
-            bool wanted =
-                upperBoundary
-                    ? IsUpperEnvelopeCollider(collider)
-                    : IsLowerGuideCollider(collider);
-
-            if (!wanted)
-                continue;
-
-            float candidate =
-                Mathf.Max(
-                    0f,
-                    sphereHits[i].distance);
-
-            if (candidate < bestDistance)
-                bestDistance = candidate;
-        }
-
-        if (!float.IsInfinity(bestDistance))
-        {
-            distance = bestDistance;
-            return true;
-        }
-
-        // 開始時オーバーラップでSphereCastが空になる場合のfallback。
-        RaycastHit[] rayHits =
-            Physics.RaycastAll(
-                origin,
-                direction,
-                maximumDistance + radius,
-                Physics.AllLayers,
-                QueryTriggerInteraction.Ignore);
-
-        for (int i = 0;
-             i < rayHits.Length;
-             i++)
-        {
-            Collider collider =
-                rayHits[i].collider;
-
-            if (!collider ||
-                collider == ballVisualEqualizerCollider)
-            {
-                continue;
-            }
-
-            bool wanted =
-                upperBoundary
-                    ? IsUpperEnvelopeCollider(collider)
-                    : IsLowerGuideCollider(collider);
-
-            if (!wanted)
-                continue;
-
-            float candidate =
-                Mathf.Max(
-                    0f,
-                    rayHits[i].distance - radius);
-
-            if (candidate < bestDistance)
-                bestDistance = candidate;
-        }
-
-        if (float.IsInfinity(bestDistance))
-            return false;
-
-        distance = bestDistance;
-        return true;
-    }
-
-
-    private bool TryResolveForcedBoundaryTotalNormalAcceleration(
-        Vector3 normal,
-        out float targetTotalNormalAcceleration)
-    {
-        targetTotalNormalAcceleration =
-            -canonicalNormalAcceleration;
-
-        forcedBoundaryDistance = 0f;
-        forcedBoundaryRequiredTotalNormalAcceleration =
-            targetTotalNormalAcceleration;
-        forcedBoundaryAppliedPhaseAcceleration = 0f;
-
-        if (!forcedBoundaryDriveActive ||
-            !ballVisualEqualizer ||
-            forcedBoundaryHalfPeriod <= 0f)
-        {
-            return false;
-        }
-
-        RefreshPeriodicBoundaryPlanIfChanged();
-
-        float fixedDt =
-            Mathf.Max(
-                0.0001f,
-                Time.fixedDeltaTime);
-
-        // There is no absolute Release deadline.  The drive remains active
-        // for the current Equalizer release and every real impact becomes the
-        // phase origin of the next T/2 leg.
-
-        float directionSign =
-            forcedBoundaryNextUpper
-                ? 1f
-                : -1f;
-
-        Vector3 direction =
-            normal *
-            directionSign;
-
-        if (!TryMeasureForcedBoundaryDistance(
-                forcedBoundaryNextUpper,
-                direction,
-                out float distance))
-        {
-            return false;
-        }
-
-        forcedBoundaryDistance =
-            distance;
-
-        float now =
-            Time.fixedTime;
-
-        float remainingTime =
-            forcedBoundaryNextTime -
-            now;
-
-        // Only a truly missed deadline is rephased.  Positive Tgo is kept so
-        // the requested period T is not silently stretched every FixedUpdate.
-        // No distance/fixedDt velocity replacement exists.
-        if (remainingTime <= 0f)
-        {
-            forcedBoundaryPhaseErrorSeconds =
-                now -
-                forcedBoundaryNextTime;
-
-            forcedBoundaryNextTime =
-                now +
-                forcedBoundaryHalfPeriod;
-
-            remainingTime =
-                forcedBoundaryHalfPeriod;
-
-            forcedBoundaryRephaseCount++;
-
-            Debug.Log(
-                $"[EQUALIZER PERIODIC REPHASE] " +
-                $"next={(forcedBoundaryNextUpper ? "Upper" : "Lower")} " +
-                $"phaseError={forcedBoundaryPhaseErrorSeconds:F5}s " +
-                $"count={forcedBoundaryRephaseCount}",
-                this);
-        }
-
-        forcedBoundaryTimeToBoundary =
-            remainingTime;
-
-        float currentNormalVelocity =
-            Vector3.Dot(
-                ballVisualEqualizer.velocity,
-                normal);
-
-        float currentTowardSpeed =
-            currentNormalVelocity *
-            directionSign;
-
-        float safeRemainingTime =
-            Mathf.Max(
-                fixedDt,
-                remainingTime);
-
-        // 実ColliderまでのStable-N距離 s を指定half-period tau に合わせる。
-        //
-        //     s = v*tau + 1/2*a*tau^2
-        //     a = 2(s - v*tau) / tau^2
-        //
-        // Geometry側も同じTからS(T)を決めているため、通常は大きな
-        // 修正を必要としない。衝突遅延やSolver外乱だけをここで吸収する。
-        float requiredTowardAcceleration =
-            2f *
-            (distance -
-             currentTowardSpeed *
-             safeRemainingTime) /
-            (safeRemainingTime *
-             safeRemainingTime);
-
-        targetTotalNormalAcceleration =
-            requiredTowardAcceleration *
-            directionSign;
-
-        float phaseAcceleration =
-            targetTotalNormalAcceleration -
-            (-canonicalNormalAcceleration);
-
-        // Period planから自動算出した加速度尺度を上限にする。
-        // 以前の2500m/s^2級のdeadline recoveryはここで発生しない。
-        float automaticLimit =
-            Mathf.Max(
-                canonicalNormalAcceleration,
-                forcedBoundaryAutomaticAccelerationLimit);
-
-        if (automaticLimit > 0f &&
-            Mathf.Abs(phaseAcceleration) > automaticLimit)
-        {
-            phaseAcceleration =
-                Mathf.Clamp(
-                    phaseAcceleration,
-                    -automaticLimit,
-                    automaticLimit);
-
-            targetTotalNormalAcceleration =
-                -canonicalNormalAcceleration +
-                phaseAcceleration;
-        }
-
-        forcedBoundaryRequiredTotalNormalAcceleration =
-            targetTotalNormalAcceleration;
 
         forcedBoundaryAppliedPhaseAcceleration =
-            phaseAcceleration;
+            0f;
 
-        return true;
+        forcedBoundaryPhaseErrorSeconds =
+            0f;
+
+        oscillationPhaseAnchorValid =
+            false;
+
+        UpdateMaxGroundSpeedPeriodExperimentRuntime();
+
+        Debug.Log(
+            $"[EQUALIZER PERIOD REFERENCE] " +
+            $"T={forcedBoundaryPeriod:F4}s " +
+            $"halfT={forcedBoundaryHalfPeriod:F4}s " +
+            $"lower=RealStairway " +
+            $"phaseDrive=false " +
+            $"Tcost={forcedBoundaryTimeCost:F4}s " +
+            $"gamma={forcedBoundaryGamma:F4}/s",
+            this);
     }
 
 
+
+    // T is an observation/geometry reference only. The old T/2 deadline
+    // steering methods were removed so real Stairway geometry owns lower impact timing.
     private void ResetReleaseFeasibility()
     {
         releaseFeasibility =
@@ -2377,6 +2053,26 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                             observed,
                             0.35f)
                         : observed;
+
+                float period =
+                    Mathf.Max(
+                        0.0001f,
+                        forcedBoundaryPeriod);
+
+                float error01 =
+                    (observed - period) /
+                    period;
+
+                if (envelopeContact)
+                {
+                    observedUpperPeriod = observed;
+                    upperPeriodError01 = error01;
+                }
+                else
+                {
+                    observedLowerPeriod = observed;
+                    lowerPeriodError01 = error01;
+                }
             }
         }
 
@@ -2384,6 +2080,850 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             lastUpperImpactTime = now;
         else
             lastLowerImpactTime = now;
+    }
+
+
+    private void ResetPeriodPhaseObservation()
+    {
+        // Release-local phase/extremum state only.
+        // The 0T..8T experiment ledger intentionally survives Rejoin,
+        // ResetForcedBoundaryDrive() and the next Envelope generation.
+        oscillationPhase01 = 0.5f;
+        oscillationPhaseOriginTime = 0f;
+        oscillationPhaseOrigin01 = 0.5f;
+        oscillationPhaseAnchorValid = false;
+        normalizedPhaseError01 = 0f;
+
+        observedUpperPeriod = 0f;
+        observedLowerPeriod = 0f;
+        upperPeriodError01 = 0f;
+        lowerPeriodError01 = 0f;
+
+        hasReferenceUpperExtremum = false;
+        lowerSeenAfterReferenceUpper = false;
+        upperExtremumStableN = 0f;
+        lowerExtremumStableN = 0f;
+
+        stableNormalSampleValid = false;
+        previousStableNormalCoordinate = 0f;
+        previousStableNormalVelocity = 0f;
+        previousStableNormalSampleTime = 0f;
+        pendingUpperExtremumValidation = false;
+        pendingLowerExtremumValidation = false;
+        pendingExtremumImpactTime = 0f;
+
+        experimentSampleCompletedThisRelease = false;
+    }
+
+
+    private void ResetMaxGroundSpeedPeriodExperimentState()
+    {
+        oscillationCycleIndex = 0;
+        experimentSampleCompletedThisRelease = false;
+        experimentCycleAdvancePending = false;
+        maxGroundSpeedExperimentCompleted = false;
+
+        measuredAmplitude = 0f;
+        previousMeasuredAmplitude = 0f;
+        amplitudeDecayRatio = 1f;
+        amplitudeCycleIndex = -1;
+
+        sourceMaxGroundSpeedReadOnly = 0f;
+        plannedMaxGroundSpeedForCycle = 0f;
+        plannedMaxGroundSpeedRatio = 1f;
+
+        hasPreviousAcceptedStairContact = false;
+        previousAcceptedStairPoint = Vector3.zero;
+        previousAcceptedStairTangentSpeed = 0f;
+        observedStairSpatialInterval = 0f;
+        observedGeometryPeriod = 0f;
+        observedSpatialPeriodMultiplicity = 1;
+        acceptedExperimentStairContactCount = 0;
+        lastZeroCrossingStableN = 0f;
+        lastZeroCrossingTime = 0f;
+        lastZeroCrossingKind = "None";
+
+        if (negativeEnvelope)
+        {
+            negativeEnvelope.ResetMaxGroundSpeedExperiment();
+        }
+
+        UpdateMaxGroundSpeedPeriodExperimentRuntime();
+    }
+
+
+    private void ApplyPendingMaxGroundSpeedExperimentAdvance()
+    {
+        if (!experimentCycleAdvancePending ||
+            maxGroundSpeedExperimentCompleted)
+        {
+            return;
+        }
+
+        int maxCycle =
+            negativeEnvelope
+                ? negativeEnvelope.MaxGroundSpeedDecayCycleCount
+                : 8;
+
+        oscillationCycleIndex =
+            Mathf.Clamp(
+                oscillationCycleIndex + 1,
+                0,
+                maxCycle);
+
+        experimentCycleAdvancePending = false;
+
+        if (negativeEnvelope)
+        {
+            negativeEnvelope.SetMaxGroundSpeedExperimentCycle(
+                oscillationCycleIndex);
+        }
+
+        UpdateMaxGroundSpeedPeriodExperimentRuntime();
+
+        Debug.Log(
+            $"[EQUALIZER EXPERIMENT ADVANCE] " +
+            $"cycle={oscillationCycleIndex} " +
+            $"maxGround0={sourceMaxGroundSpeedReadOnly:F3}m/s " +
+            $"planned={plannedMaxGroundSpeedForCycle:F3}m/s",
+            this);
+    }
+
+
+    private void UpdateOscillationPhaseRuntime()
+    {
+        if (!oscillationPhaseAnchorValid ||
+            forcedBoundaryPeriod <= 0.0001f)
+        {
+            return;
+        }
+
+        float elapsed =
+            Time.fixedTime -
+            oscillationPhaseOriginTime;
+
+        oscillationPhase01 =
+            Mathf.Repeat(
+                oscillationPhaseOrigin01 +
+                elapsed /
+                forcedBoundaryPeriod,
+                1f);
+
+        normalizedPhaseError01 =
+            forcedBoundaryPhaseErrorSeconds /
+            forcedBoundaryPeriod;
+    }
+
+
+    private bool TryMeasureStableNormalCoordinate(
+        out float coordinate)
+    {
+        coordinate = 0f;
+
+        if (!ballVisualEqualizer ||
+            !oscillationFrame.valid)
+        {
+            return false;
+        }
+
+        Vector3 normal =
+            oscillationFrame.normal;
+
+        if (normal.sqrMagnitude <=
+            ImpactEnergyEpsilon)
+        {
+            return false;
+        }
+
+        normal.Normalize();
+
+        // Moving carrier C(t):
+        // release Equalizer position + Subject travel since release.
+        // This removes T/L transport and leaves only the Stable-N oscillation.
+        Vector3 subjectTravel =
+            ReadSubjectPositionVisual() -
+            releaseFrame.subjectPosition;
+
+        Vector3 carrierPosition =
+            releaseFrame.position +
+            subjectTravel;
+
+        coordinate =
+            Vector3.Dot(
+                ballVisualEqualizer.position -
+                carrierPosition,
+                normal);
+
+        return true;
+    }
+
+
+    private void UpdateMaxGroundSpeedPeriodExperimentRuntime()
+    {
+        if (!negativeEnvelope)
+            return;
+
+        if (!negativeEnvelope.TryEvaluateMaxGroundSpeedDecayExperiment(
+                oscillationCycleIndex,
+                out float sourceSpeed,
+                out float plannedSpeed,
+                out _))
+        {
+            sourceMaxGroundSpeedReadOnly = 0f;
+            plannedMaxGroundSpeedForCycle = 0f;
+            plannedMaxGroundSpeedRatio = 0f;
+            return;
+        }
+
+        sourceMaxGroundSpeedReadOnly =
+            sourceSpeed;
+
+        plannedMaxGroundSpeedForCycle =
+            plannedSpeed;
+
+        plannedMaxGroundSpeedRatio =
+            sourceSpeed > 0.000001f
+                ? plannedSpeed / sourceSpeed
+                : 0f;
+    }
+
+
+    private void ObservePeriodPhaseExtremum(
+        bool upperBoundary,
+        bool acceptedForExperiment)
+    {
+        if (forcedBoundaryPeriod <= 0.0001f)
+        {
+            return;
+        }
+
+        float now =
+            Time.fixedTime;
+
+        float targetPhase01 =
+            upperBoundary
+                ? 0f
+                : 0.5f;
+
+        // Phase is observation-only.  Every canonical impact may re-anchor the
+        // phase clock, while the experiment ledger below only arms on clean,
+        // high-alignment contacts.
+        if (oscillationPhaseAnchorValid)
+        {
+            float elapsed =
+                now - oscillationPhaseOriginTime;
+
+            float predictedPhase01 =
+                Mathf.Repeat(
+                    oscillationPhaseOrigin01 +
+                    elapsed / forcedBoundaryPeriod,
+                    1f);
+
+            normalizedPhaseError01 =
+                Mathf.DeltaAngle(
+                    targetPhase01 * 360f,
+                    predictedPhase01 * 360f) /
+                360f;
+
+            forcedBoundaryPhaseErrorSeconds =
+                normalizedPhaseError01 *
+                forcedBoundaryPeriod;
+        }
+        else
+        {
+            normalizedPhaseError01 = 0f;
+            forcedBoundaryPhaseErrorSeconds = 0f;
+        }
+
+        oscillationPhaseOriginTime =
+            now;
+
+        oscillationPhaseOrigin01 =
+            targetPhase01;
+
+        oscillationPhase01 =
+            targetPhase01;
+
+        oscillationPhaseAnchorValid =
+            true;
+
+        if (!TryMeasureStableNormalCoordinate(
+                out float stableN))
+        {
+            return;
+        }
+
+        // A clean canonical impact is accepted as the primary extremum by
+        // TryAcceptCanonicalImpactExtremum().  These pending flags only keep a
+        // short zero-crossing fallback/diagnostic window; they are not required
+        // for the canonical impact path to commit an experiment sample.
+        if (acceptedForExperiment &&
+            !maxGroundSpeedExperimentCompleted &&
+            !experimentSampleCompletedThisRelease)
+        {
+            if (upperBoundary)
+            {
+                pendingUpperExtremumValidation = true;
+                pendingLowerExtremumValidation = false;
+                pendingExtremumImpactTime = now;
+            }
+            else if (hasReferenceUpperExtremum)
+            {
+                pendingLowerExtremumValidation = true;
+                pendingUpperExtremumValidation = false;
+                pendingExtremumImpactTime = now;
+            }
+        }
+
+        Debug.Log(
+            $"[EQUALIZER PHASE SAMPLE] " +
+            $"boundary={(upperBoundary ? "Upper" : "Lower")} " +
+            $"accepted={acceptedForExperiment} " +
+            $"cycle={oscillationCycleIndex} " +
+            $"phase={oscillationPhase01:F4} " +
+            $"phaseError01={normalizedPhaseError01:F5} " +
+            $"T={forcedBoundaryPeriod:F5}s " +
+            $"xN={stableN:F5}m " +
+            $"A={measuredAmplitude:F5}m " +
+            $"rA={amplitudeDecayRatio:F5} " +
+            $"maxGround0={sourceMaxGroundSpeedReadOnly:F3}m/s " +
+            $"planned={plannedMaxGroundSpeedForCycle:F3}m/s " +
+            $"sampleDone={experimentSampleCompletedThisRelease} " +
+            $"nextPending={experimentCycleAdvancePending}",
+            this);
+    }
+
+
+    private bool TryMeasureStableNormalRelativeVelocity(
+        out float velocityN)
+    {
+        velocityN = 0f;
+
+        if (!ballVisualEqualizer ||
+            !oscillationFrame.valid)
+        {
+            return false;
+        }
+
+        Vector3 normal =
+            oscillationFrame.normal;
+
+        if (normal.sqrMagnitude <=
+            ImpactEnergyEpsilon)
+        {
+            return false;
+        }
+
+        normal.Normalize();
+
+        Vector3 relativeVelocity =
+            ballVisualEqualizer.velocity -
+            ReadSubjectVelocityVisual();
+
+        velocityN =
+            Vector3.Dot(
+                relativeVelocity,
+                normal);
+
+        return !float.IsNaN(velocityN) &&
+               !float.IsInfinity(velocityN);
+    }
+
+
+    private void TryAcceptCanonicalImpactExtremum(
+        in ContactFrame frame,
+        Vector3 mappedOutgoingVelocity,
+        bool upperBoundary,
+        bool acceptedForExperiment)
+    {
+        if (!acceptedForExperiment ||
+            maxGroundSpeedExperimentCompleted ||
+            experimentSampleCompletedThisRelease ||
+            !oscillationFrame.valid)
+        {
+            return;
+        }
+
+        Vector3 normal =
+            oscillationFrame.normal;
+
+        if (normal.sqrMagnitude <=
+            ImpactEnergyEpsilon)
+        {
+            return;
+        }
+
+        normal.Normalize();
+
+        Vector3 subjectVelocity =
+            ReadSubjectVelocityVisual();
+
+        float incomingVN =
+            Vector3.Dot(
+                frame.incidentVelocity -
+                subjectVelocity,
+                normal);
+
+        float outgoingVN =
+            Vector3.Dot(
+                mappedOutgoingVelocity -
+                subjectVelocity,
+                normal);
+
+        bool upperReversal =
+            incomingVN >
+                StableNormalZeroCrossVelocityEpsilon &&
+            outgoingVN <
+                -StableNormalZeroCrossVelocityEpsilon;
+
+        bool lowerReversal =
+            incomingVN <
+                -StableNormalZeroCrossVelocityEpsilon &&
+            outgoingVN >
+                StableNormalZeroCrossVelocityEpsilon;
+
+        bool reversalConfirmed =
+            upperBoundary
+                ? upperReversal
+                : lowerReversal;
+
+        if (!TryMeasureStableNormalCoordinate(
+                out float stableN))
+        {
+            return;
+        }
+
+        float now =
+            Time.fixedTime;
+
+        // The canonical, clean, high-alignment impact is the primary extremum
+        // observation.  Contact quality has already been validated by the
+        // caller, so velocity sign reversal is diagnostic rather than a hard
+        // gate.  This avoids dropping valid Upper extrema when the solver/map
+        // exposes the post-impact velocity in a basis that does not cross the
+        // numerical epsilon inside this callback.
+        lastZeroCrossingStableN =
+            stableN;
+
+        lastZeroCrossingTime =
+            now;
+
+        lastZeroCrossingKind =
+            upperBoundary
+                ? "UpperCanonicalImpact"
+                : "LowerCanonicalImpact";
+
+        Debug.Log(
+            $"[EQUALIZER CANONICAL IMPACT EXTREMUM] " +
+            $"kind={(upperBoundary ? "Upper" : "Lower")} " +
+            $"cycle={oscillationCycleIndex} " +
+            $"vNin={incomingVN:F5}m/s " +
+            $"vNout={outgoingVN:F5}m/s " +
+            $"reversalConfirmed={reversalConfirmed} " +
+            $"xN={stableN:F5}m",
+            this);
+
+        if (reversalConfirmed)
+        {
+            Debug.Log(
+                $"[EQUALIZER STABLE-N REVERSAL] " +
+                $"kind={(upperBoundary ? "Upper" : "Lower")} " +
+                $"cycle={oscillationCycleIndex} " +
+                $"vNin={incomingVN:F5}m/s " +
+                $"vNout={outgoingVN:F5}m/s " +
+                $"xN={stableN:F5}m",
+                this);
+        }
+
+        AcceptStableNormalExtremum(
+            upperBoundary,
+            stableN,
+            now,
+            reversalConfirmed
+                ? "CanonicalImpact+VelocityReversal"
+                : "CanonicalImpact");
+    }
+
+
+    private void UpdateStableNormalZeroCrossingObservation()
+    {
+        if (!TryMeasureStableNormalCoordinate(
+                out float coordinate) ||
+            !TryMeasureStableNormalRelativeVelocity(
+                out float velocityN))
+        {
+            stableNormalSampleValid = false;
+            return;
+        }
+
+        float now =
+            Time.fixedTime;
+
+        if (stableNormalSampleValid)
+        {
+            bool upperCross =
+                previousStableNormalVelocity >
+                    StableNormalZeroCrossVelocityEpsilon &&
+                velocityN <
+                    -StableNormalZeroCrossVelocityEpsilon;
+
+            bool lowerCross =
+                previousStableNormalVelocity <
+                    -StableNormalZeroCrossVelocityEpsilon &&
+                velocityN >
+                    StableNormalZeroCrossVelocityEpsilon;
+
+            if (upperCross || lowerCross)
+            {
+                float denominator =
+                    previousStableNormalVelocity -
+                    velocityN;
+
+                float interpolation01 =
+                    Mathf.Abs(denominator) > 0.000001f
+                        ? Mathf.Clamp01(
+                            previousStableNormalVelocity /
+                            denominator)
+                        : 0.5f;
+
+                float zeroCrossingCoordinate =
+                    Mathf.Lerp(
+                        previousStableNormalCoordinate,
+                        coordinate,
+                        interpolation01);
+
+                float zeroCrossingTime =
+                    Mathf.Lerp(
+                        previousStableNormalSampleTime,
+                        now,
+                        interpolation01);
+
+                lastZeroCrossingStableN =
+                    zeroCrossingCoordinate;
+
+                lastZeroCrossingTime =
+                    zeroCrossingTime;
+
+                lastZeroCrossingKind =
+                    upperCross
+                        ? "Upper"
+                        : "Lower";
+
+                Debug.Log(
+                    $"[EQUALIZER ZERO CROSS OBSERVATION] " +
+                    $"kind={(upperCross ? "Upper" : "Lower")} " +
+                    $"cycle={oscillationCycleIndex} " +
+                    $"time={zeroCrossingTime:F5}s " +
+                    $"xN={zeroCrossingCoordinate:F5}m",
+                    this);
+
+                float validationWindow =
+                    Mathf.Max(
+                        0.0001f,
+                        Time.fixedDeltaTime * 2.5f);
+
+                bool impactStillRecent =
+                    now - pendingExtremumImpactTime <=
+                    validationWindow;
+
+                if (upperCross &&
+                    pendingUpperExtremumValidation &&
+                    impactStillRecent)
+                {
+                    AcceptStableNormalExtremum(
+                        true,
+                        zeroCrossingCoordinate,
+                        zeroCrossingTime,
+                        "StableNZeroCross");
+                }
+                else if (lowerCross &&
+                         pendingLowerExtremumValidation &&
+                         impactStillRecent)
+                {
+                    AcceptStableNormalExtremum(
+                        false,
+                        zeroCrossingCoordinate,
+                        zeroCrossingTime,
+                        "StableNZeroCross");
+                }
+            }
+        }
+
+        // Stale pending impact must never validate a later unrelated extremum.
+        float pendingAge =
+            now - pendingExtremumImpactTime;
+
+        float pendingLifetime =
+            Mathf.Max(
+                0.0001f,
+                Time.fixedDeltaTime * 3f);
+
+        if (pendingUpperExtremumValidation &&
+            pendingAge > pendingLifetime)
+        {
+            pendingUpperExtremumValidation = false;
+        }
+
+        if (pendingLowerExtremumValidation &&
+            pendingAge > pendingLifetime)
+        {
+            pendingLowerExtremumValidation = false;
+        }
+
+        previousStableNormalCoordinate =
+            coordinate;
+
+        previousStableNormalVelocity =
+            velocityN;
+
+        previousStableNormalSampleTime =
+            now;
+
+        stableNormalSampleValid =
+            true;
+    }
+
+
+    private void AcceptStableNormalExtremum(
+        bool upperExtremum,
+        float stableN,
+        float extremumTime,
+        string source)
+    {
+        if (maxGroundSpeedExperimentCompleted ||
+            experimentSampleCompletedThisRelease)
+        {
+            pendingUpperExtremumValidation = false;
+            pendingLowerExtremumValidation = false;
+            return;
+        }
+
+        if (upperExtremum)
+        {
+            upperExtremumStableN =
+                stableN;
+
+            hasReferenceUpperExtremum =
+                true;
+
+            lowerSeenAfterReferenceUpper =
+                false;
+
+            pendingUpperExtremumValidation =
+                false;
+
+            Debug.Log(
+                $"[EQUALIZER EXTREMUM ACCEPTED] " +
+                $"source={source} " +
+                $"kind=Upper cycle={oscillationCycleIndex} " +
+                $"time={extremumTime:F5}s " +
+                $"xN={stableN:F5}m",
+                this);
+
+            return;
+        }
+
+        if (!hasReferenceUpperExtremum)
+        {
+            pendingLowerExtremumValidation =
+                false;
+            return;
+        }
+
+        lowerExtremumStableN =
+            stableN;
+
+        lowerSeenAfterReferenceUpper =
+            true;
+
+        pendingLowerExtremumValidation =
+            false;
+
+        float amplitude =
+            0.5f *
+            Mathf.Abs(
+                upperExtremumStableN -
+                lowerExtremumStableN);
+
+        if (amplitude <=
+            ImpactEnergyEpsilon)
+        {
+            return;
+        }
+
+        amplitudeDecayRatio =
+            previousMeasuredAmplitude >
+            ImpactEnergyEpsilon
+                ? amplitude /
+                  previousMeasuredAmplitude
+                : 1f;
+
+        measuredAmplitude =
+            amplitude;
+
+        previousMeasuredAmplitude =
+            amplitude;
+
+        amplitudeCycleIndex =
+            oscillationCycleIndex;
+
+        experimentSampleCompletedThisRelease =
+            true;
+
+        int maxCycle =
+            negativeEnvelope
+                ? negativeEnvelope.MaxGroundSpeedDecayCycleCount
+                : 8;
+
+        if (oscillationCycleIndex >= maxCycle)
+        {
+            maxGroundSpeedExperimentCompleted =
+                true;
+
+            experimentCycleAdvancePending =
+                false;
+        }
+        else
+        {
+            experimentCycleAdvancePending =
+                true;
+        }
+
+        Debug.Log(
+            $"[EQUALIZER EXPERIMENT SAMPLE] " +
+            $"source={source} " +
+            $"cycle={oscillationCycleIndex} " +
+            $"T={forcedBoundaryPeriod:F5}s " +
+            $"maxGround0={sourceMaxGroundSpeedReadOnly:F3}m/s " +
+            $"planned={plannedMaxGroundSpeedForCycle:F3}m/s " +
+            $"upperN={upperExtremumStableN:F5}m " +
+            $"lowerN={lowerExtremumStableN:F5}m " +
+            $"A={measuredAmplitude:F5}m " +
+            $"rA={amplitudeDecayRatio:F5} " +
+            $"nextPending={experimentCycleAdvancePending} " +
+            $"complete={maxGroundSpeedExperimentCompleted}",
+            this);
+    }
+
+
+    private void ObserveAcceptedStairGeometryPeriod(
+        Vector3 contactPoint,
+        float actualTangentSpeed)
+    {
+        if (!negativeEnvelope ||
+            !oscillationFrame.valid ||
+            actualTangentSpeed < GeometryPeriodMinimumSpeed)
+        {
+            return;
+        }
+
+        Vector3 tangent =
+            oscillationFrame.tangent;
+
+        if (tangent.sqrMagnitude <=
+            ImpactEnergyEpsilon)
+        {
+            return;
+        }
+
+        tangent.Normalize();
+
+        if (hasPreviousAcceptedStairContact)
+        {
+            float currentSpeed =
+                Mathf.Max(
+                    GeometryPeriodMinimumSpeed,
+                    actualTangentSpeed);
+
+            float previousSpeed =
+                Mathf.Max(
+                    GeometryPeriodMinimumSpeed,
+                    previousAcceptedStairTangentSpeed);
+
+            float meanSpeed =
+                0.5f *
+                (currentSpeed + previousSpeed);
+
+            float projectedDistance =
+                Mathf.Abs(
+                    Vector3.Dot(
+                        contactPoint -
+                        previousAcceptedStairPoint,
+                        tangent));
+
+            float nominalT =
+                Mathf.Max(
+                    0.0001f,
+                    negativeEnvelope.NominalExperimentPeriodSeconds > 0.0001f
+                        ? negativeEnvelope.NominalExperimentPeriodSeconds
+                        : forcedBoundaryPeriod);
+
+            float nominalSpatialInterval =
+                Mathf.Max(
+                    0.0001f,
+                    nominalT * meanSpeed);
+
+            // If one or more clean Stair contacts were skipped, reduce the
+            // measured distance to its most likely fundamental interval.
+            int multiplicity =
+                Mathf.Max(
+                    1,
+                    Mathf.RoundToInt(
+                        projectedDistance /
+                        nominalSpatialInterval));
+
+            float fundamentalDistance =
+                projectedDistance /
+                multiplicity;
+
+            float spacingRatio =
+                fundamentalDistance /
+                nominalSpatialInterval;
+
+            if (projectedDistance > 0.0001f &&
+                spacingRatio >= 0.5f &&
+                spacingRatio <= 1.5f)
+            {
+                observedStairSpatialInterval =
+                    fundamentalDistance;
+
+                observedSpatialPeriodMultiplicity =
+                    multiplicity;
+
+                observedGeometryPeriod =
+                    fundamentalDistance /
+                    meanSpeed;
+
+                negativeEnvelope.SubmitObservedGeometryPeriod(
+                    observedGeometryPeriod);
+
+                Debug.Log(
+                    $"[EQUALIZER STAIR PERIOD OBSERVATION] " +
+                    $"cycle={oscillationCycleIndex} " +
+                    $"deltaSraw={projectedDistance:F5}m " +
+                    $"multiple={multiplicity} " +
+                    $"deltaS={fundamentalDistance:F5}m " +
+                    $"actualVT={meanSpeed:F5}m/s " +
+                    $"Tgeom={observedGeometryPeriod:F5}s " +
+                    $"Tnom={nominalT:F5}s " +
+                    $"correction={negativeEnvelope.ObservedGeometryPeriodCorrectionRatio:F5} " +
+                    $"apply=NextRelease",
+                    this);
+            }
+        }
+
+        previousAcceptedStairPoint =
+            contactPoint;
+
+        previousAcceptedStairTangentSpeed =
+            Mathf.Max(
+                GeometryPeriodMinimumSpeed,
+                actualTangentSpeed);
+
+        hasPreviousAcceptedStairContact =
+            true;
+
+        acceptedExperimentStairContactCount++;
     }
 
 
@@ -2588,42 +3128,10 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
-    private void UpdateLowerBoundaryReflectionArm()
-    {
-        if (synchronized ||
-            lowerBoundaryReflectionArmed ||
-            lowerContactCount > 0)
-        {
-            return;
-        }
-
-        float fixedDt =
-            Mathf.Max(
-                0.0001f,
-                Time.fixedDeltaTime);
-
-        // Release occurs during FixedUpdate and contact callbacks are delivered
-        // by the following physics solve.  Waiting one FixedUpdate therefore
-        // distinguishes "no initial Lower overlap" from a departure overlap.
-        if (phaseElapsed <
-            fixedDt * 0.75f)
-        {
-            return;
-        }
-
-        lowerBoundaryReflectionArmed =
-            true;
-
-        Debug.Log(
-            "[EQUALIZER LOWER ARMED] No departure overlap remained after Release; future Lower contacts are real damping impacts.",
-            this);
-    }
-
 
     private void ApplyCanonicalNormalAcceleration()
     {
         bool realLowerImpactContact =
-            lowerBoundaryReflectionArmed &&
             lowerContactCount > 0;
 
         if (synchronized ||
@@ -2664,9 +3172,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         float targetTotalNormalAcceleration =
             -canonicalNormalAcceleration;
 
-        TryResolveForcedBoundaryTotalNormalAcceleration(
-            normal,
-            out targetTotalNormalAcceleration);
+        // No T/2 deadline steering: Stairway impact timing comes from real geometry.
+        // Canonical Stable-N acceleration remains the only continuous N drive.
 
         float correctionAlongNormal =
             targetTotalNormalAcceleration -
@@ -2696,6 +3203,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         if (negativeEnvelope)
         {
+            // Scalar ledger only; active Upper geometry is not rebuilt mid-Release.
             negativeEnvelope.SetCanonicalEnergyRatio(
                 currentCanonicalEnergyRatio);
         }
@@ -4169,26 +4677,10 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private bool IsStairLikeCollision(
         Collision collision)
     {
-        if (!collision.collider)
-            return false;
-
-        Transform current =
-            collision.collider.transform;
-
-        // Development diagnostic only.
-        // It never selects another Equalizer physics model.
-        for (int depth = 0;
-             current && depth < 5;
-             depth++)
-        {
-            if (current.name.Contains("Stair"))
-                return true;
-
-            current =
-                current.parent;
-        }
-
-        return false;
+        return
+            collision != null &&
+            IsStairwayCollider(
+                collision.collider);
     }
 
 
@@ -4524,13 +5016,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         else
             lowerImpactCount++;
 
-        // 周期位相を進めるのはStable-N正面のCanonical impactだけ。
-        // Edge/裏面/Release直後Lower overlapでは次のT/2を消費しない。
-        if (canonicalApplied)
-        {
-            ObserveForcedBoundaryImpact(
-                frame.envelopeContact);
-        }
+        // T is observation-only. Real Upper/Stairway impacts anchor phase below;
+        // no T/2 deadline is consumed and no boundary steering is applied.
 
         if (canonicalApplied)
         {
@@ -4538,6 +5025,33 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
             UpdateObservedCyclePeriod(
                 frame.envelopeContact);
+
+            bool acceptedForExperiment =
+                frame.canonicalContact &&
+                physicsClean &&
+                !severeTransportLoss &&
+                transportRetention >=
+                    ExperimentMinimumTransportRetention &&
+                frame.contactOscillationAlignment >=
+                    ExperimentMinimumContactAlignment;
+
+            ObservePeriodPhaseExtremum(
+                frame.envelopeContact,
+                acceptedForExperiment);
+
+            TryAcceptCanonicalImpactExtremum(
+                frame,
+                mappedOutgoingVelocity,
+                frame.envelopeContact,
+                acceptedForExperiment);
+
+            if (!frame.envelopeContact &&
+                acceptedForExperiment)
+            {
+                ObserveAcceptedStairGeometryPeriod(
+                    frame.point,
+                    preTransportSpeed);
+            }
 
             // Feasibility follows the actually applied canonical energy only.
             currentCanonicalOscillationEnergy =
@@ -4824,7 +5338,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         Debug.Log(
             $"[EQUALIZER IMPACT MAP] " +
             $"index={impactCount} " +
-            $"kind={(frame.envelopeContact ? "UpperEnvelope" : "LowerBoundary")} " +
+            $"kind={(frame.envelopeContact ? "UpperEnvelope" : "Stairway")} " +
             $"basis={(useOscillationMap ? "StableOscillation" : "ContactNormalFallback")} " +
             $"stairLike={frame.stairLikeContact} " +
             $"canonical={canonicalApplied} " +
@@ -5028,9 +5542,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 IsEqualizerDampingBoundaryCollider(other);
 
             // Dedicated channel invariant:
-            // Equalizer collides only with LowerGuide + UpperEnvelope.
-            // BallVisual / real StairWay / Render / Physics stages never solve
-            // impulses on the Equalizer.
+            //   Upper = generated NegativeEnvelope
+            //   Lower = real Stairway Collider
+            // Everything else remains isolated from the Equalizer.
             Physics.IgnoreCollision(
                 ballVisualEqualizerCollider,
                 other,
@@ -5048,9 +5562,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         Collider other)
     {
         return
-            other &&
-            negativeEnvelope &&
-            negativeEnvelope.IsEqualizerBoundaryCollider(other);
+            IsUpperEnvelopeCollider(other) ||
+            IsStairwayCollider(other);
     }
 
 
@@ -5064,13 +5577,29 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
-    private bool IsLowerGuideCollider(
+    private bool IsStairwayCollider(
         Collider other)
     {
-        return
-            other &&
-            negativeEnvelope &&
-            negativeEnvelope.IsLowerGuideCollider(other);
+        if (!other)
+            return false;
+
+        Transform current =
+            other.transform;
+
+        // Keep the same naming contract already used by IsStairLikeCollision.
+        // Generated physics StairWay objects and their parents contain "Stair".
+        for (int depth = 0;
+             current && depth < 8;
+             depth++)
+        {
+            if (current.name.Contains("Stair"))
+                return true;
+
+            current =
+                current.parent;
+        }
+
+        return false;
     }
     // ================================================================
     // Re-synchronization
@@ -5110,9 +5639,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         upperContactCount =
             0;
-
-        lowerBoundaryReflectionArmed =
-            false;
 
         ResetImpactMapState();
         ResetOscillationFrame();
@@ -5199,9 +5725,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         upperContactCount =
             0;
 
-        lowerBoundaryReflectionArmed =
-            false;
-
         ResetImpactMapState();
         ResetOscillationFrame();
         ResetReleaseFeasibility();
@@ -5259,12 +5782,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
-    private bool IsLowerGuideCollision(
+    private bool IsStairwayCollision(
         Collision collision)
     {
         return
             collision != null &&
-            IsLowerGuideCollider(
+            IsStairwayCollider(
                 collision.collider);
     }
 
@@ -5288,15 +5811,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             IsUpperEnvelopeCollision(
                 collision);
 
-        bool lowerGuideContact =
-            IsLowerGuideCollision(
+        bool stairwayContact =
+            IsStairwayCollision(
                 collision);
 
-        // Ignore callbacks from every non-channel collider. Pairwise ignores are
-        // configured before Dynamic release, so those colliders should not solve an
-        // impulse either; this is the defensive classification layer.
+        // Only Upper Envelope or a real Stairway contact belongs to this channel.
         if (!envelopeContact &&
-            !lowerGuideContact)
+            !stairwayContact)
         {
             return;
         }
@@ -5334,20 +5855,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         lastContactFrame.contactPredictedSeparationSpeed =
             selection.predictedSeparationSpeed;
 
-        bool departureLowerContact =
-            lowerGuideContact &&
-            !lowerBoundaryReflectionArmed;
-
+        // Lower is an actual Stairway collision, not a synthetic guide overlap.
         lastContactFrame.canonicalContact =
-            departureLowerContact
-                ? false
-                : selection.canonicalContact;
+            selection.canonicalContact;
 
-        if (!departureLowerContact)
-        {
-            ApplyImpactMap(
-                ref lastContactFrame);
-        }
+        ApplyImpactMap(
+            ref lastContactFrame);
 
 
         TransitionTo(
@@ -5356,12 +5869,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 : EqualizerPhase.LowerContact,
             envelopeContact
                 ? "EnvelopeCollisionEnter"
-                : "LowerCollisionEnter");
+                : "StairwayCollisionEnter");
 
 
         Debug.Log(
             $"[EQUALIZER CONTACT FRAME] " +
-            $"kind={(envelopeContact ? "UpperEnvelope" : "LowerBoundary")} " +
+            $"kind={(envelopeContact ? "UpperEnvelope" : "Stairway")} " +
             $"other={collision.collider.name} " +
             $"stairLike={lastContactFrame.stairLikeContact} " +
             $"position={ballVisualEqualizer.position:F4} " +
@@ -5415,16 +5928,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"mapReservoirRatio={lastContactFrame.reservoirEnergyRatio:F4} " +
             $"mapEEffective={lastContactFrame.mappedEffectiveRestitution:F4} " +
             $"normalImpulse={lastContactFrame.normalImpulse:F4} " +
-            $"departureLowerIgnored={departureLowerContact} " +
-            $"lowerArmed={lowerBoundaryReflectionArmed} " +
-            $"periodicDrive={forcedBoundaryDriveActive} " +
-           // $"T={forcedBoundaryPeriod:F4}s " +
-           // $"halfT={forcedBoundaryHalfPeriod:F4}s " +
+            $"lowerBoundary=RealStairway " +
+            $"phaseDrive={forcedBoundaryDriveActive} " +
+            $"T={forcedBoundaryPeriod:F4}s " +
+            $"halfT={forcedBoundaryHalfPeriod:F4}s " +
             $"heightScale={forcedBoundaryRadiusClearanceScale:F4}R " +
             $"phaseAN={forcedBoundaryAppliedPhaseAcceleration:F4}m/s2 " +
-            $"phaseALimit={forcedBoundaryAutomaticAccelerationLimit:F4}m/s2 " +
-            //$"phaseTgo={forcedBoundaryTimeToBoundary:F5}s " +
-            $"boundaryDistance={forcedBoundaryDistance:F4}m",
+            $"phaseARef={forcedBoundaryPlannedReleasePhaseAcceleration:F4}m/s2",
             this);
     }
 
@@ -5479,25 +5989,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 Mathf.Max(
                     0,
                     lowerContactCount - 1);
-
-            if (!lowerBoundaryReflectionArmed &&
-                lowerContactCount == 0)
-            {
-                lowerBoundaryReflectionArmed =
-                    true;
-
-                Debug.Log(
-                    "[EQUALIZER LOWER ARMED] Release departure cleared; subsequent Lower contacts are real damping impacts.",
-                    this);
-            }
         }
 
         if (upperContactCount == 0 &&
             lowerContactCount == 0)
         {
-            if (negativeEnvelope)
-                negativeEnvelope.CommitDeferredCanonicalGeometryUpdate();
-
+            // Upper Envelope is immutable for this Release.
+            // CollisionExit only advances state; no Mesh recook is requested.
             TransitionTo(
                 EqualizerPhase.HopperFlight,
                 "CollisionExit");
@@ -5546,3 +6044,4 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"BounceCombine={material.bounceCombine}";
     }
 }
+

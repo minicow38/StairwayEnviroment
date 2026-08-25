@@ -328,25 +328,56 @@ MonoBehaviour:
   forcedBoundaryDriveActive: 0
   forcedBoundaryReleaseTime: 0
   forcedBoundaryTimeCost: 0
-  forcedBoundaryCycleCount: 0
   forcedBoundaryPeriod: 0
   forcedBoundaryHalfPeriod: 0
-  forcedBoundaryHalfCycleIndex: 0
-  forcedBoundaryNextUpper: 1
-  forcedBoundaryNextTime: 0
   forcedBoundaryPhaseErrorSeconds: 0
-  forcedBoundaryTimeToBoundary: 0
-  forcedBoundaryDistance: 0
-  forcedBoundaryRequiredTotalNormalAcceleration: 0
   forcedBoundaryAppliedPhaseAcceleration: 0
   forcedBoundaryGamma: 0
   forcedBoundaryRadiusClearanceScale: 0
   forcedBoundaryPlannedReleaseSpan: 0
   forcedBoundaryPlannedReleaseTargetNormalSpeed: 0
   forcedBoundaryPlannedReleasePhaseAcceleration: 0
-  forcedBoundaryAutomaticAccelerationLimit: 0
-  lowerBoundaryReflectionArmed: 0
-  forcedBoundaryRephaseCount: 0
+  oscillationPhase01: 0.5
+  oscillationCycleIndex: 0
+  experimentSampleCompletedThisRelease: 0
+  experimentCycleAdvancePending: 0
+  maxGroundSpeedExperimentCompleted: 0
+  oscillationPhaseOriginTime: 0
+  oscillationPhaseOrigin01: 0.5
+  oscillationPhaseAnchorValid: 0
+  normalizedPhaseError01: 0
+  observedUpperPeriod: 0
+  observedLowerPeriod: 0
+  upperPeriodError01: 0
+  lowerPeriodError01: 0
+  hasReferenceUpperExtremum: 0
+  lowerSeenAfterReferenceUpper: 0
+  upperExtremumStableN: 0
+  lowerExtremumStableN: 0
+  measuredAmplitude: 0
+  previousMeasuredAmplitude: 0
+  amplitudeDecayRatio: 1
+  amplitudeCycleIndex: -1
+  stableNormalSampleValid: 0
+  previousStableNormalCoordinate: 0
+  previousStableNormalVelocity: 0
+  previousStableNormalSampleTime: 0
+  pendingUpperExtremumValidation: 0
+  pendingLowerExtremumValidation: 0
+  pendingExtremumImpactTime: 0
+  lastZeroCrossingStableN: 0
+  lastZeroCrossingTime: 0
+  lastZeroCrossingKind: None
+  hasPreviousAcceptedStairContact: 0
+  previousAcceptedStairPoint: {x: 0, y: 0, z: 0}
+  previousAcceptedStairTangentSpeed: 0
+  observedStairSpatialInterval: 0
+  observedGeometryPeriod: 0
+  observedSpatialPeriodMultiplicity: 1
+  acceptedExperimentStairContactCount: 0
+  sourceMaxGroundSpeedReadOnly: 0
+  plannedMaxGroundSpeedForCycle: 0
+  plannedMaxGroundSpeedRatio: 1
   usingBallVisualAsSubjectProxy: 0
   lastContactFrame:
     valid: 0
@@ -613,7 +644,7 @@ GameObject:
   - component: {fileID: 156220175}
   - component: {fileID: 156220176}
   m_Layer: 0
-  m_Name: RenderStageRoot
+  m_Name: PhysicsSplineRoot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -627,7 +658,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 156220173}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
@@ -1247,6 +1278,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ball: {fileID: 572935009}
+  respondSubject: {fileID: 0}
   offset: {x: -30, y: 2.4, z: 38}
   fixedEulerAngles: {x: 10.8, y: 139.53, z: 0}
   occlusionMask:
@@ -1635,7 +1667,7 @@ SphereCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 1
   m_ProvidesContacts: 0
-  m_Enabled: 0
+  m_Enabled: 1
   serializedVersion: 3
   m_Radius: 0.5
   m_Center: {x: 0, y: 0, z: 0}
@@ -1955,7 +1987,7 @@ SphereCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 1
   m_ProvidesContacts: 0
-  m_Enabled: 0
+  m_Enabled: 1
   serializedVersion: 3
   m_Radius: 0.5
   m_Center: {x: 0, y: 0, z: 0}
@@ -2534,7 +2566,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1083418861}
-  m_Enabled: 0
+  m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -2804,7 +2836,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   settleFrames: 4
   stableFramesRequired: 3
-  normalToleranceDegrees: 1
+  normalToleranceDegrees: 0.58
   requiredRestSampleCount: 30
   restNormalSpeedLimit: 0.5
   trimRatio: 0.2
@@ -2869,7 +2901,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
   maxGroundSpeed: 16
   GroundAcceleration: 35
+  activeTimeScale: 0
   TargetAccelerationLimit: 120
+  mainGameManager: {fileID: 0}
   knotDetector: {fileID: 156220176}
   groundMask:
     serializedVersion: 2
@@ -3086,6 +3120,7 @@ MonoBehaviour:
   segmentCount: 32
   envelopeWidth: 10
   targetContactPeriodSeconds: 0.16
+  periodObservationBlend: 0.15
   armed: 0
   envelopeBuilt: 0
   sourceEnergyJoule: 0
@@ -3116,6 +3151,16 @@ MonoBehaviour:
   resolvedReleaseSurfaceClearance: 0
   resolvedReleaseTargetNormalSpeed: 0
   resolvedReleasePhaseAcceleration: 0
+  sourceMaxGroundSpeedReadOnly: 0
+  maxGroundSpeedExperimentCycleIndex: 0
+  baseExperimentPeriodSeconds: 0
+  nominalExperimentPeriodSeconds: 0
+  observedGeometryPeriodSeconds: 0
+  observedGeometryPeriodCorrectionRatio: 1
+  observedGeometryPeriodValid: 0
+  plannedMaxGroundSpeedForCycle: 0
+  plannedMaxGroundSpeedRatio: 1
+  maxGroundSpeedReadAvailable: 0
 --- !u!1 &1238057549
 GameObject:
   m_ObjectHideFlags: 0
@@ -3664,8 +3709,8 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
+  m_LocalScale: {x: 1.5, y: 1.5, z: 1.5}
+  m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 1492337658}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -3823,10 +3868,10 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 156220174}
   - {fileID: 1488933854}
   - {fileID: 423131470}
   - {fileID: 572935009}
-  - {fileID: 156220174}
   - {fileID: 64372315}
   - {fileID: 1206713371}
   m_Father: {fileID: 0}
@@ -4432,6 +4477,11 @@ PrefabInstance:
       value: 
       objectReference: {fileID: 3704034642229052370, guid: 607e67f96600ebe49a9eda21a21109d2,
         type: 3}
+    - target: {fileID: 1464098952575493774, guid: 74221757a7fa34c47a7df1a3b267756a,
+        type: 3}
+      propertyPath: knotDetector
+      value: 
+      objectReference: {fileID: 156220176}
     - target: {fileID: 1464098952575493774, guid: 74221757a7fa34c47a7df1a3b267756a,
         type: 3}
       propertyPath: PrimitivePlane

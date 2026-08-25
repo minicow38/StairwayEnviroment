@@ -1,18 +1,19 @@
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 
 
 /// <summary>
-/// BallVisualEqualizer専用のUpper/Lower Colliderを生成します。
+/// BallVisualEqualizer専用のUpper Envelope Colliderだけを生成します。
 ///
 /// 有効な物理仕様は次の1系統だけです。
-///   Lower : SlopeStickCoreの連続Spline surface
-///   Upper : S(T) * R + A(t)
-///   A(t)  : H0 * epsilon * exp(-gamma * t)
+///   Lower physical impact : 実際のStairway Collider
+///   Upper physical impact : S(T) * R + A(t)
+///   A(t)                  : H0 * epsilon * exp(-gamma * t)
 ///
-/// Inspectorで指定する周期Tを唯一の時間スケールとして、
-/// Upper/Lowerの実接触間隔 T/2 に対して必要なCollider高さと
-/// Stable-N速度/加速度を自動解決します。
+/// Inspectorで指定する周期TはEnvelope幾何と位相観測の基準時間です。
+/// Lower側の物理Colliderは生成せず、Equalizerは実階段そのものへ衝突します。
+/// T/2は期待位相の基準として保持しますが、階段到達時刻を人工的に強制しません。
 ///
 /// S(T) は周期Tと、以前成功した300-400m/s^2帯の中心値を基準に
 /// [2R, 4R] の範囲で自動選択します。短周期では2R側へ寄せて入口衝撃を減らし、
@@ -57,29 +58,58 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private float envelopeWidth = 10.0f;
 
     // ================================================================
-    // Periodic contact master
-    // 周期TだけをInspector入力とし、Collider高さ・必要速度・位相加速度を
-    // すべて同じ幾何モデルから自動解決する。
+    // Period / envelope geometry master
+    // 周期TだけをInspector入力とし、Upper Envelope高さを同じ幾何モデルから
+    // 解決する。T/2は位相観測の基準であり、Lower Stairwayへの到達を強制しない。
     // ================================================================
 
     [Header("Periodic Contact - Master")]
     [Tooltip(
-        "Upper -> Lower -> Upper の1周期 T[s]。反対側Colliderへの接触は T/2 ごとです。\n" +
-        "Collider高さ(R倍率)、必要Stable-N速度、Phase Drive加速度は自動計算されます。")]
+        "実階段 -> Upper Envelope -> 実階段 の観測基準1周期 T[s]。\n" +
+        "Upper高さはTから自動計算します。Lower Stairwayへの接触時刻は物理結果をそのまま使います。")]
     [Min(0.04f)]
     [SerializeField]
     private float targetContactPeriodSeconds = 0.10f;
 
-    // 球がUpper/Lowerの両面に同時接触しないため、surface-to-surface基準の
-    // clearance scaleは最低2R必要。以前安定した4Rを上限としてAuto化する。
+    [Tooltip(
+        "実階段から得た空間周期 Δs / actual tangent speed で、maxGround基準Tをどの程度だけ微補正するか。\n" +
+        "0なら従来のT(n)=T0*V0/V(n)を厳密維持、0.15程度なら幾何観測を弱く反映します。")]
+    [Range(0f, 0.25f)]
+    [SerializeField]
+    private float periodObservationBlend = 0.15f;
+
+    // Upper EnvelopeをSpline基準面から十分離すため、surface-to-surface基準の
+    // clearance scaleは最低2R。以前安定した4Rを上限としてAuto化する。
     private const float MinimumPeriodicRadiusClearanceScale = 2f;
     private const float MaximumPeriodicRadiusClearanceScale = 4f;
     private const int MinimumPeriodicHalfCycleFixedSteps = 2;
 
     // 以前実際に減衰振幅が成立した300-400m/s^2帯の中心値。
-    // Inspectorパラメータにはせず、周期Tから高さS(T)を一意に決めるための
-    // 内部基準だけに使う。実際のPhase Drive加速度はSphereCast距離から毎F解く。
+    // Inspectorパラメータにはせず、周期TからUpper高さS(T)を一意に決める
+    // 内部幾何基準だけに使う。実階段へのdeadline Driveには使用しない。
     private const float PeriodicHeightReferencePhaseAcceleration = 350f;
+
+    // ================================================================
+    // maxGroundSpeed -> period-cycle experiment (READ ONLY)
+    // ================================================================
+    // SlopeStickCore is never written from this component.  The private
+    // serialized maxGroundSpeed is read only as the reference V0.
+    // One experiment step is one full oscillation period T, not one frame.
+    // After 8 completed periods the diagnostic reference reaches V0 / 2.
+    private const int MaxGroundSpeedDecayExperimentCycles = 8;
+    private const float MaxGroundSpeedDecayExperimentEndRatio = 0.5f;
+
+    // Geometry observation is a correction, never a replacement for the
+    // maxGroundSpeed schedule.  Keep one bad/missed Stair contact from pulling
+    // T far away from the planned 16->8 experiment.
+    private const float MinimumObservedPeriodCorrectionRatio = 0.85f;
+    private const float MaximumObservedPeriodCorrectionRatio = 1.15f;
+
+    private static readonly FieldInfo MaxGroundSpeedField =
+        typeof(SlopeStickCore).GetField(
+            "maxGroundSpeed",
+            BindingFlags.Instance |
+            BindingFlags.NonPublic);
 
 
     // ================================================================
@@ -142,24 +172,19 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private readonly List<Transform> generatedEnvelopeRoots =
         new List<Transform>();
 
-    // 現在「最後に生成された」Envelopeだけをリアルタイム更新するための参照。
-    private Transform generatedMeshTransform;
-    private MeshFilter generatedMeshFilter;
+    // 現在有効なUpper Envelope Collider。
+    // Release開始時に生成し、Release終了まで形状は不変です。
     private MeshCollider generatedMeshCollider;
 
-    // Equalizer専用Lower Boundary。実階段Colliderではなく、
-    // SlopeStickCoreの連続Spline surfaceを物理境界として使用する。
-    private Transform generatedLowerGuideTransform;
-    private MeshFilter generatedLowerGuideFilter;
-    private MeshCollider generatedLowerGuideCollider;
-    private Mesh generatedLowerGuideMesh;
+    // Lower側の物理境界は生成しない。
+    // EqualizerはScene上の実Stairway Colliderへ直接衝突する。
 
     [Header("Periodic Contact Runtime - Read Only")]
     [Tooltip("FixedUpdate解像度を考慮した実際の1周期T[s]。")]
     [SerializeField]
     private float resolvedContactPeriodSeconds = 0.10f;
 
-    [Tooltip("Upper/Lower反対側境界までの目標時間 T/2[s]。")]
+    [Tooltip("位相観測上の半周期 T/2[s]。実階段への到達時刻は強制しません。")]
     [SerializeField]
     private float resolvedHalfPeriodSeconds = 0.05f;
 
@@ -168,38 +193,66 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private float resolvedEnvelopeRadiusClearanceScale =
         MinimumPeriodicRadiusClearanceScale;
 
-    [Tooltip("Release時点のLower中心 -> Upper中心の自動目標距離[m]。")]
+    [Tooltip("Spline基準面からUpper中心までの幾何学的参照距離[m]。Lower Colliderは生成しません。")]
     [SerializeField]
     private float resolvedReleaseCenterTravelDistance;
 
-    [Tooltip("Release時点のLower surface -> Upper surfaceの自動高さ[m]。")]
+    [Tooltip("Spline基準面からUpper surfaceまでの参照高さ[m]。Lower Colliderは生成しません。")]
     [SerializeField]
     private float resolvedReleaseSurfaceClearance;
 
-    [Tooltip("ReleaseからT/2でUpperへ届くための理論Stable-N初速[m/s]。")]
+    [Tooltip("T/2を基準にした理論Stable-N初速[m/s]。診断値で、実階段到達を強制しません。")]
     [SerializeField]
     private float resolvedReleaseTargetNormalSpeed;
 
-    [Tooltip("Canonical初速から周期Tへ合わせるための初期Phase加速度[m/s^2]。")]
+    [Tooltip("旧T/2モデル由来の参照Phase加速度[m/s^2]。診断値のみで強制Driveには使いません。")]
     [SerializeField]
     private float resolvedReleasePhaseAcceleration;
-    // Canonical energy may change inside a collision callback. MeshCollider recook
-    // is deferred until the Equalizer has left both boundaries.
-    private bool pendingCanonicalGeometryRebuild;
-    // 最新Envelopeを作った時点の固定幾何。
-    // Inspector調整ではSlopeStickCoreから取り直さず、この区間だけを再生成する。
-    private bool latestEnvelopeGeometryCached;
+
+    [Header("maxGroundSpeed / Period Experiment Runtime - Read Only")]
+    [Tooltip("SlopeStickCore.maxGroundSpeed の実行時READ ONLY値。SlopeStickCoreへは書き戻しません。")]
+    [SerializeField]
+    private float sourceMaxGroundSpeedReadOnly;
+
+    [Tooltip("0T..8Tの実験番号。Releaseをまたいで保持し、8T以降は8に固定します。")]
+    [SerializeField]
+    private int maxGroundSpeedExperimentCycleIndex;
+
+    [Tooltip("InspectorのtargetContactPeriodSecondsを0T基準T0として保持します。")]
+    [SerializeField]
+    private float baseExperimentPeriodSeconds;
+
+    [Tooltip("T0*V0/V(n)だけで得た補正前のnominal周期[s]。")]
+    [SerializeField]
+    private float nominalExperimentPeriodSeconds;
+
+    [Tooltip("実階段のΔs / actual tangent speedから得た観測周期[s]。次Release以降のTだけを弱く補正します。")]
+    [SerializeField]
+    private float observedGeometryPeriodSeconds;
+
+    [Tooltip("nominal Tへ掛ける幾何観測補正。0.85..1.15に制限し、1.0が無補正です。")]
+    [SerializeField]
+    private float observedGeometryPeriodCorrectionRatio = 1f;
+
+    [SerializeField]
+    private bool observedGeometryPeriodValid;
+
+    [Tooltip("V(n)=V0*(1/2)^(n/8) で得る周期単位のREAD ONLY参照速度[m/s]。Coreの値は変更しません。")]
+    [SerializeField]
+    private float plannedMaxGroundSpeedForCycle;
+
+    [Tooltip("plannedMaxGroundSpeedForCycle / sourceMaxGroundSpeedReadOnly。")]
+    [SerializeField]
+    private float plannedMaxGroundSpeedRatio = 1f;
+
+    [SerializeField]
+    private bool maxGroundSpeedReadAvailable;
+
+    // Release開始時に確定したOscillation frameだけを保持する。
+    // Active Release中にMeshをrecookしないため、A0/gamma/radius再生成cacheは持たない。
+    private bool latestOscillationFrameCached;
     private Vector3 cachedAxisPhysics;
     private Vector3 cachedSlopeNormalPhysics;
-    private float cachedA0;
-    private float cachedGamma;
-    private float cachedEqualizerRadius;
-
-    // Inspector変更検出用。物理式ではなくMesh近似だけを監視する。
-    private bool liveSettingsSnapshotValid;
-    private int lastSegmentCount;
-    private float lastEnvelopeWidth;
-    private float lastTargetContactPeriodSeconds;
 
 
     // ================================================================
@@ -209,42 +262,15 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private void Awake()
     {
         ResolveReferences();
-        CaptureLiveSettingsSnapshot();
+        TryEvaluateMaxGroundSpeedDecayExperiment(
+            0,
+            out _,
+            out _,
+            out _);
     }
     private void FixedUpdate()
     {
         TryBuildEnvelopeIfReady();
-    }
-
-
-    private void Update()
-    {
-        // ------------------------------------------------------------
-        // Play中のInspector変更を毎描画フレーム監視する。
-        //
-        // 重要:
-        // BuildNegativeEnvelope()をやり直すのではなく、
-        // 「最後に生成されたEnvelope」の固定幾何を使って
-        // Meshアセットだけを差し替える。
-        // ------------------------------------------------------------
-
-        if (!Application.isPlaying)
-            return;
-
-        if (!envelopeBuilt ||
-            !latestEnvelopeGeometryCached ||
-            !generatedMeshTransform ||
-            !generatedMeshFilter ||
-            !generatedMeshCollider)
-        {
-            CaptureLiveSettingsSnapshot();
-            return;
-        }
-
-        if (!LiveSettingsChanged())
-            return;
-
-        RebuildLatestGeneratedMesh();
     }
 
 
@@ -565,8 +591,7 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
             A0,
             equalizerRadius);
 
-        // Existing cached fields remain the compatibility cache.
-        // cachedEntry = section entry, cachedLimit = section end.
+        // Cache only the Release-fixed oscillation frame.
         if (!TryEvaluateSplineSurfacePhysics(
                 0f,
                 subjectRadius,
@@ -585,14 +610,9 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
             return;
         }
 
-        CacheLatestEnvelopeGeometry(
-            entrySurfacePhysics,
-            slopeEndSurfacePhysics,
+        CacheLatestOscillationFrame(
             releaseTangentPhysics,
-            stableReleaseNormalPhysics,
-            A0,
-            decayRatePerSecond,
-            equalizerRadius);
+            stableReleaseNormalPhysics);
 
         CreateRoot();
 
@@ -613,8 +633,15 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
                 $"curveRatio={latestCurveLengthRatio:F6} " +
                 $"timeToLimit={timeToLimit:F4}s " +
                 $"k={decayRatePerSecond:F4}/s " +
-               // $"T={resolvedContactPeriodSeconds:F4}s " +
-                //$"halfT={resolvedHalfPeriodSeconds:F4}s " +
+                $"cycle={maxGroundSpeedExperimentCycleIndex} " +
+                $"maxGround0={sourceMaxGroundSpeedReadOnly:F3}m/s " +
+                $"planned={plannedMaxGroundSpeedForCycle:F3}m/s " +
+                $"speedRatio={plannedMaxGroundSpeedRatio:F5} " +
+                $"T0={baseExperimentPeriodSeconds:F4}s " +
+                $"Tnom={nominalExperimentPeriodSeconds:F4}s " +
+                $"Tcorr={observedGeometryPeriodCorrectionRatio:F5} " +
+                $"T={resolvedContactPeriodSeconds:F4}s " +
+                $"halfT={resolvedHalfPeriodSeconds:F4}s " +
                 $"clearanceScale={resolvedEnvelopeRadiusClearanceScale:F4}R " +
                 $"releaseSpan={resolvedReleaseCenterTravelDistance:F4}m " +
                 $"targetVN={resolvedReleaseTargetNormalSpeed:F4}m/s " +
@@ -653,355 +680,12 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
             (1f - Mathf.Exp(-gamma * t)) /
             gamma;
     }
-    private void ResolvePeriodicContactPlan2(
-    float A0,
-    float equalizerRadius)
-{
-    float fixedDt =
-        Mathf.Max(
-            0.0001f,
-            Time.fixedDeltaTime);
-
-    float minimumPeriod =
-        fixedDt *
-        MinimumPeriodicHalfCycleFixedSteps *
-        2f;
-
-    resolvedContactPeriodSeconds =
-        Mathf.Max(
-            minimumPeriod,
-            Mathf.Max(
-                0.0001f,
-                targetContactPeriodSeconds));
-
-    resolvedHalfPeriodSeconds =
-        resolvedContactPeriodSeconds * 0.5f;
-
-
-    // ============================================================
-    // Geometry
-    // ============================================================
-
-    float radius =
-        Mathf.Max(
-            0.0001f,
-            equalizerRadius);
-
-    float mass =
-        ballVisualEqualizer
-            ? Mathf.Max(
-                0.0001f,
-                ballVisualEqualizer.mass)
-            : 1f;
-
-    float halfT =
-        Mathf.Max(
-            fixedDt,
-            resolvedHalfPeriodSeconds);
-
-
-    // ============================================================
-    // E : current canonical energy
-    //
-    // E = E0 * epsilon
-    // ============================================================
-
-    float epsilon =
-        Mathf.Clamp01(
-            canonicalEnergyRatio);
-
-    float effectiveEnergy =
-        Mathf.Max(
-            0f,
-            sourceEnergyJoule) *
-        epsilon;
-
-
-    // ============================================================
-    // v0 = sqrt(2E/m)
-    // ============================================================
-
-    float canonicalLaunchNormalSpeed =
-        effectiveEnergy > 0f
-            ? Mathf.Sqrt(
-                2f *
-                effectiveEnergy /
-                mass)
-            : 0f;
-
-
-    // ============================================================
-    // r : exponential decay coefficient
-    //
-    // 現在の実装:
-    //
-    //     exp(-gamma*t)
-    //
-    // 数学上の
-    //
-    //     exp(r*t)
-    //
-    // と比較すると
-    //
-    //     r = -gamma
-    //
-    // ============================================================
-
-    float gamma =
-        Mathf.Max(
-            0f,
-            decayRatePerSecond);
-
-    float r =
-        -gamma;
-
-
-    // ============================================================
-    // Integral:
-    //
-    // I(r,T)
-    //     = integral[0,T/2] exp(r*t) dt
-    //
-    // gamma表記では
-    //
-    //     = (1-exp(-gamma*T/2))/gamma
-    //
-    // 単位は seconds
-    // ============================================================
-
-    float decayTravelIntegral =
-        ResolveDecayTravelIntegralSeconds(
-            gamma,
-            halfT);
-
-
-    // ============================================================
-    // Exponentially decayed natural travel
-    //
-    // D_ErT = v0 * I(r,T)
-    // ============================================================
-
-    float exponentialNormalTravel =
-        canonicalLaunchNormalSpeed *
-        decayTravelIntegral;
-
-
-    // ============================================================
-    // H0から現在Energyに対応するnormal accelerationを解く
-    //
-    // E = m*a*H0
-    //
-    // a = E/(m*H0)
-    // ============================================================
-
-    float safeH0 =
-        Mathf.Max(
-            0.0001f,
-            canonicalReferenceHeight);
-
-    float effectiveNormalAcceleration =
-        effectiveEnergy /
-        Mathf.Max(
-            0.000001f,
-            mass * safeH0);
-
-
-    // ============================================================
-    // A(T/2)
-    //
-    // Upper Envelope自身も指数減衰しているので、
-    // Sを解く時にはrelease時のA0ではなく
-    // 次接触予定時刻T/2のAmplitudeを使う。
-    // ============================================================
-
-    float amplitudeAtHalfT =
-        EvaluateEnvelopeAmplitudeAtTime(
-            A0,
-            gamma,
-            halfT);
-
-
-    // ============================================================
-    // Reference phase contribution
-    //
-    // 350 m/s^2 は既存の内部基準。
-    // Inspector parameterにはしない。
-    // ============================================================
-
-    float referenceTotalTowardAcceleration =
-        PeriodicHeightReferencePhaseAcceleration -
-        Mathf.Max(
-            0f,
-            effectiveNormalAcceleration);
-
-
-    // ============================================================
-    // D(E,r,T)
-    //
-    //     natural exponential travel
-    //          +
-    //     phase geometry contribution
-    // ============================================================
-
-    float periodPlannedCenterTravel =
-        exponentialNormalTravel +
-        0.5f *
-        referenceTotalTowardAcceleration *
-        halfT *
-        halfT;
-
-    periodPlannedCenterTravel =
-        Mathf.Max(
-            minimumFreeAmplitude,
-            periodPlannedCenterTravel);
-
-
-    // ============================================================
-    // Solve S(E,r,T)
-    //
-    // Upper:
-    //
-    //     H = S*R + A(T/2)
-    //
-    // Equalizer中心の自由距離:
-    //
-    //     D = (S - 2)R + A(T/2)
-    //
-    // したがって
-    //
-    //     S = 2 + (D - A(T/2))/R
-    //
-    // ============================================================
-
-    float rawScale =
-        MinimumPeriodicRadiusClearanceScale +
-        (
-            periodPlannedCenterTravel -
-            amplitudeAtHalfT
-        ) /
-        radius;
-
-
-    // ============================================================
-    // Current geometry invariant
-    //
-    // 2R <= S <= 4R
-    // ============================================================
-
-    resolvedEnvelopeRadiusClearanceScale =
-        Mathf.Clamp(
-            rawScale,
-            MinimumPeriodicRadiusClearanceScale,
-            MaximumPeriodicRadiusClearanceScale);
-
-
-    // ============================================================
-    // Release時点の実Upper高さ
-    // ============================================================
-
-    float releaseAmplitude =
-        EvaluateEnvelopeAmplitudeAtTime(
-            A0,
-            gamma,
-            0f);
-
-    resolvedReleaseSurfaceClearance =
-        resolvedEnvelopeRadiusClearanceScale *
-        radius +
-        releaseAmplitude;
-
-
-    resolvedReleaseCenterTravelDistance =
-        Mathf.Max(
-            minimumFreeAmplitude,
-            resolvedReleaseSurfaceClearance -
-            2f * radius);
-
-
-    // ============================================================
-    // Target initial normal speed
-    //
-    // D = v0*I - 1/2*aN*h^2
-    //
-    // ->
-    //
-    // v0 =
-    // (D + 1/2*aN*h^2) / I
-    // ============================================================
-
-    resolvedReleaseTargetNormalSpeed =
-        (
-            resolvedReleaseCenterTravelDistance +
-            0.5f *
-            Mathf.Max(
-                0f,
-                effectiveNormalAcceleration) *
-            halfT *
-            halfT
-        ) /
-        Mathf.Max(
-            0.0001f,
-            decayTravelIntegral);
-
-
-    // ============================================================
-    // Phase acceleration required after exponential natural travel
-    // ============================================================
-
-    float requiredTotalNormalAcceleration =
-        2f *
-        (
-            resolvedReleaseCenterTravelDistance -
-            exponentialNormalTravel
-        ) /
-        Mathf.Max(
-            0.000001f,
-            halfT * halfT);
-
-
-    resolvedReleasePhaseAcceleration =
-        requiredTotalNormalAcceleration +
-        Mathf.Max(
-            0f,
-            effectiveNormalAcceleration);
-
-
-    // ============================================================
-    // Diagnostic
-    // ============================================================
-
-    Debug.Log(
-        $"[ENVELOPE S(E,r,T)] " +
-        $"E={effectiveEnergy:F4}J " +
-        $"epsilon={epsilon:F4} " +
-        $"r={r:F4}/s " +
-        $"gamma={gamma:F4}/s " +
-        $"T={resolvedContactPeriodSeconds:F5}s " +
-        $"halfT={halfT:F5}s " +
-        $"vN0={canonicalLaunchNormalSpeed:F4}m/s " +
-        $"Ahalf={amplitudeAtHalfT:F4}m " +
-        $"D={periodPlannedCenterTravel:F4}m " +
-        $"Sraw={rawScale:F4}R " +
-        $"S={resolvedEnvelopeRadiusClearanceScale:F4}R " +
-        $"UpperRelease={resolvedReleaseSurfaceClearance:F4}m",
-        this);
-}
-
-
-    // ================================================================
-    // First contact prediction / selection
-    // ================================================================
     // ================================================================
     // Envelope mesh
     // ================================================================
-    private void CacheLatestEnvelopeGeometry(
-        Vector3 entrySurfacePhysics,
-        Vector3 limitSurfacePhysics,
+    private void CacheLatestOscillationFrame(
         Vector3 axisPhysics,
-        Vector3 slopeNormalPhysics,
-        float A0,
-        float gammaValue,
-        float equalizerRadius)
+        Vector3 slopeNormalPhysics)
     {
         cachedAxisPhysics =
             axisPhysics;
@@ -1009,152 +693,11 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         cachedSlopeNormalPhysics =
             slopeNormalPhysics;
 
-        cachedA0 =
-            A0;
-
-        cachedGamma =
-            gammaValue;
-
-        cachedEqualizerRadius =
-            equalizerRadius;
-
-        latestEnvelopeGeometryCached =
+        latestOscillationFrameCached =
             true;
     }
-    private bool LiveSettingsChanged()
-    {
-        if (!liveSettingsSnapshotValid)
-            return true;
-
-        return
-            segmentCount != lastSegmentCount ||
-            Mathf.Abs(envelopeWidth - lastEnvelopeWidth) > 0.00001f ||
-            Mathf.Abs(
-                targetContactPeriodSeconds -
-                lastTargetContactPeriodSeconds) > 0.00001f;
-    }
-    private void CaptureLiveSettingsSnapshot()
-    {
-        lastSegmentCount = segmentCount;
-        lastEnvelopeWidth = envelopeWidth;
-        lastTargetContactPeriodSeconds =
-            targetContactPeriodSeconds;
-        liveSettingsSnapshotValid = true;
-    }
-    private void RebuildLatestGeneratedMesh()
-    {
-        bool lowerGuideGeometryChanged =
-            !liveSettingsSnapshotValid ||
-            lastSegmentCount != segmentCount ||
-            !Mathf.Approximately(lastEnvelopeWidth, envelopeWidth) ||
-            !generatedLowerGuideCollider;
-
-        if (!latestEnvelopeGeometryCached ||
-            !generatedMeshTransform ||
-            !generatedMeshFilter ||
-            !generatedMeshCollider)
-        {
-            CaptureLiveSettingsSnapshot();
-            return;
-        }
-
-        ResolvePeriodicContactPlan(
-            cachedA0,
-            cachedEqualizerRadius);
-
-        Mesh newMesh =
-            BuildFullSplineEnvelopeMeshAsset(
-                generatedMeshTransform,
-                cachedA0,
-                cachedGamma,
-                cachedEqualizerRadius);
-
-        if (!newMesh)
-        {
-            Debug.LogWarning(
-                "[ENVELOPE LIVE UPDATE] Full Spline mesh build failed.",
-                this);
-            CaptureLiveSettingsSnapshot();
-            return;
-        }
-
-        Mesh oldMesh = generatedMesh;
-        generatedMeshFilter.sharedMesh = newMesh;
-
-        bool colliderWasEnabled = generatedMeshCollider.enabled;
-        generatedMeshCollider.enabled = false;
-        generatedMeshCollider.sharedMesh = null;
-        generatedMeshCollider.sharedMesh = newMesh;
-        generatedMeshCollider.enabled = colliderWasEnabled;
-        generatedMesh = newMesh;
-
-        if (oldMesh && oldMesh != newMesh)
-            Destroy(oldMesh);
-
-        if (lowerGuideGeometryChanged)
-            RebuildCurrentLowerGuideMesh();
-
-        Physics.SyncTransforms();
-        CaptureLiveSettingsSnapshot();
-
-        Debug.Log(
-            $"[ENVELOPE LIVE UPDATED] " +
-           // $"T={resolvedContactPeriodSeconds:F4}s " +
-            //$"halfT={resolvedHalfPeriodSeconds:F4}s " +
-            $"epsilon={canonicalEnergyRatio:F4} " +
-            $"gamma={cachedGamma:F4}/s " +
-            $"clearanceScale={resolvedEnvelopeRadiusClearanceScale:F4}R " +
-            $"releaseSpan={resolvedReleaseCenterTravelDistance:F4}m " +
-            $"targetVN={resolvedReleaseTargetNormalSpeed:F4}m/s " +
-            $"width={envelopeWidth:F3} " +
-            $"segments={segmentCount}",
-            this);
-    }
 
 
-    private void RebuildCurrentLowerGuideMesh()
-    {
-        if (!generatedLowerGuideTransform ||
-            !generatedLowerGuideFilter ||
-            !generatedLowerGuideCollider)
-        {
-            return;
-        }
-
-        Mesh newLowerMesh =
-            BuildFullSplineLowerGuideMeshAsset(
-                generatedLowerGuideTransform);
-
-        if (!newLowerMesh)
-        {
-            Debug.LogWarning(
-                "[EQUALIZER LOWER GUIDE] Live rebuild failed; previous guide is kept.",
-                this);
-            return;
-        }
-
-        Mesh oldLowerMesh =
-            generatedLowerGuideMesh;
-
-        generatedLowerGuideFilter.sharedMesh =
-            newLowerMesh;
-
-        bool colliderWasEnabled =
-            generatedLowerGuideCollider.enabled;
-
-        generatedLowerGuideCollider.enabled = false;
-        generatedLowerGuideCollider.sharedMesh = null;
-        generatedLowerGuideCollider.sharedMesh = newLowerMesh;
-        generatedLowerGuideCollider.enabled = colliderWasEnabled;
-
-        generatedLowerGuideMesh = newLowerMesh;
-
-        if (oldLowerMesh &&
-            oldLowerMesh != newLowerMesh)
-        {
-            Destroy(oldLowerMesh);
-        }
-    }
 private bool TryEvaluateSplineSurfacePhysics(
         float progress01,
         float subjectRadius,
@@ -1348,10 +891,47 @@ private bool TryEvaluateSplineSurfacePhysics(
             MinimumPeriodicHalfCycleFixedSteps *
             2f;
 
+        // targetContactPeriodSeconds is the 0T baseline T0.
+        // The current experiment step changes only the Envelope/phase time scale:
+        //
+        //     V(n) = V0 * (1/2)^(n/8)
+        //     T(n) = T0 * V0 / V(n) = T0 / speedRatio
+        //
+        // SlopeStickCore.maxGroundSpeed itself is READ ONLY and is never written.
+        baseExperimentPeriodSeconds =
+            Mathf.Max(
+                0.0001f,
+                targetContactPeriodSeconds);
+
+        TryEvaluateMaxGroundSpeedDecayExperiment(
+            maxGroundSpeedExperimentCycleIndex,
+            out _,
+            out _,
+            out _);
+
+        float experimentSpeedRatio =
+            Mathf.Max(
+                0.0001f,
+                plannedMaxGroundSpeedRatio);
+
+        nominalExperimentPeriodSeconds =
+            baseExperimentPeriodSeconds /
+            experimentSpeedRatio;
+
+        // maxGroundSpeed schedule remains the dominant law.
+        // Geometry contributes only a bounded, low-pass correction ratio
+        // learned from accepted real Stairway contacts.
+        float correctedExperimentPeriod =
+            nominalExperimentPeriodSeconds *
+            Mathf.Clamp(
+                observedGeometryPeriodCorrectionRatio,
+                MinimumObservedPeriodCorrectionRatio,
+                MaximumObservedPeriodCorrectionRatio);
+
         resolvedContactPeriodSeconds =
             Mathf.Max(
                 minimumPeriod,
-                Mathf.Max(0.0001f, targetContactPeriodSeconds));
+                correctedExperimentPeriod);
 
         resolvedHalfPeriodSeconds =
             resolvedContactPeriodSeconds * 0.5f;
@@ -1388,8 +968,8 @@ private bool TryEvaluateSplineSurfacePhysics(
         // なので
         //     D_T = vN0*h + 1/2*a_total*h^2
         //
-        // 実際の制御加速度はこの値に固定せず、Equalizer側が実Collider距離から
-        // a = 2(s-v*tau)/tau^2 を毎FixedUpdate解く。
+        // この加速度はUpper高さを決める幾何学的な参照値だけに使用する。
+        // Equalizer側でT/2 deadline driveは行わない。
         float referenceTotalTowardAcceleration =
             PeriodicHeightReferencePhaseAcceleration -
             Mathf.Max(0f, canonicalNormalAcceleration);
@@ -1477,15 +1057,17 @@ private bool TryEvaluateSplineSurfacePhysics(
 
         meshObject.layer = gameObject.layer;
 
-        generatedMeshTransform = meshObject.transform;
-        generatedMeshTransform.SetParent(generatedRoot, false);
-        generatedMeshTransform.localPosition = Vector3.zero;
-        generatedMeshTransform.localRotation = Quaternion.identity;
-        generatedMeshTransform.localScale = Vector3.one;
+        Transform meshTransform =
+            meshObject.transform;
+
+        meshTransform.SetParent(generatedRoot, false);
+        meshTransform.localPosition = Vector3.zero;
+        meshTransform.localRotation = Quaternion.identity;
+        meshTransform.localScale = Vector3.one;
 
         Mesh mesh =
             BuildFullSplineEnvelopeMeshAsset(
-                generatedMeshTransform,
+                meshTransform,
                 A0,
                 decayRatePerSecondValue,
                 equalizerRadius);
@@ -1493,12 +1075,14 @@ private bool TryEvaluateSplineSurfacePhysics(
         if (!mesh)
         {
             Destroy(meshObject);
-            generatedMeshTransform = null;
             return false;
         }
 
-        generatedMeshFilter = meshObject.AddComponent<MeshFilter>();
-        generatedMeshFilter.sharedMesh = mesh;
+        MeshFilter meshFilter =
+            meshObject.AddComponent<MeshFilter>();
+
+        meshFilter.sharedMesh =
+            mesh;
 
         generatedMeshCollider = meshObject.AddComponent<MeshCollider>();
         generatedMeshCollider.sharedMesh = mesh;
@@ -1512,193 +1096,17 @@ private bool TryEvaluateSplineSurfacePhysics(
 
         generatedMesh = mesh;
 
-        // Upperと同じSpline frameから、Equalizer専用の連続Lower境界を作る。
-        // Lowerは振幅を持たず、surfacePhysicsそのものを使用するため
-        // n_T ~= 0 となり、T transportを非貫通のために潰す必要がない。
-        if (!CreateFullSplineLowerGuideMesh())
-        {
-            Debug.LogError(
-                "[EQUALIZER LOWER GUIDE] Failed to build dedicated lower boundary.",
-                this);
-
-            ClearAllGeneratedEnvelopeRoots();
-            return false;
-        }
-        CaptureLiveSettingsSnapshot();
-
+        // Lower物理境界は生成しない。実Stairway Colliderが反射面になる。
+        // Active Release中はこのMeshをrecookしない。
         Debug.Log(
-            $"[EQUALIZER LOWER GUIDE CREATED] " +
-            $"vertices={(generatedLowerGuideMesh ? generatedLowerGuideMesh.vertexCount : 0)} " +
+            $"[EQUALIZER UPPER ENVELOPE CREATED] " +
+            $"vertices={(generatedMesh ? generatedMesh.vertexCount : 0)} " +
             $"width={envelopeWidth:F3} " +
-            $"segments={segmentCount}",
+            $"segments={segmentCount} " +
+            $"lower=RealStairway",
             this);
 
         return true;
-    }
-
-
-    private bool CreateFullSplineLowerGuideMesh()
-    {
-        if (!generatedRoot)
-            return false;
-
-        GameObject lowerObject =
-            new GameObject("EqualizerLowerGuideMesh");
-
-        lowerObject.layer = gameObject.layer;
-
-        generatedLowerGuideTransform = lowerObject.transform;
-        generatedLowerGuideTransform.SetParent(generatedRoot, false);
-        generatedLowerGuideTransform.localPosition = Vector3.zero;
-        generatedLowerGuideTransform.localRotation = Quaternion.identity;
-        generatedLowerGuideTransform.localScale = Vector3.one;
-
-        Mesh lowerMesh =
-            BuildFullSplineLowerGuideMeshAsset(
-                generatedLowerGuideTransform);
-
-        if (!lowerMesh)
-        {
-            Destroy(lowerObject);
-            generatedLowerGuideTransform = null;
-            return false;
-        }
-
-        generatedLowerGuideFilter =
-            lowerObject.AddComponent<MeshFilter>();
-        generatedLowerGuideFilter.sharedMesh = lowerMesh;
-
-        generatedLowerGuideCollider =
-            lowerObject.AddComponent<MeshCollider>();
-        generatedLowerGuideCollider.sharedMesh = lowerMesh;
-        generatedLowerGuideCollider.convex = false;
-        generatedLowerGuideCollider.isTrigger = false;
-
-        // LowerGuideはEqualizer専用。BallVisual / Subject / Stageなど
-        // 他のColliderには物理的な影響を与えない。
-        ConfigureEqualizerOnlyBoundaryCollider(
-            generatedLowerGuideCollider);
-
-        generatedLowerGuideMesh = lowerMesh;
-        return true;
-    }
-
-
-    private Mesh BuildFullSplineLowerGuideMeshAsset(
-        Transform meshTransform)
-    {
-        if (!meshTransform ||
-            !correspondSubject ||
-            !slopeCore)
-        {
-            return null;
-        }
-
-        int sampleCount =
-            Mathf.Max(2, segmentCount + 1);
-
-        Vector3[] vertices =
-            new Vector3[sampleCount * 2];
-
-        int[] triangles =
-            new int[(sampleCount - 1) * 6];
-
-        float halfWidth =
-            Mathf.Max(0.05f, envelopeWidth * 0.5f);
-
-        float subjectRadius =
-            ResolveSlopeCoreWorldRadius();
-
-        const float startProgress = 0f;
-        const float endProgress = 1f;
-
-        for (int i = 0;
-             i < sampleCount;
-             i++)
-        {
-            float u =
-                i / (float)(sampleCount - 1);
-
-            float progress =
-                Mathf.Lerp(
-                    startProgress,
-                    endProgress,
-                    u);
-
-            if (!TryEvaluateSplineSurfacePhysics(
-                    progress,
-                    subjectRadius,
-                    out _,
-                    out Vector3 surfacePhysics,
-                    out Vector3 tangentPhysics,
-                    out Vector3 normalPhysics))
-            {
-                return null;
-            }
-
-            Vector3 widthAxisPhysics =
-                Vector3.Cross(
-                    normalPhysics,
-                    tangentPhysics);
-
-            if (widthAxisPhysics.sqrMagnitude <= 0.000001f)
-                return null;
-
-            widthAxisPhysics.Normalize();
-
-            // surfacePhysicsは
-            // centerPhysics - normalPhysics * SubjectRadius。
-            // ここに追加のRオフセットを入れない。SphereCollider自身の半径が
-            // LowerGuideとの接触時にEqualizer中心のClearanceを作る。
-            Vector3 leftPhysics =
-                surfacePhysics -
-                widthAxisPhysics * halfWidth;
-
-            Vector3 rightPhysics =
-                surfacePhysics +
-                widthAxisPhysics * halfWidth;
-
-            Vector3 leftWorld =
-                correspondSubject.MapPoint(leftPhysics);
-
-            Vector3 rightWorld =
-                correspondSubject.MapPoint(rightPhysics);
-
-            vertices[i * 2 + 0] =
-                meshTransform.InverseTransformPoint(leftWorld);
-
-            vertices[i * 2 + 1] =
-                meshTransform.InverseTransformPoint(rightWorld);
-        }
-
-        int ti = 0;
-
-        for (int i = 0;
-             i < sampleCount - 1;
-             i++)
-        {
-            int a = i * 2;
-            int b = i * 2 + 1;
-            int c = (i + 1) * 2;
-            int d = (i + 1) * 2 + 1;
-
-            // Upper Envelopeとは逆巻き。Lowerの表面Normalを+Stable-N側へ向ける。
-            triangles[ti++] = a;
-            triangles[ti++] = d;
-            triangles[ti++] = b;
-            triangles[ti++] = a;
-            triangles[ti++] = c;
-            triangles[ti++] = d;
-        }
-
-        Mesh mesh = new Mesh();
-        mesh.name = "EqualizerLowerGuide_FullSpline";
-        mesh.vertices = vertices;
-        mesh.triangles = triangles;
-        mesh.RecalculateNormals();
-        mesh.RecalculateBounds();
-
-        return mesh;
     }
     private void ConfigureEqualizerOnlyBoundaryCollider(
         Collider boundary)
@@ -1730,7 +1138,6 @@ private bool TryEvaluateSplineSurfacePhysics(
     public void RefreshEqualizerBoundaryCollisionOwnership()
     {
         ConfigureEqualizerOnlyBoundaryCollider(generatedMeshCollider);
-        ConfigureEqualizerOnlyBoundaryCollider(generatedLowerGuideCollider);
     }
 
 
@@ -1738,8 +1145,237 @@ private bool TryEvaluateSplineSurfacePhysics(
         generatedMeshCollider;
 
 
-    public Collider CurrentLowerGuideCollider =>
-        generatedLowerGuideCollider;
+    /// <summary>
+    /// SlopeStickCore.maxGroundSpeedをREAD ONLYで取得します。
+    /// SetValueは行わず、Coreの物理状態は変更しません。
+    /// </summary>
+    private bool TryReadSlopeCoreMaxGroundSpeed(
+        out float speed)
+    {
+        speed = 0f;
+
+        if (!slopeCore)
+            ResolveReferences();
+
+        if (!slopeCore ||
+            MaxGroundSpeedField == null)
+        {
+            maxGroundSpeedReadAvailable = false;
+            sourceMaxGroundSpeedReadOnly = 0f;
+            return false;
+        }
+
+        object raw =
+            MaxGroundSpeedField.GetValue(
+                slopeCore);
+
+        if (!(raw is float value))
+        {
+            maxGroundSpeedReadAvailable = false;
+            sourceMaxGroundSpeedReadOnly = 0f;
+            return false;
+        }
+
+        speed =
+            Mathf.Max(
+                0f,
+                value);
+
+        sourceMaxGroundSpeedReadOnly =
+            speed;
+
+        maxGroundSpeedReadAvailable =
+            true;
+
+        return true;
+    }
+
+
+    /// <summary>
+    /// Equalizer側の実験番号を受け取ります。
+    /// 物理Coreは変更せず、次回Envelope build時のT(n)だけを切り替えます。
+    /// </summary>
+    /// <summary>
+    /// Canonicalな実Stairway接触から得た幾何周期を次Release以降へ弱く反映します。
+    /// current EnvelopeのT/meshは途中変更しません。
+    /// observedPeriod = Δs / actual tangent speed。
+    /// </summary>
+    public void SubmitObservedGeometryPeriod(
+        float observedPeriodSeconds)
+    {
+        if (float.IsNaN(observedPeriodSeconds) ||
+            float.IsInfinity(observedPeriodSeconds) ||
+            observedPeriodSeconds <= 0.0001f)
+        {
+            return;
+        }
+
+        float nominal =
+            Mathf.Max(
+                0.0001f,
+                nominalExperimentPeriodSeconds > 0.0001f
+                    ? nominalExperimentPeriodSeconds
+                    : BaseExperimentPeriodSeconds);
+
+        float targetCorrectionRatio =
+            Mathf.Clamp(
+                observedPeriodSeconds / nominal,
+                MinimumObservedPeriodCorrectionRatio,
+                MaximumObservedPeriodCorrectionRatio);
+
+        float blend =
+            Mathf.Clamp01(periodObservationBlend);
+
+        observedGeometryPeriodSeconds =
+            observedPeriodSeconds;
+
+        observedGeometryPeriodCorrectionRatio =
+            observedGeometryPeriodValid
+                ? Mathf.Lerp(
+                    observedGeometryPeriodCorrectionRatio,
+                    targetCorrectionRatio,
+                    blend)
+                : Mathf.Lerp(
+                    1f,
+                    targetCorrectionRatio,
+                    blend);
+
+        observedGeometryPeriodCorrectionRatio =
+            Mathf.Clamp(
+                observedGeometryPeriodCorrectionRatio,
+                MinimumObservedPeriodCorrectionRatio,
+                MaximumObservedPeriodCorrectionRatio);
+
+        observedGeometryPeriodValid =
+            true;
+
+        Debug.Log(
+            $"[ENVELOPE PERIOD OBSERVATION] " +
+            $"observedT={observedGeometryPeriodSeconds:F5}s " +
+            $"nominalT={nominal:F5}s " +
+            $"blend={blend:F3} " +
+            $"correction={observedGeometryPeriodCorrectionRatio:F5} " +
+            $"apply=NextRelease",
+            this);
+    }
+
+
+    public void SetMaxGroundSpeedExperimentCycle(
+        int cycleIndex)
+    {
+        maxGroundSpeedExperimentCycleIndex =
+            Mathf.Clamp(
+                cycleIndex,
+                0,
+                MaxGroundSpeedDecayExperimentCycles);
+
+        TryEvaluateMaxGroundSpeedDecayExperiment(
+            maxGroundSpeedExperimentCycleIndex,
+            out _,
+            out _,
+            out _);
+    }
+
+
+    /// <summary>
+    /// Scene開始時など、実験を0Tへ明示的に戻すときだけ使用します。
+    /// ClearEnvelope()では呼ばないため、通常のRejoin/次Releaseで進捗は失われません。
+    /// </summary>
+    public void ResetMaxGroundSpeedExperiment()
+    {
+        observedGeometryPeriodSeconds = 0f;
+        observedGeometryPeriodCorrectionRatio = 1f;
+        observedGeometryPeriodValid = false;
+        nominalExperimentPeriodSeconds = 0f;
+
+        SetMaxGroundSpeedExperimentCycle(0);
+    }
+
+
+    /// <summary>
+    /// 周期Tを単位にした maxGroundSpeed 16->8 型の減衰実験。
+    /// V0はSlopeStickCore.maxGroundSpeedの現在値をREAD ONLYで取得します。
+    /// n=0..8について V(n)=V0*(1/2)^(n/8)。8T以降はV0/2で保持します。
+    /// これはEqualizer/Envelopeの診断基準であり、SlopeStickCoreへは書き込みません。
+    /// </summary>
+    public bool TryEvaluateMaxGroundSpeedDecayExperiment(
+        int cycleIndex,
+        out float sourceMaxGroundSpeed,
+        out float plannedMaxGroundSpeed,
+        out float normalizedProgress01)
+    {
+        int clampedCycle =
+            Mathf.Clamp(
+                cycleIndex,
+                0,
+                MaxGroundSpeedDecayExperimentCycles);
+
+        normalizedProgress01 =
+            clampedCycle /
+            (float)MaxGroundSpeedDecayExperimentCycles;
+
+        maxGroundSpeedExperimentCycleIndex =
+            clampedCycle;
+
+        if (!TryReadSlopeCoreMaxGroundSpeed(
+                out sourceMaxGroundSpeed))
+        {
+            plannedMaxGroundSpeed = 0f;
+            plannedMaxGroundSpeedForCycle = 0f;
+            plannedMaxGroundSpeedRatio = 0f;
+            return false;
+        }
+
+        float ratio =
+            Mathf.Pow(
+                MaxGroundSpeedDecayExperimentEndRatio,
+                normalizedProgress01);
+
+        plannedMaxGroundSpeed =
+            sourceMaxGroundSpeed *
+            ratio;
+
+        plannedMaxGroundSpeedForCycle =
+            plannedMaxGroundSpeed;
+
+        plannedMaxGroundSpeedRatio =
+            sourceMaxGroundSpeed > 0.000001f
+                ? plannedMaxGroundSpeed /
+                  sourceMaxGroundSpeed
+                : 0f;
+
+        return true;
+    }
+
+
+    public int MaxGroundSpeedDecayCycleCount =>
+        MaxGroundSpeedDecayExperimentCycles;
+
+    public int MaxGroundSpeedExperimentCycleIndex =>
+        maxGroundSpeedExperimentCycleIndex;
+
+    public float BaseExperimentPeriodSeconds =>
+        Mathf.Max(0.0001f, targetContactPeriodSeconds);
+
+    public float ResolvedExperimentPeriodSeconds =>
+        resolvedContactPeriodSeconds;
+
+    public float NominalExperimentPeriodSeconds =>
+        nominalExperimentPeriodSeconds;
+
+    public float ObservedGeometryPeriodSeconds =>
+        observedGeometryPeriodSeconds;
+
+    public float ObservedGeometryPeriodCorrectionRatio =>
+        observedGeometryPeriodCorrectionRatio;
+
+
+    public float SourceMaxGroundSpeedReadOnly =>
+        sourceMaxGroundSpeedReadOnly;
+
+
+    public float PlannedMaxGroundSpeedForCycle =>
+        plannedMaxGroundSpeedForCycle;
 
 
     public bool TryGetPeriodicContactPlan(
@@ -1779,7 +1415,6 @@ private bool TryEvaluateSplineSurfacePhysics(
         return
             envelopeBuilt &&
             generatedMeshCollider &&
-            generatedLowerGuideCollider &&
             periodSeconds > 0.0001f &&
             halfPeriodSeconds > 0.0001f;
     }
@@ -1799,7 +1434,6 @@ private bool TryEvaluateSplineSurfacePhysics(
         return
             envelopeBuilt &&
             generatedMeshCollider &&
-            generatedLowerGuideCollider &&
             resolvedContactPeriodSeconds > 0.0001f;
     }
 
@@ -1813,23 +1447,10 @@ private bool TryEvaluateSplineSurfacePhysics(
             collider == generatedMeshCollider;
     }
 
-
-    public bool IsLowerGuideCollider(
-        Collider collider)
-    {
-        return
-            collider &&
-            generatedLowerGuideCollider &&
-            collider == generatedLowerGuideCollider;
-    }
-
-
     public bool IsEqualizerBoundaryCollider(
         Collider collider)
     {
-        return
-            IsUpperEnvelopeCollider(collider) ||
-            IsLowerGuideCollider(collider);
+        return IsUpperEnvelopeCollider(collider);
     }
 
 
@@ -2047,16 +1668,13 @@ private bool TryEvaluateSplineSurfacePhysics(
 
     /// <summary>
     /// 明示的な完全Clear。
-    /// 現在のUpper/Lower Envelopeを完全に削除します。
+    /// 現在のUpper Envelopeを完全に削除します。
     /// </summary>
     public void ClearEnvelope()
     {
         ClearAllGeneratedEnvelopeRoots();
 
-        latestEnvelopeGeometryCached =
-            false;
-
-        liveSettingsSnapshotValid =
+        latestOscillationFrameCached =
             false;
 
         armed =
@@ -2106,7 +1724,13 @@ private bool TryEvaluateSplineSurfacePhysics(
         resolvedReleaseTargetNormalSpeed = 0f;
         resolvedReleasePhaseAcceleration = 0f;
 
-        pendingCanonicalGeometryRebuild = false;
+        // Experiment state intentionally survives physical Envelope clear.
+        // Rejoin / next generation must not send 0T..8T back to cycle 0.
+        TryEvaluateMaxGroundSpeedDecayExperiment(
+            maxGroundSpeedExperimentCycleIndex,
+            out _,
+            out _,
+            out _);
         decayTimeCostSeconds = 0f;
     }
 
@@ -2118,19 +1742,11 @@ private bool TryEvaluateSplineSurfacePhysics(
     private void PrepareForNextEnvelopeGeneration()
     {
         ClearAllGeneratedEnvelopeRoots();
-        latestEnvelopeGeometryCached = false;
+        latestOscillationFrameCached = false;
         envelopeBuilt = false;
-        liveSettingsSnapshotValid = false;
-        pendingCanonicalGeometryRebuild = false;
     }
 
 
-    /// <summary>
-    /// 過去Envelope GameObjectをDestroyせず、
-    /// 「最新Envelope」用参照だけnullへ戻す。
-    ///
-    /// Appendモードの核心。
-    /// </summary>
 /// <summary>
     /// 現在まで生成したEnvelope Rootを全て削除する。
     /// Replaceモードで次Slopeへ入る時と、
@@ -2218,25 +1834,7 @@ private bool TryEvaluateSplineSurfacePhysics(
         generatedMesh =
             null;
 
-        generatedMeshTransform =
-            null;
-
-        generatedMeshFilter =
-            null;
-
         generatedMeshCollider =
-            null;
-
-        generatedLowerGuideMesh =
-            null;
-
-        generatedLowerGuideTransform =
-            null;
-
-        generatedLowerGuideFilter =
-            null;
-
-        generatedLowerGuideCollider =
             null;
     }
 
@@ -2381,7 +1979,7 @@ private bool TryEvaluateSplineSurfacePhysics(
         normalVisual =
             Vector3.zero;
 
-        if (!latestEnvelopeGeometryCached ||
+        if (!latestOscillationFrameCached ||
             !correspondSubject)
         {
             return false;
@@ -2622,36 +2220,18 @@ private bool TryEvaluateSplineSurfacePhysics(
     public void SetCanonicalEnergyRatio(
         float energyRatio)
     {
-        // One release may only lose canonical energy. Solver noise must never
-        // re-expand the Upper Envelope.
-        float requested = Mathf.Clamp01(energyRatio);
-        float next = Mathf.Min(canonicalEnergyRatio, requested);
+        // Scalar energy ledger only.
+        // Active Upper Envelope geometry is immutable for the whole Release.
+        // The next Release rebuilds a new Envelope from its new initial state.
+        float requested =
+            Mathf.Clamp01(energyRatio);
 
-        if (Mathf.Abs(next - canonicalEnergyRatio) <= 0.0005f)
-            return;
-
-        canonicalEnergyRatio = next;
-        pendingCanonicalGeometryRebuild = true;
+        canonicalEnergyRatio =
+            Mathf.Min(
+                canonicalEnergyRatio,
+                requested);
     }
 
-
-    public void CommitDeferredCanonicalGeometryUpdate()
-    {
-        if (!pendingCanonicalGeometryRebuild)
-            return;
-
-        pendingCanonicalGeometryRebuild = false;
-
-        if (Application.isPlaying &&
-            envelopeBuilt &&
-            latestEnvelopeGeometryCached &&
-            generatedMeshTransform &&
-            generatedMeshFilter &&
-            generatedMeshCollider)
-        {
-            RebuildLatestGeneratedMesh();
-        }
-    }
 
     private bool TryBuildEnvelopeIfReady()
     {
@@ -2705,3 +2285,4 @@ public sealed class BallVisualEnvelopeSurfaceMarker
 
 
 }
+

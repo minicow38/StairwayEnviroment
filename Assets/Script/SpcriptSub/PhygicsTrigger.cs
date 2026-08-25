@@ -48,8 +48,8 @@ public class PhygicsTrigger : MonoBehaviour
 
     void OnTriggerEnter(Collider other)
     {
-        
-
+        //subjectがいる回転座標と一致しないとTriggerが反応しません
+        //FirstInsertのステージのマップの組み方によってステージの再生成が反応しません
         if (other.transform.CompareTag("SubjectVisual") &&
             BallOnVisual.transform.GetComponent<SphereCollider>().isTrigger == true)
         {

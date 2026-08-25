@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections;
+using UnityEditor.Rendering;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Rigidbody), typeof(SphereCollider), typeof(NearestKnotDetector))]
@@ -13,6 +14,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float MaxDeceleration = 80f;
     const float ResponseInverse = 8.333333f;
     const float AccelerationJerk = 600f;
+    [SerializeField] public float activeTimeScale;
 
     const float TargetMinDistance = .27f;
     [SerializeField]public float TargetAccelerationLimit = 120f;
@@ -22,6 +24,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float StickJerk = 3000f;
     const float ReleaseHold = .02f;
     const float NaturalReleaseEnd = .90f;
+
+    [SerializeField] public MainGameManager mainGameManager;
 
     [SerializeField] NearestKnotDetector knotDetector;
     [SerializeField] LayerMask groundMask = ~0;
@@ -647,6 +651,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     {
         if (!sub)
             sub = GameObject.Find("InSubject");
+               activeTimeScale =Time.timeScale;
 
         FindMapFrameReferences();
         BindCoordinateFrames();
@@ -661,7 +666,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     IEnumerator delayStart()
     {
         yield return new WaitForSeconds(.8f);
-       // Time.timeScale = 0.25f;
+        //Time.timeScale = 0.25f;
         GameObject startSlab =
             GameObject.Find(
                 "CollisionStageRoot/__GeneratedPhysics/ArcSlab2_0_Physics");
@@ -704,6 +709,13 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     void FixedUpdate()
     {
+        if (activeTimeScale != Time.timeScale)
+        {
+            Debug.Log("");
+           
+            activeTimeScale = Time.timeScale;
+           // Time.timeScale = activeTimeScale;
+        }
         // SlopeStick3Dと同じく、描画Updateで予約した方向変更を
         // 物理/Spline観測より先にFixedUpdateで一度だけ適用する。
         ApplyPendingMapDirectionTurn();
@@ -744,6 +756,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         // Slopeへの切替そのものもSpline判定。
         if (guide.isSlope && !wasSlope)
         {
+           // mainGameManager.lastTouch=
             driveState = 0f;
             TransportToSpline(guide);
         }
