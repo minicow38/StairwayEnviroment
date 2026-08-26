@@ -159,6 +159,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         public float preTransportSpeed;
         public float postTransportSpeed;
         public float transportRetention;
+        public float constraintTransportRetention;
         public float requestedOutgoingOscillationSpeed;
         public float finalOutgoingOscillationSpeed;
         public float finalOutgoingOscillationEnergy;
@@ -749,6 +750,31 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     [SerializeField]
     private float lastFinalOscillationEnergy;
+
+    [Header("Reflection Energy Redistribution Runtime - Read Only")]
+    [Tooltip("Canonical減衰台帳として今回の衝突後に保持したStable-N Energy[J]。T->N転換分は含めません。")]
+    [SerializeField]
+    private float lastCanonicalDampingEnergy;
+
+    [Tooltip("局所反発率 e だけから得るStable-N反射目標Energy[J]。")]
+    [SerializeField]
+    private float lastReflectionTargetNormalEnergy;
+
+    [Tooltip("Canonical上限だけでは不足したStable-N Energy[J]。")]
+    [SerializeField]
+    private float lastReflectionEnergyShortfall;
+
+    [Tooltip("MinimumGameTransportRetentionを守ったままTから借りられるEnergy[J]。")]
+    [SerializeField]
+    private float lastBorrowableTransportEnergy;
+
+    [Tooltip("Clean canonical impactで計画したTangential -> Stable-N転換Energy[J]。")]
+    [SerializeField]
+    private float lastTransferredTransportToNormalEnergy;
+
+    [Tooltip("最終的な反射N Energyに実際に残ったT -> N転換分[J]。")]
+    [SerializeField]
+    private float lastActualTransferredTransportToNormalEnergy;
 
     [Header("Release Success Runtime - Read Only")]
     [SerializeField]
@@ -3204,7 +3230,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         if (negativeEnvelope)
         {
             // Scalar ledger only; active Upper geometry is not rebuilt mid-Release.
-            negativeEnvelope.SetCanonicalEnergyRatio(
+            negativeEnvelope.SetCanonicalDampingEnergyRatio(
                 currentCanonicalEnergyRatio);
         }
     }
@@ -3422,31 +3448,66 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
 
     // ================================================================
-    // Clean impact solver
+    // Reflection energy redistribution + clean impact solver
     // ================================================================
     //
-    // The impact response is solved only in the stable orthogonal basis:
+    // Stable basis:
     //
     //     v+ = v_T T + v_L L + u D
     //
     // D = +N for Lower, -N for Upper.
     //
-    // Hard invariants:
-    //     v_T >= 0                 (no reverse transport)
-    //     0 <= u <= u_mapped       (no oscillation energy re-injection)
-    //     dot(v+, n_c) >= 0        (non-penetration)
+    // Canonical damping keeps its monotone scalar ledger, but a clean canonical
+    // impact may rotate the velocity more sharply by moving part of T energy into
+    // Stable-N for this impact only:
     //
-    // If these compete, harmful L is reduced first, then harmful
-    // oscillation.  T is not sacrificed by the canonical map.  A face that
-    // still cannot separate is demoted to Emergency / Unity-solver handling.
+    //     E_N,base = min(e^2 E_N,in, e^2 E_N,canonical)
+    //     dE       = min(E_N,target - E_N,base, E_T,borrowable)
+    //     E_T,out  = E_T,in - dE
+    //     E_N,out  = E_N,base + dE
+    //
+    // E_N,target is the local restitution result e^2 E_N,in. Therefore this
+    // redistribution never creates energy and never exceeds the local restitution
+    // target. The scalar canonical ledger remains E_N,base (or lower if contact
+    // constraints remove more energy); the transferred part is NOT written back
+    // into BallVisualNegativeEnvelopeCollider.
+    //
+    // Emergency / non-canonical contacts never receive T -> N transfer.
     // ================================================================
+
+    private struct ReflectionEnergyBudget
+    {
+        public bool valid;
+
+        public float incomingTransportSpeed;
+        public float incomingTransportEnergy;
+
+        public float minimumTransportSpeed;
+        public float minimumTransportEnergy;
+        public float borrowableTransportEnergy;
+
+        public float canonicalNormalEnergy;
+        public float localRestitutionNormalEnergy;
+        public float normalEnergyShortfall;
+
+        public float transferredTransportEnergy;
+
+        public float plannedTransportEnergy;
+        public float plannedNormalEnergy;
+
+        public float plannedTransportSpeed;
+        public float plannedOscillationSpeed;
+    }
+
 
     private struct CleanImpactSolveResult
     {
         public Vector3 velocity;
         public float preTransportSpeed;
+        public float plannedTransportSpeed;
         public float postTransportSpeed;
         public float transportRetention;
+        public float constraintTransportRetention;
         public float requestedOscillationSpeed;
         public float finalOscillationSpeed;
         public float finalOscillationEnergy;
@@ -3462,9 +3523,152 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
+    private ReflectionEnergyBudget BuildReflectionEnergyBudget(
+        Vector3 incidentVelocity,
+        float canonicalNormalEnergy,
+        float localRestitutionNormalEnergy,
+        bool allowTransportTransfer)
+    {
+        float mass =
+            EqualizerMass;
+
+        float incomingTransportSpeed =
+            oscillationFrame.valid &&
+            oscillationFrame.tangent.sqrMagnitude >
+                ImpactEnergyEpsilon
+                ? Mathf.Max(
+                    0f,
+                    Vector3.Dot(
+                        incidentVelocity,
+                        oscillationFrame.tangent.normalized))
+                : 0f;
+
+        float incomingTransportEnergy =
+            0.5f *
+            mass *
+            incomingTransportSpeed *
+            incomingTransportSpeed;
+
+        float minimumTransportSpeed =
+            incomingTransportSpeed *
+            Mathf.Clamp01(
+                MinimumGameTransportRetention);
+
+        float minimumTransportEnergy =
+            0.5f *
+            mass *
+            minimumTransportSpeed *
+            minimumTransportSpeed;
+
+        float borrowableTransportEnergy =
+            Mathf.Max(
+                0f,
+                incomingTransportEnergy -
+                minimumTransportEnergy);
+
+        float safeCanonicalNormalEnergy =
+            Mathf.Max(
+                0f,
+                canonicalNormalEnergy);
+
+        float safeLocalRestitutionNormalEnergy =
+            Mathf.Max(
+                safeCanonicalNormalEnergy,
+                Mathf.Max(
+                    0f,
+                    localRestitutionNormalEnergy));
+
+        float normalEnergyShortfall =
+            Mathf.Max(
+                0f,
+                safeLocalRestitutionNormalEnergy -
+                safeCanonicalNormalEnergy);
+
+        float transferredTransportEnergy =
+            allowTransportTransfer
+                ? Mathf.Min(
+                    normalEnergyShortfall,
+                    borrowableTransportEnergy)
+                : 0f;
+
+        float plannedTransportEnergy =
+            Mathf.Max(
+                0f,
+                incomingTransportEnergy -
+                transferredTransportEnergy);
+
+        float plannedNormalEnergy =
+            Mathf.Min(
+                safeLocalRestitutionNormalEnergy,
+                safeCanonicalNormalEnergy +
+                transferredTransportEnergy);
+
+        float plannedTransportSpeed =
+            Mathf.Sqrt(
+                Mathf.Max(
+                    0f,
+                    2f *
+                    plannedTransportEnergy /
+                    mass));
+
+        float plannedOscillationSpeed =
+            Mathf.Sqrt(
+                Mathf.Max(
+                    0f,
+                    2f *
+                    plannedNormalEnergy /
+                    mass));
+
+        return new ReflectionEnergyBudget
+        {
+            valid =
+                oscillationFrame.valid,
+
+            incomingTransportSpeed =
+                incomingTransportSpeed,
+
+            incomingTransportEnergy =
+                incomingTransportEnergy,
+
+            minimumTransportSpeed =
+                minimumTransportSpeed,
+
+            minimumTransportEnergy =
+                minimumTransportEnergy,
+
+            borrowableTransportEnergy =
+                borrowableTransportEnergy,
+
+            canonicalNormalEnergy =
+                safeCanonicalNormalEnergy,
+
+            localRestitutionNormalEnergy =
+                safeLocalRestitutionNormalEnergy,
+
+            normalEnergyShortfall =
+                normalEnergyShortfall,
+
+            transferredTransportEnergy =
+                transferredTransportEnergy,
+
+            plannedTransportEnergy =
+                plannedTransportEnergy,
+
+            plannedNormalEnergy =
+                plannedNormalEnergy,
+
+            plannedTransportSpeed =
+                plannedTransportSpeed,
+
+            plannedOscillationSpeed =
+                plannedOscillationSpeed
+        };
+    }
+
+
     private CleanImpactSolveResult SolveCleanImpactVelocity(
         ContactFrame frame,
-        float requestedOscillationSpeed)
+        ReflectionEnergyBudget reflectionBudget)
     {
         Vector3 tangent =
             oscillationFrame.tangent.normalized;
@@ -3484,9 +3688,16 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 tangent);
 
         float transportSpeed =
-            Mathf.Max(
-                0f,
-                rawTransportSpeed);
+            reflectionBudget.valid
+                ? Mathf.Max(
+                    0f,
+                    reflectionBudget.plannedTransportSpeed)
+                : Mathf.Max(
+                    0f,
+                    rawTransportSpeed);
+
+        float plannedTransportSpeed =
+            transportSpeed;
 
         bool forwardGuardApplied =
             rawTransportSpeed < 0f;
@@ -3496,10 +3707,15 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 frame.incidentVelocity,
                 lateral);
 
+        float requestedOscillationSpeed =
+            reflectionBudget.valid
+                ? Mathf.Max(
+                    0f,
+                    reflectionBudget.plannedOscillationSpeed)
+                : 0f;
+
         float oscillationSpeed =
-            Mathf.Max(
-                0f,
-                requestedOscillationSpeed);
+            requestedOscillationSpeed;
 
         Vector3 desiredVelocity =
             tangent *
@@ -3538,10 +3754,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         bool oscillationReduced =
             false;
 
-        // Canonical solve never sacrifices T.  Contact Authority is expected
-        // to choose a face that can be satisfied while preserving transport.
-        // If that assumption fails, return requiresEmergency and let Unity's
-        // contact solver be the last resort instead of collapsing vT to zero.
+        // T may already be lower than the incident value because of the deliberate
+        // energy redistribution above. From this point onward the canonical
+        // constraint solve does NOT reduce T again. Contact Authority is expected
+        // to choose a face that separates with this planned T/N allocation.
+        // If that fails, fall back to the strict Emergency path (without transfer).
         if (separationSpeed < 0f)
         {
             float deficit =
@@ -3642,6 +3859,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                   preTransportSpeed
                 : 1f;
 
+        float constraintTransportRetention =
+            plannedTransportSpeed >
+            ImpactEnergyEpsilon
+                ? transportSpeed /
+                  plannedTransportSpeed
+                : 1f;
+
         bool severeTransportLoss =
             preTransportSpeed >
             MinimumImpactNormalSpeed &&
@@ -3674,8 +3898,10 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         {
             velocity = finalVelocity,
             preTransportSpeed = preTransportSpeed,
+            plannedTransportSpeed = plannedTransportSpeed,
             postTransportSpeed = transportSpeed,
             transportRetention = transportRetention,
+            constraintTransportRetention = constraintTransportRetention,
             requestedOscillationSpeed = requestedOscillationSpeed,
             finalOscillationSpeed = oscillationSpeed,
             finalOscillationEnergy = finalOscillationEnergy,
@@ -4001,6 +4227,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                   rawTransportSpeed
                 : 1f;
 
+        float constraintTransportRetention =
+            transportRetention;
+
         bool severeTransportLoss =
             rawTransportSpeed >
             MinimumImpactNormalSpeed &&
@@ -4020,8 +4249,10 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         {
             velocity = velocity,
             preTransportSpeed = rawTransportSpeed,
+            plannedTransportSpeed = rawTransportSpeed,
             postTransportSpeed = transportSpeed,
             transportRetention = transportRetention,
+            constraintTransportRetention = constraintTransportRetention,
             requestedOscillationSpeed = requestedOscillationSpeed,
             finalOscillationSpeed = oscillationSpeed,
             finalOscillationEnergy = finalOscillationEnergy,
@@ -4087,12 +4318,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     // Impact geometry / orthogonal decomposition
     // ================================================================
 
-    private float EstimateRequestedOscillationSpeedForSelection(
+    private ReflectionEnergyBudget EstimateReflectionEnergyBudgetForSelection(
         bool envelopeContact,
         Vector3 incidentVelocity)
     {
         if (!oscillationFrame.valid)
-            return 0f;
+            return default;
 
         Vector3 outgoingAxis =
             envelopeContact
@@ -4109,7 +4340,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         if (incomingSpeed <
             MinimumImpactNormalSpeed)
         {
-            return 0f;
+            return BuildReflectionEnergyBudget(
+                incidentVelocity,
+                0f,
+                0f,
+                false);
         }
 
         float incomingEnergy =
@@ -4128,29 +4363,37 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             restitution *
             restitution;
 
-        float requestedEnergy =
+        float localRestitutionNormalEnergy =
             incomingEnergy *
             impactContraction;
 
-        // Selection uses the same single-reservoir budget as ApplyImpactMap.
-        // This prevents a high-N Unity solver/contact sample from advertising
-        // more outgoing N energy than the canonical ledger permits.
-        if (currentCanonicalOscillationEnergy >
-            ImpactEnergyEpsilon)
-        {
-            requestedEnergy =
-                Mathf.Min(
-                    requestedEnergy,
-                    currentCanonicalOscillationEnergy *
-                    impactContraction);
-        }
-
-        return Mathf.Sqrt(
+        float previousCanonicalNormalEnergy =
             Mathf.Max(
                 0f,
-                2f *
-                requestedEnergy /
-                EqualizerMass));
+                currentCanonicalOscillationEnergy);
+
+        float canonicalEnergyCeiling =
+            previousCanonicalNormalEnergy >
+                ImpactEnergyEpsilon
+                ? previousCanonicalNormalEnergy *
+                  impactContraction
+                : localRestitutionNormalEnergy;
+
+        float canonicalNormalEnergy =
+            Mathf.Min(
+                localRestitutionNormalEnergy,
+                canonicalEnergyCeiling);
+
+        canonicalNormalEnergy =
+            Mathf.Max(
+                0f,
+                canonicalNormalEnergy);
+
+        return BuildReflectionEnergyBudget(
+            incidentVelocity,
+            canonicalNormalEnergy,
+            localRestitutionNormalEnergy,
+            true);
     }
 
 
@@ -4229,10 +4472,15 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 ? -oscillationFrame.normal.normalized
                 : oscillationFrame.normal.normalized;
 
-        float requestedOscillationSpeed =
-            EstimateRequestedOscillationSpeedForSelection(
+        ReflectionEnergyBudget selectionReflectionBudget =
+            EstimateReflectionEnergyBudgetForSelection(
                 envelopeContact,
                 incidentVelocity);
+
+        float requestedOscillationSpeed =
+            selectionReflectionBudget.valid
+                ? selectionReflectionBudget.plannedOscillationSpeed
+                : 0f;
 
         float incidentSpeed =
             Mathf.Max(
@@ -4240,11 +4488,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 ImpactEnergyEpsilon);
 
         float transportSpeed =
-            Mathf.Max(
-                0f,
-                Vector3.Dot(
-                    incidentVelocity,
-                    tangent));
+            selectionReflectionBudget.valid
+                ? selectionReflectionBudget.plannedTransportSpeed
+                : Mathf.Max(
+                    0f,
+                    Vector3.Dot(
+                        incidentVelocity,
+                        tangent));
 
         float lateralSpeed =
             Vector3.Dot(
@@ -4612,6 +4862,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             preTransportSpeed = 0f,
             postTransportSpeed = 0f,
             transportRetention = 1f,
+            constraintTransportRetention = 1f,
             requestedOutgoingOscillationSpeed = 0f,
             finalOutgoingOscillationSpeed = 0f,
             finalOutgoingOscillationEnergy = 0f,
@@ -4671,6 +4922,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         lastContactWallness = 0f;
         lastFinalSeparationSpeed = 0f;
         lastFinalOscillationEnergy = 0f;
+
+        lastCanonicalDampingEnergy = 0f;
+        lastReflectionTargetNormalEnergy = 0f;
+        lastReflectionEnergyShortfall = 0f;
+        lastBorrowableTransportEnergy = 0f;
+        lastTransferredTransportToNormalEnergy = 0f;
+        lastActualTransferredTransportToNormalEnergy = 0f;
     }
 
 
@@ -4707,8 +4965,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 ? frame.oscillationIncomingEnergy
                 : frame.normalEnergy;
 
-        // Glancing / incidental contact does not manufacture a bounce and does
-        // not advance the canonical damping ledger.
         if (incomingSpeed <
             MinimumImpactNormalSpeed)
         {
@@ -4734,14 +4990,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 0f,
                 currentCanonicalOscillationEnergy);
 
-        // Single monotone Stable-N reservoir:
-        //
-        //     E_next <= e^2 * E_current
-        //     E_next <= e^2 * E_in
-        //
-        // The first inequality makes damping obvious even when constant
-        // Stable-N acceleration restores kinetic energy between impacts.
-        // The second is the ordinary restitution limit of the current contact.
         float canonicalEnergyCeiling =
             previousCanonicalNormalEnergy >
                 ImpactEnergyEpsilon
@@ -4762,20 +5010,40 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         float mass =
             EqualizerMass;
 
-        // Emergency contacts are constraint events, not energy sources.
-        // The current canonical reservoir is a historical upper bound, but the
-        // present impact has already requested a contracted output:
-        //
-        //     E_requested = min(e^2 * E_in, e^2 * E_canonical,current)
-        //
-        // Emergency geometry may change the direction needed for nonpenetration,
-        // but it must never relax that damping request:
-        //
-        //     E_emergency,out
-        //         <= min(E_canonical,current, E0, E_requested)
-        //
-        // Therefore even a non-canonical boundary face cannot increase Stable-N
-        // energy above the amount allowed by this impact.
+        ReflectionEnergyBudget reflectionBudget =
+            BuildReflectionEnergyBudget(
+                frame.incidentVelocity,
+                requestedMappedNormalEnergy,
+                localMappedNormalEnergy,
+                useOscillationMap &&
+                frame.canonicalContact);
+
+        float canonicalRequestedOutgoingNormalSpeed =
+            Mathf.Sqrt(
+                Mathf.Max(
+                    0f,
+                    2f *
+                    requestedMappedNormalEnergy /
+                    mass));
+
+        if (canonicalRequestedOutgoingNormalSpeed <
+            MinimumImpactNormalSpeed)
+        {
+            canonicalRequestedOutgoingNormalSpeed =
+                0f;
+
+            requestedMappedNormalEnergy =
+                0f;
+
+            reflectionBudget =
+                BuildReflectionEnergyBudget(
+                    frame.incidentVelocity,
+                    0f,
+                    localMappedNormalEnergy,
+                    useOscillationMap &&
+                    frame.canonicalContact);
+        }
+
         float emergencyOscillationEnergyCeiling =
             Mathf.Max(
                 0f,
@@ -4795,80 +5063,33 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                     sourceEnergyCeiling);
         }
 
-        // Strict contraction invariant for Emergency contacts.
-        // If the normal impact map asks for zero energy, Emergency also receives
-        // zero Stable-N budget and must satisfy nonpenetration by removing L/T
-        // components instead of manufacturing N energy.
         emergencyOscillationEnergyCeiling =
             Mathf.Min(
                 emergencyOscillationEnergyCeiling,
                 requestedMappedNormalEnergy);
 
-        float requestedOutgoingNormalSpeed =
-            Mathf.Sqrt(
-                Mathf.Max(
-                    0f,
-                    2f *
-                    requestedMappedNormalEnergy /
-                    mass));
-
-        if (requestedOutgoingNormalSpeed <
-            MinimumImpactNormalSpeed)
-        {
-            requestedOutgoingNormalSpeed =
-                0f;
-
-            requestedMappedNormalEnergy =
-                0f;
-        }
-
         Vector3 mappedOutgoingVelocity =
             ballVisualEqualizer.velocity;
 
-        float finalOutgoingNormalSpeed =
-            0f;
+        float finalOutgoingNormalSpeed = 0f;
+        float finalMappedNormalEnergy = 0f;
+        float constraintCorrectionSpeed = 0f;
+        float preTransportSpeed = 0f;
+        float plannedTransportSpeed = 0f;
+        float postTransportSpeed = 0f;
+        float transportRetention = 1f;
+        float constraintTransportRetention = 1f;
+        float contactWallness = frame.contactWallness;
+        float finalSeparationSpeed = 0f;
 
-        float finalMappedNormalEnergy =
-            0f;
+        bool forwardGuardApplied = false;
+        bool oscillationReducedByConstraint = false;
+        bool severeTransportLoss = false;
+        bool physicsClean = false;
+        bool canonicalApplied = false;
+        bool emergencyUsed = false;
 
-        float constraintCorrectionSpeed =
-            0f;
-
-        float preTransportSpeed =
-            0f;
-
-        float postTransportSpeed =
-            0f;
-
-        float transportRetention =
-            1f;
-
-        float contactWallness =
-            frame.contactWallness;
-
-        float finalSeparationSpeed =
-            0f;
-
-        bool forwardGuardApplied =
-            false;
-
-        bool oscillationReducedByConstraint =
-            false;
-
-        bool severeTransportLoss =
-            false;
-
-        bool physicsClean =
-            false;
-
-        bool canonicalApplied =
-            false;
-
-        bool emergencyUsed =
-            false;
-
-        float gameImpactQuality =
-            0f;
+        float gameImpactQuality = 0f;
 
         if (useOscillationMap)
         {
@@ -4879,7 +5100,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 solved =
                     SolveCleanImpactVelocity(
                         frame,
-                        requestedOutgoingNormalSpeed);
+                        reflectionBudget);
 
                 if (solved.requiresEmergency ||
                     !solved.physicsClean)
@@ -4887,16 +5108,14 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                     solved =
                         BuildEmergencyContactResult(
                             frame,
-                            requestedOutgoingNormalSpeed,
+                            canonicalRequestedOutgoingNormalSpeed,
                             emergencyOscillationEnergyCeiling);
 
-                    emergencyUsed =
-                        true;
+                    emergencyUsed = true;
                 }
                 else
                 {
-                    canonicalApplied =
-                        true;
+                    canonicalApplied = true;
                 }
             }
             else
@@ -4904,66 +5123,38 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 solved =
                     BuildEmergencyContactResult(
                         frame,
-                        requestedOutgoingNormalSpeed,
+                        canonicalRequestedOutgoingNormalSpeed,
                         emergencyOscillationEnergyCeiling);
 
-                emergencyUsed =
-                    true;
+                emergencyUsed = true;
             }
 
-            mappedOutgoingVelocity =
-                solved.velocity;
-
-            finalOutgoingNormalSpeed =
-                solved.finalOscillationSpeed;
-
-            finalMappedNormalEnergy =
-                solved.finalOscillationEnergy;
-
-            constraintCorrectionSpeed =
-                solved.correctionSpeed;
-
-            preTransportSpeed =
-                solved.preTransportSpeed;
-
-            postTransportSpeed =
-                solved.postTransportSpeed;
-
-            transportRetention =
-                solved.transportRetention;
-
-            contactWallness =
-                solved.wallness;
-
-            finalSeparationSpeed =
-                solved.finalSeparationSpeed;
-
-            forwardGuardApplied =
-                solved.forwardGuardApplied;
-
-            oscillationReducedByConstraint =
-                solved.oscillationReduced;
-
-            severeTransportLoss =
-                solved.severeTransportLoss;
-
-            physicsClean =
-                solved.physicsClean;
-
-            gameImpactQuality =
-                solved.gameQuality01;
+            mappedOutgoingVelocity = solved.velocity;
+            finalOutgoingNormalSpeed = solved.finalOscillationSpeed;
+            finalMappedNormalEnergy = solved.finalOscillationEnergy;
+            constraintCorrectionSpeed = solved.correctionSpeed;
+            preTransportSpeed = solved.preTransportSpeed;
+            plannedTransportSpeed = solved.plannedTransportSpeed;
+            postTransportSpeed = solved.postTransportSpeed;
+            transportRetention = solved.transportRetention;
+            constraintTransportRetention = solved.constraintTransportRetention;
+            contactWallness = solved.wallness;
+            finalSeparationSpeed = solved.finalSeparationSpeed;
+            forwardGuardApplied = solved.forwardGuardApplied;
+            oscillationReducedByConstraint = solved.oscillationReduced;
+            severeTransportLoss = solved.severeTransportLoss;
+            physicsClean = solved.physicsClean;
+            gameImpactQuality = solved.gameQuality01;
         }
         else
         {
-            // Stable frame unavailable: keep the deterministic normal fallback,
-            // but do not promote it into the canonical Poincare ledger.
             mappedOutgoingVelocity =
                 frame.tangentVelocity +
                 frame.normal *
-                requestedOutgoingNormalSpeed;
+                canonicalRequestedOutgoingNormalSpeed;
 
             finalOutgoingNormalSpeed =
-                requestedOutgoingNormalSpeed;
+                canonicalRequestedOutgoingNormalSpeed;
 
             finalMappedNormalEnergy =
                 requestedMappedNormalEnergy;
@@ -4985,22 +5176,45 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         if (canonicalApplied)
         {
-            // Canonical geometry may only contract the requested damping map.
             finalMappedNormalEnergy =
                 Mathf.Min(
-                    requestedMappedNormalEnergy,
+                    reflectionBudget.plannedNormalEnergy,
                     Mathf.Max(
                         0f,
                         finalMappedNormalEnergy));
         }
         else
         {
-            // Emergency / fallback values are observations, not ledger writes.
             finalMappedNormalEnergy =
                 Mathf.Max(
                     0f,
                     finalMappedNormalEnergy);
         }
+
+        float canonicalDampingEnergyAfterImpact =
+            canonicalApplied
+                ? Mathf.Min(
+                    requestedMappedNormalEnergy,
+                    finalMappedNormalEnergy)
+                : 0f;
+
+        float plannedTransferredEnergy =
+            canonicalApplied
+                ? reflectionBudget.transferredTransportEnergy
+                : 0f;
+
+        float actualTransferredEnergy =
+            canonicalApplied
+                ? Mathf.Max(
+                    0f,
+                    finalMappedNormalEnergy -
+                    canonicalDampingEnergyAfterImpact)
+                : 0f;
+
+        float appliedRequestedOscillationSpeed =
+            canonicalApplied
+                ? reflectionBudget.plannedOscillationSpeed
+                : canonicalRequestedOutgoingNormalSpeed;
 
         ballVisualEqualizer.velocity =
             mappedOutgoingVelocity;
@@ -5016,9 +5230,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         else
             lowerImpactCount++;
 
-        // T is observation-only. Real Upper/Stairway impacts anchor phase below;
-        // no T/2 deadline is consumed and no boundary steering is applied.
-
         if (canonicalApplied)
         {
             canonicalImpactCount++;
@@ -5030,7 +5241,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 frame.canonicalContact &&
                 physicsClean &&
                 !severeTransportLoss &&
-                transportRetention >=
+                constraintTransportRetention >=
                     ExperimentMinimumTransportRetention &&
                 frame.contactOscillationAlignment >=
                     ExperimentMinimumContactAlignment;
@@ -5053,14 +5264,13 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                     preTransportSpeed);
             }
 
-            // Feasibility follows the actually applied canonical energy only.
             currentCanonicalOscillationEnergy =
-                finalMappedNormalEnergy;
+                canonicalDampingEnergyAfterImpact;
 
             UpdateCanonicalEnergyCoupling();
 
             if (finalMappedNormalEnergy >
-                incomingEnergy +
+                localMappedNormalEnergy +
                 ImpactEnergyEpsilon)
             {
                 releaseDampingViolationCount++;
@@ -5068,7 +5278,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
             if (previousCanonicalNormalEnergy >
                     ImpactEnergyEpsilon &&
-                finalMappedNormalEnergy >
+                canonicalDampingEnergyAfterImpact >
                     canonicalEnergyCeiling +
                     ImpactEnergyEpsilon)
             {
@@ -5079,12 +5289,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         {
             emergencyImpactCount++;
 
-            // Strict Emergency is now provably contractive:
-            // Eout <= E_requested <= e^2 * Ein.
-            // Therefore the scalar canonical reservoir must follow the energy that
-            // was actually applied, otherwise Envelope epsilon would keep stale
-            // pre-emergency energy.  No boundary-specific history exists; the
-            // single canonical reservoir alone remains authoritative.
             bool emergencyEnergySafe =
                 useOscillationMap &&
                 physicsClean &&
@@ -5112,13 +5316,17 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 }
             }
         }
+
         bool dampingSuccess =
             canonicalApplied &&
-            finalMappedNormalEnergy <=
+            canonicalDampingEnergyAfterImpact <=
                 localMappedNormalEnergy +
                 ImpactEnergyEpsilon &&
-            finalMappedNormalEnergy <=
+            canonicalDampingEnergyAfterImpact <=
                 canonicalEnergyCeiling +
+                ImpactEnergyEpsilon &&
+            finalMappedNormalEnergy <=
+                localMappedNormalEnergy +
                 ImpactEnergyEpsilon;
 
         bool transportSuccess =
@@ -5181,11 +5389,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                   impactCount
                 : 0f;
 
-        lastGameImpactQuality =
-            gameImpactQuality;
-
-        accumulatedGameImpactQuality +=
-            gameImpactQuality;
+        lastGameImpactQuality = gameImpactQuality;
+        accumulatedGameImpactQuality += gameImpactQuality;
 
         averageGameImpactQuality =
             impactCount > 0
@@ -5196,23 +5401,32 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         lastContactConstraintCorrectionSpeed =
             constraintCorrectionSpeed;
 
-        lastPreTransportSpeed =
-            preTransportSpeed;
+        lastPreTransportSpeed = preTransportSpeed;
+        lastPostTransportSpeed = postTransportSpeed;
+        lastTransportRetention = transportRetention;
+        lastContactWallness = contactWallness;
+        lastFinalSeparationSpeed = finalSeparationSpeed;
+        lastFinalOscillationEnergy = finalMappedNormalEnergy;
 
-        lastPostTransportSpeed =
-            postTransportSpeed;
+        lastCanonicalDampingEnergy =
+            canonicalApplied
+                ? canonicalDampingEnergyAfterImpact
+                : currentCanonicalOscillationEnergy;
 
-        lastTransportRetention =
-            transportRetention;
+        lastReflectionTargetNormalEnergy =
+            localMappedNormalEnergy;
 
-        lastContactWallness =
-            contactWallness;
+        lastReflectionEnergyShortfall =
+            reflectionBudget.normalEnergyShortfall;
 
-        lastFinalSeparationSpeed =
-            finalSeparationSpeed;
+        lastBorrowableTransportEnergy =
+            reflectionBudget.borrowableTransportEnergy;
 
-        lastFinalOscillationEnergy =
-            finalMappedNormalEnergy;
+        lastTransferredTransportToNormalEnergy =
+            plannedTransferredEnergy;
+
+        lastActualTransferredTransportToNormalEnergy =
+            actualTransferredEnergy;
 
         float mappedNormalEnergyRatio =
             incomingEnergy >
@@ -5232,7 +5446,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             canonicalApplied &&
             previousCanonicalNormalEnergy >
             ImpactEnergyEpsilon
-                ? finalMappedNormalEnergy /
+                ? canonicalDampingEnergyAfterImpact /
                   previousCanonicalNormalEnergy
                 : -1f;
 
@@ -5241,17 +5455,10 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 ? finalMappedNormalEnergy
                 : lastMappedNormalEnergy;
 
-        lastImpactNormalEnergyRatio =
-            mappedNormalEnergyRatio;
-
-        lastReservoirEnergyRatio =
-            reservoirEnergyRatio;
-
-        lastEffectiveRestitution =
-            effectiveRestitution;
-
-        lastMappedOutgoingVelocity =
-            mappedOutgoingVelocity;
+        lastImpactNormalEnergyRatio = mappedNormalEnergyRatio;
+        lastReservoirEnergyRatio = reservoirEnergyRatio;
+        lastEffectiveRestitution = effectiveRestitution;
+        lastMappedOutgoingVelocity = mappedOutgoingVelocity;
 
         frame.impactMapApplied =
             canonicalApplied ||
@@ -5261,7 +5468,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             mappedOutgoingVelocity;
 
         frame.requestedOutgoingOscillationSpeed =
-            requestedOutgoingNormalSpeed;
+            appliedRequestedOscillationSpeed;
 
         frame.mappedOutgoingNormalSpeed =
             finalOutgoingNormalSpeed;
@@ -5287,53 +5494,23 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         frame.contactConstraintCorrectionSpeed =
             constraintCorrectionSpeed;
 
-        frame.preTransportSpeed =
-            preTransportSpeed;
-
-        frame.postTransportSpeed =
-            postTransportSpeed;
-
-        frame.transportRetention =
-            transportRetention;
-
-        frame.finalOutgoingOscillationSpeed =
-            finalOutgoingNormalSpeed;
-
-        frame.finalOutgoingOscillationEnergy =
-            finalMappedNormalEnergy;
-
-        frame.contactWallness =
-            contactWallness;
-
-        frame.finalSeparationSpeed =
-            finalSeparationSpeed;
-
-        frame.forwardGuardApplied =
-            forwardGuardApplied;
-
-        frame.oscillationReducedByConstraint =
-            oscillationReducedByConstraint;
-
-        frame.severeTransportLoss =
-            severeTransportLoss;
-
-        frame.emergencyContactGuard =
-            emergencyUsed;
-
-        frame.physicsClean =
-            physicsClean;
-
-        frame.dampingSuccess =
-            dampingSuccess;
-
-        frame.transportSuccess =
-            transportSuccess;
-
-        frame.subjectConverging =
-            subjectConverging;
-
-        frame.gameImpactSuccess =
-            gameImpactSuccess;
+        frame.preTransportSpeed = preTransportSpeed;
+        frame.postTransportSpeed = postTransportSpeed;
+        frame.transportRetention = transportRetention;
+        frame.constraintTransportRetention = constraintTransportRetention;
+        frame.finalOutgoingOscillationSpeed = finalOutgoingNormalSpeed;
+        frame.finalOutgoingOscillationEnergy = finalMappedNormalEnergy;
+        frame.contactWallness = contactWallness;
+        frame.finalSeparationSpeed = finalSeparationSpeed;
+        frame.forwardGuardApplied = forwardGuardApplied;
+        frame.oscillationReducedByConstraint = oscillationReducedByConstraint;
+        frame.severeTransportLoss = severeTransportLoss;
+        frame.emergencyContactGuard = emergencyUsed;
+        frame.physicsClean = physicsClean;
+        frame.dampingSuccess = dampingSuccess;
+        frame.transportSuccess = transportSuccess;
+        frame.subjectConverging = subjectConverging;
+        frame.gameImpactSuccess = gameImpactSuccess;
 
         Debug.Log(
             $"[EQUALIZER IMPACT MAP] " +
@@ -5350,9 +5527,15 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"EinContactN={frame.normalEnergy:F6}J " +
             $"EinOsc={incomingEnergy:F6}J " +
             $"localEoutOsc={localMappedNormalEnergy:F6}J " +
-            $"requestedEoutOsc={requestedMappedNormalEnergy:F6}J " +
+            $"canonicalRequestedEoutOsc={requestedMappedNormalEnergy:F6}J " +
             $"prevCanonicalOscE={previousCanonicalNormalEnergy:F6}J " +
             $"canonicalCeilingOsc={canonicalEnergyCeiling:F6}J " +
+            $"reflectionShortfall={reflectionBudget.normalEnergyShortfall:F6}J " +
+            $"borrowableTE={reflectionBudget.borrowableTransportEnergy:F6}J " +
+            $"transferTtoN={plannedTransferredEnergy:F6}J " +
+            $"actualTransferTtoN={actualTransferredEnergy:F6}J " +
+            $"plannedEoutOsc={reflectionBudget.plannedNormalEnergy:F6}J " +
+            $"canonicalLedgerOut={lastCanonicalDampingEnergy:F6}J " +
             $"EoutOsc={finalMappedNormalEnergy:F6}J " +
             $"canonicalOscE={currentCanonicalOscillationEnergy:F6}J " +
             $"emergencyCeilingOsc={emergencyOscillationEnergyCeiling:F6}J " +
@@ -5362,9 +5545,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"alignment={frame.contactOscillationAlignment:F4} " +
             $"wallness={contactWallness:F4} " +
             $"preVT={preTransportSpeed:F4}m/s " +
+            $"plannedVT={plannedTransportSpeed:F4}m/s " +
             $"postVT={postTransportSpeed:F4}m/s " +
             $"transportRetention={transportRetention:F4} " +
-            $"vOscRequested={requestedOutgoingNormalSpeed:F4}m/s " +
+            $"constraintRetention={constraintTransportRetention:F4} " +
+            $"vOscRequested={appliedRequestedOscillationSpeed:F4}m/s " +
             $"vOscFinal={finalOutgoingNormalSpeed:F4}m/s " +
             $"separation={finalSeparationSpeed:F4}m/s " +
             $"constraintChange={constraintCorrectionSpeed:F4}m/s " +
@@ -5908,6 +6093,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"preVT={lastContactFrame.preTransportSpeed:F4}m/s " +
             $"postVT={lastContactFrame.postTransportSpeed:F4}m/s " +
             $"transportRetention={lastContactFrame.transportRetention:F4} " +
+            $"constraintRetention={lastContactFrame.constraintTransportRetention:F4} " +
             $"vOscRequested={lastContactFrame.requestedOutgoingOscillationSpeed:F4}m/s " +
             $"vOscFinal={lastContactFrame.finalOutgoingOscillationSpeed:F4}m/s " +
             $"separation={lastContactFrame.finalSeparationSpeed:F4}m/s " +
@@ -6044,4 +6230,3 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"BounceCombine={material.bounceCombine}";
     }
 }
-

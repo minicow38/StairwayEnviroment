@@ -21,7 +21,11 @@ using UnityEngine;
 ///
 /// gammaはReleaseからExact LimitまでのSpline移動時間から一度だけ求めます。
 /// First Contact方式選択、Curved Offset、World-Y補正は使用しません。
-/// SlopeStickCore / CorrespondSubjectはREAD ONLYです。
+/// SlopeStickCore / CorrespondSubjectはREAD ONLYです.
+///
+/// BallVisualEqualizerSyncがClean impactでTangential Energyの一部をStable-Nへ
+/// 一時転換しても、その転換分はこのEnvelopeのcanonicalEnergyRatioへ戻しません。
+/// Envelopeは単調減少するCanonical Damping Ledgerだけを受け取ります。
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
@@ -2217,20 +2221,38 @@ private bool TryEvaluateSplineSurfacePhysics(
 
         return TryBuildEnvelopeIfReady();
     }
-    public void SetCanonicalEnergyRatio(
+    /// <summary>
+    /// EqualizerのCanonical Damping Ledgerだけを受け取ります。
+    /// Clean impactでTangential -> Stable-Nへ一時転換した反射Energyは渡しません。
+    /// Active Release中は単調減少のみ許可し、現在のUpper Meshは再生成しません。
+    /// </summary>
+    public void SetCanonicalDampingEnergyRatio(
         float energyRatio)
     {
-        // Scalar energy ledger only.
-        // Active Upper Envelope geometry is immutable for the whole Release.
-        // The next Release rebuilds a new Envelope from its new initial state.
         float requested =
-            Mathf.Clamp01(energyRatio);
+            Mathf.Clamp01(
+                energyRatio);
 
         canonicalEnergyRatio =
             Mathf.Min(
                 canonicalEnergyRatio,
                 requested);
     }
+
+
+    /// <summary>
+    /// 旧API互換。新規コードではSetCanonicalDampingEnergyRatioを使用してください。
+    /// </summary>
+    public void SetCanonicalEnergyRatio(
+        float energyRatio)
+    {
+        SetCanonicalDampingEnergyRatio(
+            energyRatio);
+    }
+
+
+    public float CanonicalDampingEnergyRatio =>
+        canonicalEnergyRatio;
 
 
     private bool TryBuildEnvelopeIfReady()
@@ -2285,4 +2307,3 @@ public sealed class BallVisualEnvelopeSurfaceMarker
 
 
 }
-

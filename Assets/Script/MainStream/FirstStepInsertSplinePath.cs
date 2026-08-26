@@ -88,7 +88,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     List<int> startPattern =new List<int>
     {
-        -1, 0, 0, 0, 0, 0, 0, 0, 0, 0,0,0,0,0,0,0,0
+        -1, 0, -1, 0, -1, 0, -1, 0, -1, 0,-1,0,-1,0,-1,0,0
     };
 
     static readonly Vector3[] Dirs =
