@@ -421,6 +421,7 @@ MonoBehaviour:
     preTransportSpeed: 0
     postTransportSpeed: 0
     transportRetention: 0
+    constraintTransportRetention: 0
     requestedOutgoingOscillationSpeed: 0
     finalOutgoingOscillationSpeed: 0
     finalOutgoingOscillationEnergy: 0
@@ -489,6 +490,12 @@ MonoBehaviour:
   lastContactWallness: 0
   lastFinalSeparationSpeed: 0
   lastFinalOscillationEnergy: 0
+  lastCanonicalDampingEnergy: 0
+  lastReflectionTargetNormalEnergy: 0
+  lastReflectionEnergyShortfall: 0
+  lastBorrowableTransportEnergy: 0
+  lastTransferredTransportToNormalEnergy: 0
+  lastActualTransferredTransportToNormalEnergy: 0
   releaseEvaluationActive: 0
   directSubjectObservedThisRelease: 0
   releaseDampingViolationCount: 0
@@ -2899,7 +2906,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 264172cbfccfe4aad9703e8ceefb4592, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
-  maxGroundSpeed: 16
+  maxGroundSpeed: 24
   GroundAcceleration: 35
   activeTimeScale: 0
   TargetAccelerationLimit: 120

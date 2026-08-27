@@ -91,6 +91,19 @@ public sealed class SlopeStickCore : MonoBehaviour
     bool waitingForTurnGuide;
     Vector3 turnTargetDirection;
 
+    // 旋回後、新しいGuideとVisual回転が揃った瞬間に1回だけ
+    // 5本の横基準へ位置・横速度を整理する。通常移動中は使わない。
+    bool postTurnFiveLinePending;
+
+    public bool IsPostTurnFiveLinePending =>
+        postTurnFiveLinePending;
+
+    public NearestKnotDetector.FiveLineGroup LastPostTurnFiveLineGroup
+    {
+        get;
+        private set;
+    } = NearestKnotDetector.FiveLineGroup.Center;
+
     const float TurnGuideAlignmentMin = 0.8f;
 
     float TargetProgress => Mathf.Clamp01(targetSlopeProgressPercent * .01f);
@@ -169,7 +182,8 @@ public sealed class SlopeStickCore : MonoBehaviour
         currentGuideValid &&
         currentSurfaceValid &&
         currentGuide.isSlope &&
-        !waitingForTurnGuide;
+        !waitingForTurnGuide &&
+        !postTurnFiveLinePending;
 
     public bool IsWaitingForTurnGuide =>
         waitingForTurnGuide;
@@ -412,6 +426,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             !guide.isSlope ||
             !surface.Valid ||
             waitingForTurnGuide ||
+            postTurnFiveLinePending ||
             !knotDetector)
         {
             ResetBallVisualSplineSession();
@@ -819,10 +834,13 @@ public sealed class SlopeStickCore : MonoBehaviour
                 return;
             }
 
-            // 新しいSplineを捕捉した
+            // 新しいSplineを捕捉した。
+            // ただし5ライン補正はVisual側の回転完了後に1回だけ行う。
             waitingForTurnGuide = false;
             driveState = 0f;
         }
+
+        ApplyPostTurnFiveLineCorrection(guide, ref surface);
 
         // Build the stable read-only Spline plan used by BallVisual.
         // This runs only after turn-guide handoff has completed.
@@ -860,6 +878,190 @@ public sealed class SlopeStickCore : MonoBehaviour
                 $"curvature={curvature:F4} " +
                 $"drive={driveState:F3} stick={stickState:F3} " +
                 $"grace={grace} load={load:F3}");
+        }
+    }
+
+    // ================================================================
+    // Post-turn five-line correction
+    // ================================================================
+
+    void ApplyPostTurnFiveLineCorrection(
+        NearestKnotDetector.GuideFrame guide,
+        ref Surface surface)
+    {
+        if (!postTurnFiveLinePending)
+            return;
+
+        // Stage / VisualPlayerRoot のTweenが終わるまでは位置を確定しない。
+        // Pendingは残すので、完了した最初のFixedUpdateだけが補正点になる。
+        if (correspondSubject &&
+            correspondSubject.IsVisualFrameTurning)
+        {
+            return;
+        }
+
+        // 「旋回後に1回だけ」を保証するため、ここから先は成功/失敗に関係なく消費する。
+        postTurnFiveLinePending = false;
+
+        if (!rb ||
+            !knotDetector ||
+            !guide.valid ||
+            !surface.Valid)
+        {
+            return;
+        }
+
+        if (!knotDetector.TryGetFiveLineFrame(
+                guide,
+                surface.side,
+                out NearestKnotDetector.FiveLineFrame frame) ||
+            !frame.valid)
+        {
+            if (logCore)
+            {
+                Debug.LogWarning(
+                    "[CORE FIVE LINE] 3本の対応Splineを取得できなかったため補正を省略しました。",
+                    this);
+            }
+
+            return;
+        }
+
+        Vector3 side = surface.side.normalized;
+
+        // 階段幅を5点へ量子化する。
+        // 左右入力をレーンShiftへ変換する処理ではなく、旋回後の1回限りの整理。
+        NearestKnotDetector.FiveLineGroup bestGroup =
+            NearestKnotDetector.FiveLineGroup.Center;
+
+        Vector3 bestPoint = frame.center;
+        float bestAbsError = float.PositiveInfinity;
+        float bestSignedError = 0f;
+
+        for (int i = 0; i < 5; i++)
+        {
+            NearestKnotDetector.FiveLineGroup group =
+                (NearestKnotDetector.FiveLineGroup)i;
+
+            Vector3 point = frame.GetPoint(group);
+
+            float signedError =
+                Vector3.Dot(
+                    point - rb.position,
+                    side);
+
+            float absError = Mathf.Abs(signedError);
+
+            if (absError < bestAbsError)
+            {
+                bestAbsError = absError;
+                bestSignedError = signedError;
+                bestPoint = point;
+                bestGroup = group;
+            }
+        }
+
+        // 5ラインの幅から大きく外れている場合は、遠距離スナップをしない。
+        // 端のラインから「半レーン分」までは端グループとして許容する。
+        float leftX =
+            Vector3.Dot(
+                frame.left - frame.center,
+                side);
+
+        float rightX =
+            Vector3.Dot(
+                frame.right - frame.center,
+                side);
+
+        float currentX =
+            Vector3.Dot(
+                rb.position - frame.center,
+                side);
+
+        float leftStep =
+            Mathf.Abs(
+                Vector3.Dot(
+                    frame.leftCenter - frame.left,
+                    side));
+
+        float rightStep =
+            Mathf.Abs(
+                Vector3.Dot(
+                    frame.right - frame.centerRight,
+                    side));
+
+        float edgeMargin =
+            Mathf.Max(Eps, Mathf.Min(leftStep, rightStep) * 0.5f);
+
+        float minX = Mathf.Min(leftX, rightX) - edgeMargin;
+        float maxX = Mathf.Max(leftX, rightX) + edgeMargin;
+
+        if (currentX < minX || currentX > maxX)
+        {
+            if (logCore)
+            {
+                Debug.LogWarning(
+                    $"[CORE FIVE LINE] 階段幅外のため補正を省略。 " +
+                    $"x={currentX:F3} range=[{minX:F3},{maxX:F3}]",
+                    this);
+            }
+
+            return;
+        }
+
+        Vector3 positionBefore = rb.position;
+        Vector3 velocityBefore = rb.velocity;
+
+        // 前後位置と接地高さは保持し、横成分だけ最寄り5ラインへ合わせる。
+        rb.position =
+            rb.position +
+            side * bestSignedError;
+
+        // 残った横速度だけをゼロへする。
+        // 法線方向の接地運動や、正方向の接線速度は保存する。
+        float lateralSpeed =
+            Vector3.Dot(
+                rb.velocity,
+                surface.side);
+
+        rb.velocity -=
+            surface.side * lateralSpeed;
+
+        // 旋回後に新しいSplineと逆向きへ進む成分だけ除去する。
+        float tangentSpeed =
+            Vector3.Dot(
+                rb.velocity,
+                surface.tangent);
+
+        if (tangentSpeed < 0f)
+        {
+            rb.velocity -=
+                surface.tangent * tangentSpeed;
+        }
+
+        rb.WakeUp();
+
+        Physics.SyncTransforms();
+        correspondSubject?.SynchronizeNow(true);
+
+        LastPostTurnFiveLineGroup = bestGroup;
+
+        // velocityを変更したので、このFixedUpdateで使うSurface速度成分も更新する。
+        surface = BuildSplineSurface(guide);
+        currentSurface = surface;
+        currentSurfaceValid = surface.Valid;
+
+        // 補正前位置に基づくBallVisual spline sessionは使わない。
+        ResetBallVisualSplineSession();
+
+        if (logCore)
+        {
+            Debug.Log(
+                $"[CORE FIVE LINE] group={bestGroup} " +
+                $"positionBefore={positionBefore:F4} positionAfter={rb.position:F4} " +
+                $"target={bestPoint:F4} lateralCorrection={bestSignedError:F4} " +
+                $"velocityBefore={velocityBefore:F4} velocityAfter={rb.velocity:F4}",
+                this);
         }
     }
 
@@ -1289,6 +1491,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         
         turnTargetDirection = direction;
         waitingForTurnGuide = true;
+        postTurnFiveLinePending = true;
 
         // A turn starts a new logical spline session. Do not let BallVisual
         // reuse a plan anchored to the pre-turn branch.

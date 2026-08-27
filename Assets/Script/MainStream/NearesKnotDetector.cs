@@ -44,6 +44,68 @@ public sealed class NearestKnotDetector : MonoBehaviour
         public float sectionProgress01, sectionLength, distanceFromSectionStart, distanceToSectionEnd;
     }
 
+
+    // ================================================================
+    // Post-turn five-line frame
+    // ================================================================
+
+    public enum FiveLineGroup
+    {
+        Left = 0,
+        LeftCenter = 1,
+        Center = 2,
+        CenterRight = 3,
+        Right = 4
+    }
+
+    [System.Serializable]
+    public struct FiveLineFrame
+    {
+        public bool valid;
+
+        public Vector3 left;
+        public Vector3 leftCenter;
+        public Vector3 center;
+        public Vector3 centerRight;
+        public Vector3 right;
+
+        public int leftSplineIndex;
+        public int centerSplineIndex;
+        public int rightSplineIndex;
+
+        public Vector3 GetPoint(FiveLineGroup group)
+        {
+            switch (group)
+            {
+                case FiveLineGroup.Left:
+                    return left;
+
+                case FiveLineGroup.LeftCenter:
+                    return leftCenter;
+
+                case FiveLineGroup.Center:
+                    return center;
+
+                case FiveLineGroup.CenterRight:
+                    return centerRight;
+
+                case FiveLineGroup.Right:
+                    return right;
+
+                default:
+                    return center;
+            }
+        }
+    }
+
+    struct LateralCandidate
+    {
+        public int splineIndex;
+        public Vector3 point;
+        public float lateral;
+        public float frameDistanceSqr;
+    }
+
     sealed class SegmentInfo
     {
         public int splineIndex, segmentIndex, startKnotIndex, endKnotIndex, sectionIndex = -1;
@@ -294,6 +356,164 @@ public sealed class NearestKnotDetector : MonoBehaviour
             0f,
             sectionLength - targetDistance)
         };
+
+        return true;
+    }
+
+    /// <summary>
+    /// 旋回後の1回限りの横位置整理用READ ONLY API。
+    /// 現在のsegmentIndex / segmentTに対応する3本の平行Splineを取り出し、
+    /// Left / LeftCenter / Center / CenterRight / Right の5点へ展開します。
+    /// CurrentGuide/currentSegmentは変更しません。
+    /// </summary>
+    public bool TryGetFiveLineFrame(
+        GuideFrame anchor,
+        Vector3 side,
+        out FiveLineFrame frame)
+    {
+        frame = default;
+
+        if (!anchor.valid ||
+            anchor.segmentIndex < 0 ||
+            anchor.tangent.sqrMagnitude <= Eps)
+        {
+            return false;
+        }
+
+        if (!splineContainer)
+            return false;
+
+        if (segments.Count == 0 ||
+            cachedSplineCount != splineContainer.Splines.Count)
+        {
+            RebuildCache();
+        }
+
+        if (segments.Count == 0)
+            return false;
+
+        Vector3 lateralAxis = side;
+
+        if (lateralAxis.sqrMagnitude <= Eps)
+        {
+            Vector3 normal =
+                anchor.normal.sqrMagnitude > Eps
+                    ? anchor.normal.normalized
+                    : Vector3.up;
+
+            lateralAxis =
+                Vector3.Cross(
+                    normal,
+                    anchor.tangent);
+        }
+
+        if (lateralAxis.sqrMagnitude <= Eps)
+            return false;
+
+        lateralAxis.Normalize();
+
+        float segmentT = Mathf.Clamp01(anchor.segmentT);
+        Vector3 anchorTangent = anchor.tangent.normalized;
+
+        List<LateralCandidate> candidates =
+            new List<LateralCandidate>(3);
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            SegmentInfo s = segments[i];
+
+            if (s.segmentIndex != anchor.segmentIndex ||
+                s.isSlope != anchor.isSlope)
+            {
+                continue;
+            }
+
+            // 同じKnot番号でも、別方向へ進む無関係な枝は除外する。
+            float tangentAlignment =
+                Mathf.Abs(
+                    Vector3.Dot(
+                        s.tangent,
+                        anchorTangent));
+
+            if (tangentAlignment < 0.9f)
+                continue;
+
+            Vector3 point =
+                Vector3.Lerp(
+                    s.start,
+                    s.end,
+                    segmentT);
+
+            Vector3 delta = point - anchor.point;
+            float lateral = Vector3.Dot(delta, lateralAxis);
+
+            // 横成分を除いた距離。
+            // 同じsegmentIndexを持つ別の遠方経路が存在しても候補から外しやすくする。
+            Vector3 frameDelta =
+                delta - lateralAxis * lateral;
+
+            candidates.Add(
+                new LateralCandidate
+                {
+                    splineIndex = s.splineIndex,
+                    point = point,
+                    lateral = lateral,
+                    frameDistanceSqr = frameDelta.sqrMagnitude
+                });
+        }
+
+        if (candidates.Count < 3)
+            return false;
+
+        // 3本より多いSplineがある場合は、anchorと同じ横断面に最も近い3本を採用する。
+        candidates.Sort(
+            (a, b) =>
+                a.frameDistanceSqr.CompareTo(
+                    b.frameDistanceSqr));
+
+        if (candidates.Count > 3)
+        {
+            candidates.RemoveRange(
+                3,
+                candidates.Count - 3);
+        }
+
+        // travel方向から見たside軸の小さい順を Left -> Center -> Right とする。
+        candidates.Sort(
+            (a, b) =>
+                a.lateral.CompareTo(
+                    b.lateral));
+
+        LateralCandidate left = candidates[0];
+        LateralCandidate center = candidates[1];
+        LateralCandidate right = candidates[2];
+
+        frame =
+            new FiveLineFrame
+            {
+                valid = true,
+
+                left = left.point,
+                leftCenter =
+                    Vector3.Lerp(
+                        left.point,
+                        center.point,
+                        0.5f),
+
+                center = center.point,
+
+                centerRight =
+                    Vector3.Lerp(
+                        center.point,
+                        right.point,
+                        0.5f),
+
+                right = right.point,
+
+                leftSplineIndex = left.splineIndex,
+                centerSplineIndex = center.splineIndex,
+                rightSplineIndex = right.splineIndex
+            };
 
         return true;
     }
