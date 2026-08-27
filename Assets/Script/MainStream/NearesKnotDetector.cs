@@ -57,40 +57,123 @@ public sealed class NearestKnotDetector : MonoBehaviour
     int currentSegment = -1, cachedSplineCount = -1, nextSectionIndex;
     Vector3 lastPosition;
     bool hasLastPosition;
+    Matrix4x4 stableSplineToWorld;
+    bool stableSplineFrameCaptured;
 
     void Start() => RebuildCache();
 
     // RuntimeでSplineを書き換えた場合は、生成完了後に一度呼ぶ。
     public void RebuildCache()
     {
-        segments.Clear(); currentSegment = -1; nextSectionIndex = 0; hasLastPosition = false;
-        if (!splineContainer || splineContainer.Splines.Count == 0) { cachedSplineCount = 0; CurrentGuide = default; return; }
+        // ============================================================
+        // SplineContainer確認
+        // ============================================================
+
+        if (!splineContainer)
+        {
+            cachedSplineCount = 0;
+            CurrentGuide = default;
+            return;
+        }
+
+        // ============================================================
+        // Physics用の安定したSpline座標系を最初の1回だけ保存
+        // ============================================================
+
+        if (!stableSplineFrameCaptured)
+        {
+            stableSplineToWorld = splineContainer.transform.localToWorldMatrix;
+
+            stableSplineFrameCaptured = true;
+
+            Debug.Log(
+                $"[KNOT STABLE FRAME CAPTURED] " +
+                $"position={splineContainer.transform.position:F4} " +
+                $"rotation={splineContainer.transform.eulerAngles:F2}",
+                this);
+        }
+
+        // ============================================================
+        // Cache初期化
+        // ============================================================
+
+        segments.Clear();
+        currentSegment = -1;
+        nextSectionIndex = 0;
+        hasLastPosition = false;
+
+        if (splineContainer.Splines.Count == 0)
+        {
+            cachedSplineCount = 0;
+            CurrentGuide = default;
+            return;
+        }
+
         cachedSplineCount = splineContainer.Splines.Count;
+
+        // ============================================================
+        // Segment再構築
+        // ============================================================
 
         for (int s = 0; s < splineContainer.Splines.Count; s++)
         {
             Spline spline = splineContainer.Splines[s];
-            if (spline == null || spline.Count < 2) continue;
+
+            if (spline == null || spline.Count < 2)
+            {
+                continue;
+            }
+
             int first = segments.Count;
 
             for (int k = 0; k < spline.Count - 1; k++)
             {
-                Vector3 a = splineContainer.transform.TransformPoint((Vector3)spline[k].Position);
-                Vector3 b = splineContainer.transform.TransformPoint((Vector3)spline[k + 1].Position);
-                Vector3 delta = b - a; float length = delta.magnitude;
-                if (length <= Eps) continue;
-                Vector3 tangent = delta / length, normal = BuildUnbankedNormal(tangent);
+                // ★ここが今回の重要な変更点
+                //
+                // 現在のSplineContainerのTransformPointは使わない。
+                // 最初に保存したPhysics用座標系を使う。
+
+                Vector3 a = stableSplineToWorld.MultiplyPoint3x4((Vector3)spline[k].Position);
+
+                Vector3 b = stableSplineToWorld.MultiplyPoint3x4((Vector3)spline[k + 1].Position);
+
+                Vector3 delta = b - a;
+
+                float length = delta.magnitude;
+
+                if (length <= Eps)
+                    continue;
+
+                Vector3 tangent = delta / length;
+
+                Vector3 normal = BuildUnbankedNormal(tangent);
+
                 float angle = Vector3.Angle(normal, Vector3.up);
-                segments.Add(new SegmentInfo {
-                    splineIndex = s, segmentIndex = k, startKnotIndex = k, endKnotIndex = k + 1,
-                    start = a, end = b, tangent = tangent, normal = normal, length = length,
-                    slopeAngle = angle, isSlope = angle >= MinSlopeAngle
-                });
+
+                segments.Add(new SegmentInfo
+                {
+                    splineIndex = s, segmentIndex = k,
+
+                    startKnotIndex = k, endKnotIndex = k + 1,
+
+                    start = a, end = b,
+
+                    tangent = tangent, normal = normal,
+
+                    length = length,
+
+                    slopeAngle = angle,
+
+                    isSlope = angle >= MinSlopeAngle });
             }
 
             int last = segments.Count - 1;
-            if (last < first) continue;
+
+            if (last < first)
+                continue;
+
             PopulateCurvature(first, last);
+
             BuildSlopeSections(first, last);
         }
     }
@@ -133,17 +216,11 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
     // The anchor identifies the logical slope section. This method never
     // changes CurrentGuide/currentSegment; it is a pure read-only look-ahead.
-    public bool TryEvaluateSameSection(
-        GuideFrame anchor,
-        float progress01,
-        out GuideSample sample)
+    public bool TryEvaluateSameSection(GuideFrame anchor, float progress01, out GuideSample sample)
     {
         sample = default;
 
-        if (!anchor.valid ||
-            !anchor.isSlope ||
-            anchor.sectionIndex < 0 ||
-            anchor.splineIndex < 0)
+        if (!anchor.valid || !anchor.isSlope || anchor.sectionIndex < 0 || anchor.splineIndex < 0)
         {
             return false;
         }
@@ -151,8 +228,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
         if (!splineContainer)
             return false;
 
-        if (segments.Count == 0 ||
-            cachedSplineCount != splineContainer.Splines.Count)
+        if (segments.Count == 0 || cachedSplineCount != splineContainer.Splines.Count)
         {
             RebuildCache();
         }
@@ -170,9 +246,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
         {
             SegmentInfo s = segments[i];
 
-            if (s.splineIndex != anchor.splineIndex ||
-                s.sectionIndex != anchor.sectionIndex ||
-                !s.isSlope)
+            if (s.splineIndex != anchor.splineIndex || s.sectionIndex != anchor.sectionIndex || !s.isSlope)
             {
                 continue;
             }
@@ -191,20 +265,11 @@ public sealed class NearestKnotDetector : MonoBehaviour
         if (selected == null)
             return false;
 
-        float localDistance =
-            targetDistance -
-            selected.distanceFromSectionStart;
+        float localDistance = targetDistance - selected.distanceFromSectionStart;
 
-        float segmentT =
-            selected.length > Eps
-                ? Mathf.Clamp01(localDistance / selected.length)
-                : 0f;
+        float segmentT = selected.length > Eps ? Mathf.Clamp01(localDistance / selected.length) : 0f;
 
-        Vector3 point =
-            Vector3.Lerp(
-                selected.start,
-                selected.end,
-                segmentT);
+        Vector3 point = Vector3.Lerp(selected.start, selected.end, segmentT);
 
         sample = new GuideSample
         {
@@ -225,17 +290,15 @@ public sealed class NearestKnotDetector : MonoBehaviour
             sectionLength = sectionLength,
             distanceFromSectionStart = targetDistance,
             distanceToSectionEnd =
-                Mathf.Max(
-                    0f,
-                    sectionLength - targetDistance)
+            Mathf.Max(
+            0f,
+            sectionLength - targetDistance)
         };
 
         return true;
     }
 
-    public bool IsSameSection(
-        GuideFrame a,
-        GuideFrame b)
+    public bool IsSameSection(GuideFrame a, GuideFrame b)
     {
         return
             a.valid &&
@@ -249,27 +312,16 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
     // sectionProgress01 is arc-length normalized in this detector's cached
     // piecewise-linear section, so this is the exact cached-path distance.
-    public bool TryGetDistanceAlongSameSection(
-        GuideFrame anchor,
-        float fromProgress01,
-        float toProgress01,
-        out float distance)
+    public bool TryGetDistanceAlongSameSection(GuideFrame anchor, float fromProgress01, float toProgress01, out float distance)
     {
         distance = 0f;
 
-        if (!anchor.valid ||
-            !anchor.isSlope ||
-            anchor.sectionIndex < 0 ||
-            anchor.sectionLength <= Eps)
+        if (!anchor.valid || !anchor.isSlope || anchor.sectionIndex < 0 || anchor.sectionLength <= Eps)
         {
             return false;
         }
 
-        distance =
-            Mathf.Abs(
-                Mathf.Clamp01(toProgress01) -
-                Mathf.Clamp01(fromProgress01)) *
-            anchor.sectionLength;
+        distance = Mathf.Abs(Mathf.Clamp01(toProgress01) - Mathf.Clamp01(fromProgress01)) * anchor.sectionLength;
 
         return true;
     }

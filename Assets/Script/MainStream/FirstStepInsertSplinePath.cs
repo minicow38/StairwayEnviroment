@@ -25,7 +25,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     [SerializeField] SplineContainer splineBox;
     public GameObject PrimitivePlane;
     public GameObject StairwayPrefab;
-
+    
     [Header("Output Roots")] [Tooltip("PhysicsRoot/CollisionStageRootを設定します。")] [SerializeField]
     Transform collisionStageRoot;
 
@@ -35,6 +35,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     public int ModifyOverrap;
 
     public int ContinuousPattern = 0;
+    private Vector3 ActivePlane;
 
     [SerializeField] string collisionStageRootPath = "/PhysicsRoot/CollisionStageRoot";
     [SerializeField] string renderStageRootPath = "/VisualPlayerRoot/RenderStageRoot";
@@ -78,7 +79,12 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     public Vector3 RootStartpoint = new Vector3(-8.535f, 31.8f, -0.1f);
     public Vector3 stepHandlePoint;
-    public Vector3 ActivePlane;
+    Vector3 previousFlatPosition;
+    Vector3 previousFlatDirection;
+    bool hasPreviousFlat;
+    
+    [SerializeField]
+    float flatShiftThreshold = 12.15f;
     public List<Vector3> PrevInclined;
     public Spline accumulatedSpline;
     public List<int> outcount;
@@ -88,7 +94,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     List<int> startPattern =new List<int>
     {
-        -1, 0, -1, 0, -1, 0, -1, 0, -1, 0,-1,0,-1,0,-1,0,0
+        -1, -1, -1, -1, -1, 0, -1, 0, -1, 0,-1,0,-1,0,-1,0,0
     };
 
     static readonly Vector3[] Dirs =
@@ -162,6 +168,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             return;
         if (outcount.Count==0)
         {
+            hasPreviousFlat = false;
+            previousFlatPosition = Vector3.zero;
+            previousFlatDirection = Vector3.zero;
             ClearGeneratedStage();
             ClearLegacyGeneratedStage();
 
@@ -182,7 +191,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         EnsureWorkingBuffers();
 
 
-        ActivePlane = RootStartpoint;
+       ActivePlane = RootStartpoint;
+        
         StraightStumble = false;
         FirstVertical = false;
         ReverseSpline = false;
@@ -337,7 +347,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (slope)
                 PlaneTime = false;
 
-            Board(start, direction, slope, slope ? scales[plan] : 1);
+            Board(start, direction, slope, slope ? scales[plan] : 1, plan, i);
         }
     }
 
@@ -420,51 +430,273 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         }
     }
 
-    void Board(Vector3 worldStart, Vector3 worldDirection, bool slope, int scale)
+    void Board(
+        Vector3 worldStart,
+        Vector3 worldDirection,
+        bool slope,
+        int scale,
+        int plan,
+        int segmentIndex)
     {
         if (PlaneTime)
             return;
 
-        Vector3 localStart = collisionStageRoot.InverseTransformPoint(worldStart);
-        Vector3 localDirection = collisionStageRoot.InverseTransformVector(worldDirection);
-        float directionSqr = localDirection.sqrMagnitude;
+        // ============================================================
+        // World -> Local
+        // ============================================================
+
+        Vector3 localStart =
+            collisionStageRoot.InverseTransformPoint(worldStart);
+
+        Vector3 localDirection =
+            collisionStageRoot.InverseTransformVector(worldDirection);
+
+        float directionSqr =
+            localDirection.sqrMagnitude;
 
         if (directionSqr <= e2)
             return;
 
-        Vector3 forward = localDirection / Mathf.Sqrt(directionSqr);
-        Vector3 right = Vector3.Cross(up, forward);
-        float rightSqr = right.sqrMagnitude;
+        Vector3 forward =
+            localDirection / Mathf.Sqrt(directionSqr);
+
+        Vector3 right =
+            Vector3.Cross(up, forward);
+
+        float rightSqr =
+            right.sqrMagnitude;
 
         if (rightSqr <= e2)
             return;
 
         right /= Mathf.Sqrt(rightSqr);
+
+        // ============================================================
+        // Position / Rotation / Scale
+        // ============================================================
+
         Vector3 localPosition;
 
         if (scale == 1)
         {
-            localPosition = localStart + localDirection * 0.5f;
+            // PrimitivePlane の中心を区間中央へ置く。
+            localPosition =
+                localStart +
+                localDirection * 0.5f;
         }
         else
         {
             localPosition = localStart;
         }
 
-        Quaternion localRotation = Quaternion.LookRotation(forward, Vector3.Cross(forward, right));
-        Vector3 localScale = slope ? new Vector3(1f, 1f, scale) : Vector3.one;
+        Quaternion localRotation =
+            Quaternion.LookRotation(
+                forward,
+                Vector3.Cross(forward, right));
+
+        Vector3 localScale =
+            slope
+                ? new Vector3(1f, 1f, scale)
+                : Vector3.one;
+
+        // ============================================================
+        // Flat
+        // ============================================================
+
         if (!slope)
         {
-            BoardPair[] arcSlab = TakeBoard(slope, LayerMask.NameToLayer("Slope"), $"ArcSlab{ContinuousPattern+arcSlabCount++}", scale);
-            ApplyBoardPose(arcSlab, localPosition, localDirection, localRotation, localScale);
+            Vector3 currentFlatPosition =
+                worldStart;
+
+            Vector3 currentFlatDirection =
+                worldDirection.sqrMagnitude > e2
+                    ? worldDirection.normalized
+                    : Vector3.zero;
+
+            bool shiftHalf = false;
+
+            float currentProjection = 0f;
+            float previousProjection = 0f;
+            float directDistance = 0f;
+            float robustDistance = 0f;
+            float directionAngle = 0f;
+
+            // ========================================================
+            // 前回の Flat と比較
+            // ========================================================
+
+            if (hasPreviousFlat)
+            {
+                Vector3 delta =
+                    currentFlatPosition -
+                    previousFlatPosition;
+
+                directDistance =
+                    delta.magnitude;
+
+                // 現在の Flat 方向への射影。
+                // Abs を使うため、方向が反転しても距離は正値になる。
+                if (currentFlatDirection.sqrMagnitude > e2)
+                {
+                    currentProjection =
+                        Mathf.Abs(
+                            Vector3.Dot(
+                                delta,
+                                currentFlatDirection));
+                }
+
+                // 前回の Flat 方向への射影。
+                // 90度曲がった場合も距離を拾えるようにする。
+                if (previousFlatDirection.sqrMagnitude > e2)
+                {
+                    previousProjection =
+                        Mathf.Abs(
+                            Vector3.Dot(
+                                delta,
+                                previousFlatDirection));
+                }
+
+                robustDistance =
+                    Mathf.Max(
+                        currentProjection,
+                        previousProjection);
+
+                if (currentFlatDirection.sqrMagnitude > e2 &&
+                    previousFlatDirection.sqrMagnitude > e2)
+                {
+                    directionAngle =
+                        Vector3.Angle(
+                            previousFlatDirection,
+                            currentFlatDirection);
+                }
+
+                // ====================================================
+                // shiftHalf 判定
+                // ====================================================
+
+                bool validPlan =
+                    plan >= 0 &&
+                    plan < startPattern.Count;
+
+                bool currentNonZero =
+                    validPlan &&
+                    startPattern[plan] != 0;
+
+                bool previousNonZero =
+                    plan > 0 &&
+                    plan - 1 < startPattern.Count &&
+                    startPattern[plan - 1] != 0;
+
+                // Build() の点構造に対応した補正対象。
+                //
+                // plan == 0 の非0パターン:
+                //   segment 0 : start -> edge       Flat
+                //   segment 1 : edge -> slopeEnd    Slope
+                //   segment 2 : slopeEnd -> base    Flat  <- 補正候補
+                //
+                // plan > 0 の非0パターン (append):
+                //   segment 0 : start -> edge       Flat  <- 補正候補
+                //   後続 Flat は PlaneTime により重複生成されない。
+                bool correctionSegment =
+                    (plan == 0 && segmentIndex == 2) ||
+                    (plan > 0 && segmentIndex == 0);
+
+                // 従来の距離判定。
+                bool actualGap =
+                    robustDistance >= flatShiftThreshold;
+
+                // -1,-1,-1... のように非0が連続した場合は、
+                // 距離だけでは識別しにくいため plan 構造でも許可する。
+                bool consecutiveNonZero =
+                    previousNonZero &&
+                    currentNonZero &&
+                    segmentIndex == 0;
+
+                shiftHalf =
+                    currentNonZero &&
+                    correctionSegment &&
+                    (actualGap || consecutiveNonZero);
+            }
+
+            // ========================================================
+            // Plane 生成
+            // ========================================================
+
+            BoardPair[] arcSlab =
+                TakeBoard(
+                    false,
+                    LayerMask.NameToLayer("Slope"),
+                    $"ArcSlab{ContinuousPattern + arcSlabCount++}",
+                    scale);
+
+            ApplyBoardPose(
+                arcSlab,
+                localPosition,
+                localDirection,
+                localRotation,
+                localScale,
+                shiftHalf);
+
+            // ========================================================
+            // Debug
+            // ========================================================
+
+            int patternValue =
+                plan >= 0 && plan < startPattern.Count
+                    ? startPattern[plan]
+                    : int.MinValue;
+
+            Debug.Log(
+                $"Flat " +
+                $"plan={plan}, " +
+                $"pattern={patternValue}, " +
+                $"segment={segmentIndex}, " +
+                $"shift={shiftHalf}, " +
+                $"distance={directDistance:F3}, " +
+                $"currentProjection={currentProjection:F3}, " +
+                $"previousProjection={previousProjection:F3}, " +
+                $"robustDistance={robustDistance:F3}, " +
+                $"angle={directionAngle:F1}, " +
+                $"direction={currentFlatDirection}");
+
+            // 次の Flat 判定用に保存する。
+            previousFlatPosition =
+                currentFlatPosition;
+
+            previousFlatDirection =
+                currentFlatDirection;
+
+            hasPreviousFlat = true;
         }
+        // ============================================================
+        // Slope
+        // ============================================================
         else
         {
             BoardPair[] stairway =
-                TakeBoard(slope, LayerMask.NameToLayer("Slope"), $"StairWay{ContinuousPattern+stairwayCount++}", scale);
-            Debug.Log($"StairWay{ContinuousPattern+stairwayCount} " + $"scale={scale}, " + $"start={localStart}, " +
-                      $"direction={localDirection}, " + $"length={localDirection.magnitude}");
-            ApplyBoardPose(stairway, localPosition, localDirection, localRotation, localScale);
+                TakeBoard(
+                    true,
+                    LayerMask.NameToLayer("Slope"),
+                    $"StairWay{ContinuousPattern + stairwayCount++}",
+                    scale);
+
+            Debug.Log(
+                $"StairWay{ContinuousPattern + stairwayCount} " +
+                $"plan={plan}, " +
+                $"segment={segmentIndex}, " +
+                $"scale={scale}, " +
+                $"start={localStart}, " +
+                $"direction={localDirection}, " +
+                $"length={localDirection.magnitude}");
+
+            // Slope 側には Flat 用の半区間補正を掛けない。
+            ApplyBoardPose(
+                stairway,
+                localPosition,
+                localDirection,
+                localRotation,
+                localScale,
+                false);
         }
 
         if (!slope)
@@ -550,43 +782,89 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             renderer.sharedMaterials = materials;
     }
 
-    void ApplyBoardPose(BoardPair[] pairs, Vector3 localPosition, Vector3 localDirection, Quaternion localRotation,
-        Vector3 localScale)
+    void ApplyBoardPose(
+        BoardPair[] pairs,
+        Vector3 localPosition,
+        Vector3 localDirection,
+        Quaternion localRotation,
+        Vector3 localScale,
+        bool shiftHalf)
     {
-        if (pairs == null)
+        if (pairs == null || pairs.Length == 0)
             return;
+
+
+        // ============================================================
+        // 複数枚
+        // ============================================================
 
         if (pairs.Length > 1)
         {
-            Vector3 totalVec = Vector3.zero;
+            Vector3 totalVec =
+                Vector3.zero;
 
             for (int i = 0; i < pairs.Length; i++)
             {
-                BoardPair pair = pairs[i];
+                BoardPair pair =
+                    pairs[i];
 
                 if (pair == null)
                     continue;
 
-                if (i == 0)
-                {
-                    totalVec += localDirection.normalized * 5;
-                }
-                else
-                {
-                    totalVec += localDirection.normalized * 10;
-                }
+                totalVec +=
+                    localDirection.normalized *
+                    (i == 0 ? 5f : 10f);
 
-                ApplyLocalPose(pair.Physics, localPosition + totalVec, localRotation, localScale);
-                ApplyLocalPose(pair.Visual, localPosition + totalVec, localRotation, localScale);
+                ApplyLocalPose(
+                    pair.Physics,
+                    localPosition + totalVec,
+                    localRotation,
+                    localScale);
+
+                ApplyLocalPose(
+                    pair.Visual,
+                    localPosition + totalVec,
+                    localRotation,
+                    localScale);
             }
-        }
-        else
-        {
-            BoardPair pair = pairs[0];
 
-            ApplyLocalPose(pair.Physics, localPosition, localRotation, localScale);
-            ApplyLocalPose(pair.Visual, localPosition, localRotation, localScale);
+            return;
         }
+
+
+        // ============================================================
+        // 1枚
+        // ============================================================
+
+        BoardPair singlePair =
+            pairs[0];
+
+        if (singlePair == null)
+            return;
+
+
+        Vector3 position =
+            localPosition;
+
+
+        if (shiftHalf)
+        {
+            position +=
+                localDirection * 0.5f;
+        }
+
+
+        ApplyLocalPose(
+            singlePair.Physics,
+            position,
+            localRotation,
+            localScale);
+
+        ApplyLocalPose(
+            singlePair.Visual,
+            position,
+            localRotation,
+            localScale);
     }
 
     void ApplyLocalPose(Transform target, Vector3 localPosition, Quaternion localRotation, Vector3 localScale)
