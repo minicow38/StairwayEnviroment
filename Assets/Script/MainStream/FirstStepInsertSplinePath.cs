@@ -16,16 +16,19 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         public Transform Physics;
         public Transform Visual;
     }
-    
-    [SerializeField]
-    NearestKnotDetector knotDetector;
+
+    [Header("Coin Local Placement")] [SerializeField]
+    float coinSpacing = 1.5f;
+
+    [SerializeField] float coinLocalHeight = 0f;
+    [SerializeField] NearestKnotDetector knotDetector;
 
     public MainGameManager ActiveSlopeReciver;
     [Header("Source")] [SerializeField] Transform stairPlane;
     [SerializeField] SplineContainer splineBox;
     public GameObject PrimitivePlane;
     public GameObject StairwayPrefab;
-    
+
     [Header("Output Roots")] [Tooltip("PhysicsRoot/CollisionStageRootを設定します。")] [SerializeField]
     Transform collisionStageRoot;
 
@@ -84,9 +87,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     Vector3 previousFlatPosition;
     Vector3 previousFlatDirection;
     bool hasPreviousFlat;
-    
-    [SerializeField]
-    float flatShiftThreshold = 12.15f;
+
+    [SerializeField] float flatShiftThreshold = 12.15f;
     public List<Vector3> PrevInclined;
     public Spline accumulatedSpline;
     public List<int> outcount;
@@ -94,16 +96,16 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     public (Vector3, Vector3) playBackDownWard;
     public int ActiveTurnPoint;
 
-    List<int> startPattern =new List<int>
+    List<int> startPattern = new List<int>
     {
-        -1, 0, -1, 0, -1, 0, -1, 0, -1, 0,-1,0,-1,0,-1,0,-1
+        -1, 0, -1, 0, -5, 0, -3, 0, -5, 0, -1, 0, -1, 0, -1, 0, -1
     };
 
     private Vector3[] ShiftCoint =
     {
-        new Vector3(-3f,0,0),
-        new Vector3(0,0,0),
-        new Vector3(3f,0,0)
+        new Vector3(-3f, 0, 0),
+        new Vector3(0, 0, 0),
+        new Vector3(3f, 0, 0)
     };
 
     static readonly Vector3[] Dirs =
@@ -146,6 +148,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     float miter2;
     int arcSlabCount;
     int stairwayCount;
+
     void FixedUpdate()
     {
         if (ActiveSlopeReciver.OpenChunkStage)
@@ -153,7 +156,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             ActiveSlopeReciver.OpenChunkStage = false;
             Start();
         }
-        
+
     }
 
     [ContextMenu("RebuildSpline")]
@@ -175,7 +178,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         if (!Prepare() || !EnsureOutputRoots())
             return;
-        if (outcount.Count==0)
+        if (outcount.Count == 0)
         {
             hasPreviousFlat = false;
             previousFlatPosition = Vector3.zero;
@@ -197,11 +200,12 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             });
             Debug.Log("");
         }
+
         EnsureWorkingBuffers();
 
 
-       ActivePlane = RootStartpoint;
-        
+        ActivePlane = RootStartpoint;
+
         StraightStumble = false;
         FirstVertical = false;
         ReverseSpline = false;
@@ -209,8 +213,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         arcSlabCount = 0;
         stairwayCount = 0;
 
-       if(outcount.Count==0)
-        outcount.Clear();
+        if (outcount.Count == 0)
+            outcount.Clear();
 
         Build(0, 0, RootStartpoint);
 
@@ -1160,7 +1164,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     IEnumerator DelayStandOnObject()
     {
         yield return new WaitForSeconds(0.45f);
-        for (int i =  ActiveSlopeReciver.LimitTouchingphase+FirstShift; i <ActiveSlopeReciver.LimitTouchingphase+8+FirstShift; i++)
+        for (int i = ActiveSlopeReciver.LimitTouchingphase + FirstShift;
+             i < ActiveSlopeReciver.LimitTouchingphase + 8 + FirstShift;
+             i++)
         {
             bool DontSeqItem = false;
 
@@ -1169,10 +1175,37 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
             float angleY = StackStairway1[i].transform.localEulerAngles.y;
 
-            DontSeqItem = GeneratePylon(angleY, ActiveStairway1, ActiveStairway2);
+
+            Debug.Log(
+                $"[STAIR] " +
+                $"index={i}, " +
+                $"name={ActiveStairway1.name}, " +
+                $"angleY={angleY:F2}°, " +
+                $"rotationType={GetRotationType(angleY)}, " +
+                $"PhysicsPosition={ActiveStairway1.transform.position}, " +
+                $"PhysicsLocalPosition={ActiveStairway1.transform.localPosition}, " +
+                $"PhysicsEuler={ActiveStairway1.transform.eulerAngles}, " +
+                $"PhysicsLocalEuler={ActiveStairway1.transform.localEulerAngles}, " +
+                $"PhysicsForward={ActiveStairway1.transform.forward}, " +
+                $"VisualPosition={ActiveStairway2.transform.position}, " +
+                $"VisualEuler={ActiveStairway2.transform.eulerAngles}, " +
+                $"VisualForward={ActiveStairway2.transform.forward}",
+                ActiveStairway1);
+
+            DontSeqItem =
+                GeneratePylon(
+                    angleY,
+                    ActiveStairway1,
+                    ActiveStairway2);
+
             if (!DontSeqItem)
-                GenerateCoin(angleY, ActiveStairway1, ActiveStairway2);
-            Debug.Log("");
+            {
+                GenerateCoin(
+                    angleY,
+                    ActiveStairway1,
+                    ActiveStairway2);
+            }
+
         }
 
         if (ActiveSlopeReciver.LimitTouchingphase < 8)
@@ -1184,60 +1217,130 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         Debug.Log("");
     }
 
-    bool GeneratePylon(float angle, GameObject ActiveStairway1, GameObject ActiveStairway2)
+    static string GetRotationType(float angleY)
+    {
+        float y =
+            Mathf.Repeat(angleY, 360f);
+
+        if (Mathf.Abs(Mathf.DeltaAngle(y, 0f)) < 1f)
+            return "Y=0°";
+
+        if (Mathf.Abs(Mathf.DeltaAngle(y, 90f)) < 1f)
+            return "Y=90°";
+
+        if (Mathf.Abs(Mathf.DeltaAngle(y, 180f)) < 1f)
+            return "Y=180°";
+
+        if (Mathf.Abs(Mathf.DeltaAngle(y, 270f)) < 1f)
+            return "Y=270°";
+
+        return $"Y={y:F2}°";
+    }
+
+    bool GeneratePylon(
+        float angle,
+        GameObject ActiveStairway1,
+        GameObject ActiveStairway2)
     {
         bool OnPylon = false;
-        System.Random random = new System.Random();
-        Vector3 CenterOffset = Vector3.zero;
 
+        // 10%で生成
+        int value =
+            UnityEngine.Random.Range(0, 10);
 
-        int value = random.Next(0, 10);
-        Debug.Log("");
-        if (1 > value)
+        if (value < 1)
         {
             OnPylon = true;
         }
 
-        if (OnPylon)
+        if (!OnPylon)
+            return false;
+
+        if (!PylonPrefab ||
+            !ActiveStairway1 ||
+            !ActiveStairway2)
         {
-            if (angle == 270)
-            {
-                CenterOffset = new Vector3(0, 0, -3.3f);
-            }
-
-            if (angle == 0)
-            {
-                CenterOffset = new Vector3(3.3f, 0, 0);
-            }
-            else if (angle == 90)
-            {
-                CenterOffset = new Vector3(0, 0, 3.3f);
-            }
-            else if (angle == 180)
-            {
-                CenterOffset = new Vector3(3.3f, 0, 0);
-            }
-
-            GameObject StageOnPylon = Instantiate(PylonPrefab, CenterOffset + ActiveStairway1.transform.position,
-                Quaternion.identity);
-            GameObject VisualStageOnPylon = Instantiate(PylonPrefab, CenterOffset + ActiveStairway2.transform.position,
-                Quaternion.identity);
-
-            //StageOnPylon.transform.GetComponent<MeshRenderer>().enabled = false;
-            StageOnPylon.transform.name =
-                "Thorn" + StageOnPylon.transform.name + StageOnPylon.transform.GetInstanceID();
-            StageOnPylon.transform.name =
-                "Thorn" + VisualStageOnPylon.transform.name + StageOnPylon.transform.GetInstanceID();
-
-            StageOnPylon.transform.SetParent(ActiveStairway1.transform);
-            VisualStageOnPylon.transform.SetParent(ActiveStairway2.transform);
-            StageOnPylon.transform.localRotation = Quaternion.Euler(-135, 0, 0);
-            VisualStageOnPylon.transform.localRotation = Quaternion.Euler(-135, 0, 0);
-
-            StageOnPylon.transform.localScale = Vector3.one * 1.5f;
+            return false;
         }
 
-        return OnPylon;
+        // =====================================================
+        // 階段ローカル座標
+        // =====================================================
+        //
+        // X : 階段の左右
+        // Y : 階段面からの高さ
+        // Z : 階段の前後
+        //
+        // 階段中心を必ず (0, 0, 0) とする。
+        // =====================================================
+
+        Vector3 localPylonPosition =
+            new Vector3(
+                -3.3f,
+                0.5f,
+                0);
+
+
+        // =====================================================
+        // Physics
+        // =====================================================
+
+        GameObject StageOnPylon =
+            Instantiate(PylonPrefab, ActiveStairway1.transform);
+
+        StageOnPylon.transform.localPosition =
+            localPylonPosition;
+
+        StageOnPylon.transform.localRotation =
+            Quaternion.Euler(-135f, 0f, 0f);
+
+        StageOnPylon.transform.localScale =
+            Vector3.one * 1.5f;
+
+
+        // =====================================================
+        // Visual
+        // =====================================================
+
+        GameObject VisualStageOnPylon =
+            Instantiate(PylonPrefab, ActiveStairway2.transform);
+
+        VisualStageOnPylon.transform.localPosition =
+            localPylonPosition;
+
+        VisualStageOnPylon.transform.localRotation =
+            Quaternion.Euler(-135f, 0f, 0f);
+
+        VisualStageOnPylon.transform.localScale =
+            Vector3.one * 1.5f;
+
+
+        // =====================================================
+        // Name
+        // =====================================================
+
+        StageOnPylon.name =
+            $"Thorn_Physics_{StageOnPylon.GetInstanceID()}";
+
+        VisualStageOnPylon.name =
+            $"Thorn_Visual_{VisualStageOnPylon.GetInstanceID()}";
+
+
+        // =====================================================
+        // Debug
+        // =====================================================
+
+        Debug.Log(
+            $"[PYLON LOCAL] " +
+            $"stair={ActiveStairway1.name}, " +
+            $"angleY={angle:F2}, " +
+            $"local={localPylonPosition}, " +
+            $"physicsWorld={StageOnPylon.transform.position}, " +
+            $"visualWorld={VisualStageOnPylon.transform.position}",
+            StageOnPylon);
+
+
+        return true;
     }
 
     bool GenerateCoin(
@@ -1248,8 +1351,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // 20%で生成
         bool onCoin =
             UnityEngine.Random.Range(0, 10) < 2;
-        int widthCoin=
-            UnityEngine.Random.Range(0, 2);
 
         if (!onCoin)
             return false;
@@ -1261,53 +1362,33 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             return false;
         }
 
+        // =====================================================
+        // 横方向
+        // =====================================================
+
+        // ShiftCoint は
+        //
+        // -3
+        //  0
+        // +3
+        //
+        // の3レーンなので 0～2 を選ぶ。
+        int widthCoin =
+            UnityEngine.Random.Range(
+                0,
+                ShiftCoint.Length);
+
+        float localX =
+            ShiftCoint[widthCoin].x;
+
+
+        // =====================================================
+        // Coin数
+        // =====================================================
+
         // 1～4個
         int coinCount =
             UnityEngine.Random.Range(1, 5);
-
-
-        // =====================================================
-        // Physics側の実際の階段方向
-        // =====================================================
-
-        Vector3 physicsDirection =
-            Vector3.ProjectOnPlane(
-                ActiveStairway1.transform.forward,
-                Vector3.up);
-
-        if (physicsDirection.sqrMagnitude < 0.0001f)
-            return false;
-
-        physicsDirection.Normalize();
-
-
-      
-
-        Vector3 visualDirection =
-            Vector3.ProjectOnPlane(
-                ActiveStairway2.transform.forward,
-                Vector3.up);
-
-        if (visualDirection.sqrMagnitude < 0.0001f)
-            return false;
-
-        visualDirection.Normalize();
-        Vector3 physicsCenterOffset =
-            physicsDirection*(-1f) +
-            Vector3.up*3f;
-
-
-        Vector3 visualCenterOffset =
-            visualDirection*(-1f) +
-            Vector3.up*3f;
-
-        Vector3 physicsCoinStep =
-            physicsDirection * 1.5f +
-            Vector3.down * 2;
-
-        Vector3 visualCoinStep =
-            visualDirection *1.5f +
-            Vector3.down * 2;
 
 
         // =====================================================
@@ -1316,48 +1397,83 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         for (int i = 0; i < coinCount; i++)
         {
-           
-            Vector3 physicsOffset =
-                ShiftCoint[widthCoin]+
-                physicsCenterOffset +
-                physicsCoinStep * i;
+            // -------------------------------------------------
+            // Coin列全体を階段中心 z=0 の周囲に配置
+            // -------------------------------------------------
 
-            Vector3 visualOffset =
-                ShiftCoint[widthCoin]+
-                visualCenterOffset +
-                visualCoinStep * i;
+            float totalLength =
+                (coinCount - 1) *
+                coinSpacing;
+
+            float startZ =
+                -totalLength * 0.5f;
+
+            float localZ =
+                startZ +
+                coinSpacing * i;
 
 
-            // -----------------------------
-            // Physics側
-            // -----------------------------
-           
-           
+            // =================================================
+            // 階段ローカル座標
+            // =================================================
+
+            Vector3 localCoinPosition =
+                new Vector3(
+                    localX,
+                    coinLocalHeight + 1.5f,
+                    localZ);
+
+
+            // =================================================
+            // Physics
+            // =================================================
+
             GameObject physicsCoin =
                 Instantiate(
                     CoinPrefab,
-                    ActiveStairway1.transform.position +
-                    physicsOffset,
-                    Quaternion.identity,
                     ActiveStairway1.transform);
 
+            physicsCoin.transform.localPosition =
+                localCoinPosition;
 
-            // -----------------------------
-            // Visual側
-            // -----------------------------
+            physicsCoin.transform.localRotation =
+                Quaternion.identity;
+
+
+            // =================================================
+            // Visual
+            // =================================================
 
             GameObject visualCoin =
                 Instantiate(
                     CoinPrefab,
-                    ActiveStairway2.transform.position +
-                    visualOffset,
-                    Quaternion.identity,
                     ActiveStairway2.transform);
-            
-            if ( visualCoin.transform.localPosition.z>-5 && visualCoin.transform.localPosition.z<-4)
-            {
-                Debug.Log("");
-            }
+
+            visualCoin.transform.localPosition =
+                localCoinPosition;
+
+            visualCoin.transform.localRotation =
+                Quaternion.identity;
+
+
+            // =================================================
+            // Debug
+            // =================================================
+
+            Debug.Log(
+                $"[COIN LOCAL] " +
+                $"stair={ActiveStairway1.name}, " +
+                $"angleY={angle:F2}, " +
+                $"coin={i}/{coinCount}, " +
+                $"local={localCoinPosition}, " +
+                $"physicsWorld={physicsCoin.transform.position}, " +
+                $"visualWorld={visualCoin.transform.position}");
+
+
+            // =================================================
+            // Name
+            // =================================================
+
             physicsCoin.name =
                 $"Coin_{i}_Physics_{physicsCoin.GetInstanceID()}";
 
@@ -1365,7 +1481,10 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 $"Coin_{i}_Visual_{visualCoin.GetInstanceID()}";
 
 
-            // Physics側は見えなくする
+            // =================================================
+            // Physics側は非表示
+            // =================================================
+
             foreach (Renderer renderer in
                      physicsCoin.GetComponentsInChildren<Renderer>(true))
             {
@@ -1373,14 +1492,16 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             }
 
 
-            // Visual側はColliderを無効化
+            // =================================================
+            // Visual側はCollider無効
+            // =================================================
+
             foreach (Collider collider in
                      visualCoin.GetComponentsInChildren<Collider>(true))
             {
                 collider.enabled = false;
             }
         }
-
 
         return true;
     }
