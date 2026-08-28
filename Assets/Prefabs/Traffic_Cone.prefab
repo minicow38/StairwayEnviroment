@@ -11,17 +11,17 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
         type: 3}
       propertyPath: m_LocalScale.x
-      value: 2
+      value: 2.25
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
         type: 3}
       propertyPath: m_LocalScale.y
-      value: 2
+      value: 2.25
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
         type: 3}
       propertyPath: m_LocalScale.z
-      value: 2
+      value: 2.25
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
         type: 3}
@@ -81,10 +81,40 @@ PrefabInstance:
     - target: {fileID: 919132149155446097, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
         type: 3}
       propertyPath: m_Name
-      value: Traffic Cone
+      value: Traffic_Cone
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
+        type: 3}
+      propertyPath: m_TagString
+      value: Traffic_Corn
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -4784343175322889974}
   m_SourcePrefab: {fileID: 100100000, guid: cc2b8cba35ed83a4d9b5e11caf93afe0, type: 3}
+--- !u!1 &3704034642229052370 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: cc2b8cba35ed83a4d9b5e11caf93afe0,
+    type: 3}
+  m_PrefabInstance: {fileID: 4586412851278708355}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &-4784343175322889974
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3704034642229052370}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e50cd9c1186b62244ad7d7bd71650d99, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  PhysicsMul: {fileID: 0}
+  RendererMul: {fileID: 0}
+  mainGameManger: {fileID: 0}

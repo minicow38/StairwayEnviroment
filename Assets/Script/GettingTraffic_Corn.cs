@@ -1,17 +1,24 @@
 using UnityEngine;
 using System.Text.RegularExpressions;
 using UnityEditor.Rendering;
+using System.Collections;
+using TMPro;
 
-public class GettingItem : MonoBehaviour
+public class GettingTraffic_Corn : MonoBehaviour
 {
     public GameObject PhysicsMul;
     public GameObject RendererMul;
+    public MainGameManager mainGameManger;
+   // public TextMeshUGUI textMesh
+    
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
         PhysicsMul = GameObject.Find("__GeneratedPhysics");
         RendererMul = GameObject.Find("__GeneratedVisualPlayer");
+       // GameObject.Find("StairwayUserbility/Bounus").transform.GetComponent<TextMeshUGUI>();
+        StartCoroutine(delayStart());
     }
 
     // Update is called once per frame
@@ -20,6 +27,14 @@ public class GettingItem : MonoBehaviour
         
     }
 
+    IEnumerator delayStart()
+    {
+        yield return new WaitForSeconds(0.8f);
+        mainGameManger = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
+        Debug.Log("");
+
+    }
+    
     void OnTriggerEnter(Collider other)
     {
         string hit1 = "";
@@ -41,6 +56,7 @@ public class GettingItem : MonoBehaviour
         {
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
+                mainGameManger.Coin++;
                 Destroy(PhysicsMul.transform.gameObject);
             }
             /*if (Regex.Match(PhysicsMul.name,pattern).Success)

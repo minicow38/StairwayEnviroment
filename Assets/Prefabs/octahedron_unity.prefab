@@ -11,17 +11,17 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
       propertyPath: m_LocalScale.x
-      value: 3
+      value: 1.5
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
       propertyPath: m_LocalScale.y
-      value: 3
+      value: 1.5
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
       propertyPath: m_LocalScale.z
-      value: 3
+      value: 1.5
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
@@ -88,6 +88,11 @@ PrefabInstance:
       propertyPath: m_Name
       value: octahedron_unity
       objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 784f0ca18fbb84046b59c3d361f3b044,
+        type: 3}
+      propertyPath: m_TagString
+      value: Coin
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -140,3 +145,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e50cd9c1186b62244ad7d7bd71650d99, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  PhysicsMul: {fileID: 0}
+  RendererMul: {fileID: 0}
+  mainGameManger: {fileID: 0}

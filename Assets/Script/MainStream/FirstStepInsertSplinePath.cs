@@ -77,6 +77,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     public GameObject PylonPrefab;
     public GameObject CoinPrefab;
 
+    public int FirstShift = 0;
+
     public Vector3 RootStartpoint = new Vector3(-8.535f, 31.8f, -0.1f);
     public Vector3 stepHandlePoint;
     Vector3 previousFlatPosition;
@@ -94,7 +96,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     List<int> startPattern =new List<int>
     {
-        -1, -1, -1, -1, -1, 0, -1, 0, -1, 0,-1,0,-1,0,-1,0,0
+        -1, 0, -1, 0, -1, 0, -1, 0, -1, 0,-1,0,-1,0,-1,0,-1
+    };
+
+    private Vector3[] ShiftCoint =
+    {
+        new Vector3(-3f,0,0),
+        new Vector3(0,0,0),
+        new Vector3(3f,0,0)
     };
 
     static readonly Vector3[] Dirs =
@@ -219,7 +228,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         for (int i = 0; i < finalCount; i++)
             PrevInclined.Add(points[finalOffset + i]);
 
-        StartCoroutine(DelayPylon());
+        StartCoroutine(DelayStandOnObject());
         accumulatedSpline = lanes[Center];
         if (knotDetector)
             knotDetector.RebuildCache();
@@ -1148,10 +1157,10 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             Object.DestroyImmediate(target);
     }
 
-    IEnumerator DelayPylon()
+    IEnumerator DelayStandOnObject()
     {
         yield return new WaitForSeconds(0.45f);
-        for (int i = 0; i < StackStairway1.Count; i++)
+        for (int i =  ActiveSlopeReciver.LimitTouchingphase+FirstShift; i <ActiveSlopeReciver.LimitTouchingphase+8+FirstShift; i++)
         {
             bool DontSeqItem = false;
 
@@ -1164,6 +1173,12 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (!DontSeqItem)
                 GenerateCoin(angleY, ActiveStairway1, ActiveStairway2);
             Debug.Log("");
+        }
+
+        if (ActiveSlopeReciver.LimitTouchingphase < 8)
+        {
+            FirstShift = 2;
+            ActiveSlopeReciver.LimitTouchingphase = 8;
         }
 
         Debug.Log("");
@@ -1233,6 +1248,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // 20%で生成
         bool onCoin =
             UnityEngine.Random.Range(0, 10) < 2;
+        int widthCoin=
+            UnityEngine.Random.Range(0, 2);
 
         if (!onCoin)
             return false;
@@ -1299,11 +1316,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         for (int i = 0; i < coinCount; i++)
         {
+           
             Vector3 physicsOffset =
+                ShiftCoint[widthCoin]+
                 physicsCenterOffset +
                 physicsCoinStep * i;
 
             Vector3 visualOffset =
+                ShiftCoint[widthCoin]+
                 visualCenterOffset +
                 visualCoinStep * i;
 
@@ -1311,7 +1331,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             // -----------------------------
             // Physics側
             // -----------------------------
-
+           
+           
             GameObject physicsCoin =
                 Instantiate(
                     CoinPrefab,
@@ -1332,8 +1353,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     visualOffset,
                     Quaternion.identity,
                     ActiveStairway2.transform);
-
-
+            
+            if ( visualCoin.transform.localPosition.z>-5 && visualCoin.transform.localPosition.z<-4)
+            {
+                Debug.Log("");
+            }
             physicsCoin.name =
                 $"Coin_{i}_Physics_{physicsCoin.GetInstanceID()}";
 

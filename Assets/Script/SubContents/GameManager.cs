@@ -10,6 +10,7 @@ public class MainGameManager : MonoBehaviour
     public TextMeshProUGUI uGUI;
     public int CurrentPointToPlane = 0;
     public int lastTouch = 0;
+    public int Coin = 0;
     public bool OpenChunkStage = false;
 
     public int LimitTouchingphase = 4;
@@ -17,6 +18,7 @@ public class MainGameManager : MonoBehaviour
     void Start()
     {
         var width = Screen.width;
+        LimitTouchingphase = 0;
         CurrentPointToPlane = CurrentPointToPlane;
         mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();

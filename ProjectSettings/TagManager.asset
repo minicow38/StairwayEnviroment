@@ -8,6 +8,8 @@ TagManager:
   - plane
   - BallVisual
   - SubjectVisual
+  - Coin
+  - Traffic_Corn
   layers:
   - Default
   - TransparentFX
