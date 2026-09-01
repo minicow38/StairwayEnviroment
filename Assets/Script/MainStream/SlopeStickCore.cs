@@ -821,12 +821,13 @@ public sealed class SlopeStickCore : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
-            Debug.Log("");
+          /*  Debug.Log("");
             mainGameManager.TopTitle.SetActive(false);
             mainGameManager.PreviewIconRoot.SetActive(false);
             mainGameManager.TopLiteral.SetActive(false);
-            mainGameManager.PlayButton.SetActive(false);
-            BeginCommandOnTouch = true;
+            mainGameManager.PlayButton.SetActive(false);*/
+            
+          BeginCommandOnTouch = true;
         }
         // Build the stable read-only Spline plan used by BallVisual.
         // This runs only after turn-guide handoff has completed.

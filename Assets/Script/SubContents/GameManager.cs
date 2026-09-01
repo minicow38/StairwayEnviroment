@@ -30,8 +30,8 @@ public class MainGameManager : MonoBehaviour
         mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();
         
-        TopTitle= GameObject.Find("GameUI/Title").transform.gameObject;
-        PreviewIconRoot= GameObject.Find("GameUI/PreviewIconRoot").transform.gameObject;
+        /*TopTitle= GameObject.Find("GameUI/Title").transform.gameObject;
+       PreviewIconRoot= GameObject.Find("GameUI/PreviewIconRoot").transform.gameObject;
         TopLiteral = GameObject.Find("GameUI/TopLiteral").transform.gameObject;
         PlayButton= GameObject.Find("GameUI/PlayButton").transform.gameObject;
         
@@ -42,7 +42,7 @@ public class MainGameManager : MonoBehaviour
             AndroidOneOnly.bestScore.ToString("");
         displayScore = GameObject.Find("StairwayUserbility/Score/").transform.GetComponent<TextMeshProUGUI>();
         displayCoin = GameObject.Find("StairwayUserbility/Coin/").transform.GetComponent<TextMeshProUGUI>();
-        Debug.Log("");
+        Debug.Log("");*/
     }
 
     // Update is called once per frame
@@ -58,8 +58,8 @@ public class MainGameManager : MonoBehaviour
         }
         if (CurrentPointToPlane != mainDrive.PointToPlane)
         {
-            displayScore.text = mainDrive.PointToPlane.ToString("");
-            displayCoin.text = transform.GetComponent<MainGameManager>().Coin.ToString("");
+            //displayScore.text = mainDrive.PointToPlane.ToString("");
+           // displayCoin.text = transform.GetComponent<MainGameManager>().Coin.ToString("");
         }
     }
 }
