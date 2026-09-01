@@ -932,9 +932,9 @@ public sealed class SlopeStick3D : MonoBehaviour
         return source.rotation;
     }
 
-    IEnumerator DelayStart()
+    IEnumerator DelayStart(float time)
     {
-        yield return new WaitForSeconds(.8f);
+        yield return new WaitForSeconds(time);
         initialHeading = new Vector3(0, 0, 1);
         Time.timeScale = 0.5f;
 
@@ -966,8 +966,10 @@ public sealed class SlopeStick3D : MonoBehaviour
 
         restart = ResolvePhysicsPoint(startSlab.transform);
         Vector3 synchronizedPosition = new Vector3(restart.x, restart.y + 2f, restart.z);
-
+        
+        //開始地点　 開始地点　開始地点
         rb.position = synchronizedPosition;
+       
 
         Vector3 mappedVisualPosition = correspondSubject
             ? correspondSubject.MapPoint(synchronizedPosition)
@@ -1068,7 +1070,7 @@ public sealed class SlopeStick3D : MonoBehaviour
         ResetNaturalArtificialRelease("Awake", false);
         if (resetToStartOnPlay && startTransform)
             ResetBallToStart();
-        StartCoroutine(DelayStart());
+        //StartCoroutine(DelayStart());
         if (writeRuntimeLog)
         {
            // Debug.Log($"[SLOPE STICK VERSION] {ImplementationVersion}", this);
@@ -1924,10 +1926,10 @@ public sealed class SlopeStick3D : MonoBehaviour
         }
         else
         {
-            if (rb.velocity.y < -25f)
+           /* if (rb.velocity.y < -25f)
             {
                 StartCoroutine(DelayStart());
-            }
+            }*/
             
             consecutiveGroundMissFrames++;
             groundNormal = Vector3.up;

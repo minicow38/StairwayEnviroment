@@ -11,6 +11,9 @@ public class MainGameManager : MonoBehaviour
     public TextMeshProUGUI displayCoin;
 
     public GameObject TopLiteral;
+    public GameObject PlayButton;
+    public GameObject TopTitle;
+    public GameObject PreviewIconRoot;
     public int CurrentPointToPlane = 0;
     public int lastTouch = 0;
     public int Coin = 0;
@@ -26,8 +29,12 @@ public class MainGameManager : MonoBehaviour
         CurrentPointToPlane = CurrentPointToPlane;
         mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();
-
+        
+        TopTitle= GameObject.Find("GameUI/Title").transform.gameObject;
+        PreviewIconRoot= GameObject.Find("GameUI/PreviewIconRoot").transform.gameObject;
         TopLiteral = GameObject.Find("GameUI/TopLiteral").transform.gameObject;
+        PlayButton= GameObject.Find("GameUI/PlayButton").transform.gameObject;
+        
         TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
             AndroidOneOnly.currentScore.ToString("");
 

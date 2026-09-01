@@ -1231,7 +1231,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     IEnumerator DelayStandOnObject()
     {
-        yield return new WaitForSeconds(0.45f);
+        yield return new WaitForSeconds(0.1f);
         for (int i = ActiveSlopeReciver.LimitTouchingphase + FirstShift;
              i < ActiveSlopeReciver.LimitTouchingphase + 8 + FirstShift;
              i++)
@@ -1242,23 +1242,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             GameObject ActiveStairway2 = StackStairway2[i];
 
             float angleY = StackStairway1[i].transform.localEulerAngles.y;
-
-
-            Debug.Log(
-                $"[STAIR] " +
-                $"index={i}, " +
-                $"name={ActiveStairway1.name}, " +
-                $"angleY={angleY:F2}°, " +
-                $"rotationType={GetRotationType(angleY)}, " +
-                $"PhysicsPosition={ActiveStairway1.transform.position}, " +
-                $"PhysicsLocalPosition={ActiveStairway1.transform.localPosition}, " +
-                $"PhysicsEuler={ActiveStairway1.transform.eulerAngles}, " +
-                $"PhysicsLocalEuler={ActiveStairway1.transform.localEulerAngles}, " +
-                $"PhysicsForward={ActiveStairway1.transform.forward}, " +
-                $"VisualPosition={ActiveStairway2.transform.position}, " +
-                $"VisualEuler={ActiveStairway2.transform.eulerAngles}, " +
-                $"VisualForward={ActiveStairway2.transform.forward}",
-                ActiveStairway1);
+            
 
             DontSeqItem =
                 GeneratePylon(

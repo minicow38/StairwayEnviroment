@@ -70,6 +70,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(0f)] [SerializeField] float maxStick = 1000f;
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
 
+    [Header("PlayerMotivation")] [SerializeField]
+    private bool BeginCommandOnTouch = false;
     [Header("Debug")]
     [SerializeField] bool logCore;
 
@@ -529,41 +531,22 @@ public sealed class SlopeStickCore : MonoBehaviour
                 targetSide,
                 targetNormal).normalized;
 
-        // The detector's point is the spline guide point, not necessarily the
-        // Rigidbody center. Preserve the current center's side/normal offset
-        // and transport that offset into the target spline basis.
-        Vector3 currentGuideOffset =
-            rb.position -
-            guide.point;
+        
+        Vector3 currentGuideOffset = rb.position - guide.point;
 
-        float sideOffset =
-            Vector3.Dot(
-                currentGuideOffset,
-                surface.side);
+        float sideOffset = Vector3.Dot(currentGuideOffset, surface.side);
 
         float normalOffset =
-            Vector3.Dot(
-                currentGuideOffset,
-                surface.normal);
+            Vector3.Dot(currentGuideOffset, surface.normal);
 
         Vector3 targetCenter =
-            target.point +
-            targetSide * sideOffset +
-            targetNormal * normalOffset;
+            target.point + targetSide * sideOffset + targetNormal * normalOffset;
 
         float targetCurvature =
-            Mathf.Max(
-                0f,
-                Mathf.Max(
-                    target.curvature,
-                    target.entryCurvature));
+            Mathf.Max(0f, Mathf.Max(target.curvature, target.entryCurvature));
 
         float targetGravitySupport =
-            Mathf.Max(
-                0f,
-                Vector3.Dot(
-                    Physics.gravity,
-                    -targetNormal));
+            Mathf.Max(0f, Vector3.Dot(Physics.gravity, -targetNormal));
 
         float targetTangentSpeed =
             maxGroundSpeed;
@@ -574,15 +557,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             // v^2 * curvature * stickSafety - gravitySupport <= maxStick
             // so invert the same inequality at Target Progress.
             float supportedSpeed =
-                Mathf.Sqrt(
-                    Mathf.Max(
-                        0f,
-                        (maxStick +
-                         targetGravitySupport) /
-                        Mathf.Max(
-                            Eps,
-                            targetCurvature *
-                            stickSafety)));
+                Mathf.Sqrt(Mathf.Max(0f, (maxStick + targetGravitySupport) / Mathf.Max(Eps, targetCurvature * stickSafety)));
 
             targetTangentSpeed =
                 Mathf.Min(
@@ -664,6 +639,7 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     void Start()
     {
+        mainGameManager = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
         if (!sub)
             sub = GameObject.Find("InSubject");
                activeTimeScale =Time.timeScale;
@@ -678,9 +654,10 @@ public sealed class SlopeStickCore : MonoBehaviour
         ReadTurnFlick();
     }
 
+   
     IEnumerator delayStart()
     {
-        yield return new WaitForSeconds(.08f);
+        yield return new WaitForSeconds(0.3f);
         //Time.timeScale = 0.25f;
         GameObject startSlab =
             GameObject.Find(
@@ -765,7 +742,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             LoseSupport();
             return;
         }
-
+        
         currentSupported = true;
 
         // Slopeへの切替そのものもSpline判定。
@@ -839,45 +816,56 @@ public sealed class SlopeStickCore : MonoBehaviour
             waitingForTurnGuide = false;
             driveState = 0f;
         }
-
+        
         ApplyPostTurnFiveLineCorrection(guide, ref surface);
 
+        if (Input.GetMouseButtonDown(0))
+        {
+            Debug.Log("");
+            mainGameManager.TopTitle.SetActive(false);
+            mainGameManager.PreviewIconRoot.SetActive(false);
+            mainGameManager.TopLiteral.SetActive(false);
+            mainGameManager.PlayButton.SetActive(false);
+            BeginCommandOnTouch = true;
+        }
         // Build the stable read-only Spline plan used by BallVisual.
         // This runs only after turn-guide handoff has completed.
-        UpdateBallVisualSplinePlan(
-            guide,
-            surface);
-
-        float release = guide.isSlope
-            ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd)
-            : 1f;
-
-        float desiredDrive = DesiredDrive(surface, guide, grace) * release;
-        driveState = Move(driveState, desiredDrive, AccelerationJerk);
-
-        float curvature = SplineCurvature(guide);
-
-        float desiredStick = DesiredStick(surface, guide, driveState, curvature, grace) * release;
-        stickState = Move(stickState, desiredStick, StickJerk);
-
-
-        Vector3 acceleration =
-            surface.tangent * driveState
-            - surface.side * surface.lateralSpeed * ResponseInverse
-            - surface.normal * stickState;
-
-        rb.AddForce(acceleration, ForceMode.Acceleration);
-
-        wasSlope = guide.isSlope;
-
-        if (logCore)
+        if (BeginCommandOnTouch == true)
         {
-            Debug.Log(
-                $"[CORE] speed={surface.tangentSpeed:F3} " +
-                $"progress={guide.sectionProgress01:F3} " +
-                $"curvature={curvature:F4} " +
-                $"drive={driveState:F3} stick={stickState:F3} " +
-                $"grace={grace} load={load:F3}");
+            UpdateBallVisualSplinePlan(
+                guide,
+                surface);
+
+            float release = guide.isSlope
+                ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd)
+                : 1f;
+
+            float desiredDrive = DesiredDrive(surface, guide, grace) * release;
+            driveState = Move(driveState, desiredDrive, AccelerationJerk);
+
+            float curvature = SplineCurvature(guide);
+
+            float desiredStick = DesiredStick(surface, guide, driveState, curvature, grace) * release;
+            stickState = Move(stickState, desiredStick, StickJerk);
+
+
+            Vector3 acceleration =
+                surface.tangent * driveState
+                - surface.side * surface.lateralSpeed * ResponseInverse
+                - surface.normal * stickState;
+
+            rb.AddForce(acceleration, ForceMode.Acceleration);
+
+            wasSlope = guide.isSlope;
+
+            if (logCore)
+            {
+                Debug.Log(
+                    $"[CORE] speed={surface.tangentSpeed:F3} " +
+                    $"progress={guide.sectionProgress01:F3} " +
+                    $"drive={driveState:F3} stick={stickState:F3} " +
+                    $"grace={grace} load={load:F3}");
+            }
         }
     }
 
