@@ -59,12 +59,16 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     [SerializeField] bool turnToPositiveZ = true;
     [SerializeField] bool regularizeTurn = true;
     [SerializeField] bool verticalFalsePair = true;
-
+    
+    
     [Header("Generated Representations")] [SerializeField]
     bool hidePhysicsRenderers = true;
 
     [SerializeField] bool disableVisualColliders = true;
     [SerializeField] bool removeGeneratedRigidbodies = true;
+    
+    [SerializeField]
+    string visualStairwayLayerName = "VisualStairway";
 
     public bool ReverseSpline;
     public bool FirstVertical;
@@ -710,6 +714,42 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 localRotation,
                 localScale,
                 false);
+
+            // ============================================================
+            // Stair Orientation Diagnosis
+            // ============================================================
+
+            Vector3 expectedLocalDirection =
+                localDirection.normalized;
+
+            for (int j = 0; j < stairway.Length; j++)
+            {
+                BoardPair pair = stairway[j];
+
+                if (pair == null || !pair.Physics)
+                    continue;
+
+                Vector3 physicsLocalForward =
+                    pair.Physics.localRotation * Vector3.forward;
+
+                float dot =
+                    Vector3.Dot(
+                        physicsLocalForward.normalized,
+                        expectedLocalDirection);
+
+                Debug.Log(
+                    $"[STAIR ORIENTATION CHECK] " +
+                    $"name={pair.Physics.name} " +
+                    $"plan={plan} " +
+                    $"segment={segmentIndex} " +
+                    $"direction={expectedLocalDirection} " +
+                    $"physicsLocalForward={physicsLocalForward} " +
+                    $"physicsLocalUp={pair.Physics.localRotation * Vector3.up} " +
+                    $"physicsLocalRight={pair.Physics.localRotation * Vector3.right} " +
+                    $"localEuler={pair.Physics.localEulerAngles} " +
+                    $"dot={dot:F4}",
+                    pair.Physics);
+            }
         }
 
         if (!slope)
@@ -776,13 +816,38 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (physicsObject.GetComponentsInChildren<Collider>(true).Length == 0)
             Debug.LogWarning($"{physicsObject.name}にColliderがありません。", physicsObject);
     }
-
-    void ConfigureVisualRepresentation(GameObject visualObject, bool InSlope)
+    void ConfigureVisualRepresentation(
+        GameObject visualObject,
+        bool inSlope)
     {
-        if (!InSlope)
+        if (!inSlope)
         {
-            foreach (Collider collider in visualObject.GetComponentsInChildren<Collider>(true))
+            // Visual Flat は物理判定を持たせない。
+            foreach (Collider collider in
+                     visualObject.GetComponentsInChildren<Collider>(true))
+            {
                 collider.enabled = false;
+            }
+        }
+        else
+        {
+            // Visual Stairway は Collider を残すが、
+            // InSubject と衝突しない専用Layerへ分離する。
+            int visualLayer =
+                LayerMask.NameToLayer(visualStairwayLayerName);
+
+            if (visualLayer < 0)
+            {
+                Debug.LogError(
+                    $"Visual Stairway Layer '{visualStairwayLayerName}' が存在しません。",
+                    visualObject);
+
+                return;
+            }
+
+            SetLayerRecursively(
+                visualObject,
+                visualLayer);
         }
 
         if (removeGeneratedRigidbodies)
@@ -791,8 +856,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (materials == null || materials.Length == 0)
             return;
 
-        foreach (MeshRenderer renderer in visualObject.GetComponentsInChildren<MeshRenderer>(true))
+        foreach (MeshRenderer renderer in
+                 visualObject.GetComponentsInChildren<MeshRenderer>(true))
+        {
             renderer.sharedMaterials = materials;
+        }
     }
 
     void ApplyBoardPose(
@@ -917,7 +985,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     bool Prepare()
     {
-        if (!RootInSpiral)
+       // if (!RootInSpiral)
             RootInSpiral = GameObject.Find("StairwaySimple");
 
         if (!stairPlane && RootInSpiral)

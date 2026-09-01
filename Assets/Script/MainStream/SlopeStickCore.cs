@@ -680,7 +680,7 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     IEnumerator delayStart()
     {
-        yield return new WaitForSeconds(.8f);
+        yield return new WaitForSeconds(.08f);
         //Time.timeScale = 0.25f;
         GameObject startSlab =
             GameObject.Find(

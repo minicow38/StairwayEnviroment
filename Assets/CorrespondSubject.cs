@@ -77,6 +77,12 @@ public sealed class CorrespondSubject : MonoBehaviour
     /// <summary>
     /// PhysicsRootからVisualPlayerRootへの現在の回転写像です。
     /// </summary>
+    ///
+    void Start()
+    {
+       // PointToPlane=AndroidOneOnly.bestScore;
+    }
+    
     public Quaternion CoordinateRotation
     {
         get

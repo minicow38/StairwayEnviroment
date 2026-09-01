@@ -56,7 +56,7 @@ public class GettingTraffic_Corn : MonoBehaviour
         {
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
-                mainGameManger.Coin++;
+               // mainGameManger.Coin++;
                 Destroy(PhysicsMul.transform.gameObject);
             }
             /*if (Regex.Match(PhysicsMul.name,pattern).Success)

@@ -7,7 +7,10 @@ public class MainGameManager : MonoBehaviour
     public CoreStepInsertSplinePathNatural PiercingSpiral;
 
     public CorrespondSubject mainDrive;
-    public TextMeshProUGUI uGUI;
+    public TextMeshProUGUI displayScore;
+    public TextMeshProUGUI displayCoin;
+
+    public GameObject TopLiteral;
     public int CurrentPointToPlane = 0;
     public int lastTouch = 0;
     public int Coin = 0;
@@ -17,13 +20,22 @@ public class MainGameManager : MonoBehaviour
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
+        Coin = AndroidOneOnly.pharseCoin;
         var width = Screen.width;
         LimitTouchingphase = 0;
         CurrentPointToPlane = CurrentPointToPlane;
         mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();
+
+        TopLiteral = GameObject.Find("GameUI/TopLiteral").transform.gameObject;
+        TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
+            AndroidOneOnly.currentScore.ToString("");
+
+        TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
+            AndroidOneOnly.bestScore.ToString("");
+        displayScore = GameObject.Find("StairwayUserbility/Score/").transform.GetComponent<TextMeshProUGUI>();
+        displayCoin = GameObject.Find("StairwayUserbility/Coin/").transform.GetComponent<TextMeshProUGUI>();
         Debug.Log("");
-        uGUI = GameObject.Find("StairwayUserbility/Score/").transform.GetChild(0).transform.GetComponent<TextMeshProUGUI>();
     }
 
     // Update is called once per frame
@@ -39,7 +51,8 @@ public class MainGameManager : MonoBehaviour
         }
         if (CurrentPointToPlane != mainDrive.PointToPlane)
         {
-            uGUI.text = mainDrive.PointToPlane.ToString("");
+            displayScore.text = mainDrive.PointToPlane.ToString("");
+            displayCoin.text = transform.GetComponent<MainGameManager>().Coin.ToString("");
         }
     }
 }
