@@ -655,7 +655,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     }
 
    
-    IEnumerator delayStart()
+    public IEnumerator delayStart()
     {
         yield return new WaitForSeconds(0.3f);
         //Time.timeScale = 0.25f;

@@ -73,10 +73,12 @@ public class GettingTraffic_Corn : MonoBehaviour
 
     IEnumerator delayResume()
     {
-        yield return new WaitForSeconds(0.8f);
+        yield return new WaitForSeconds(0.1f);
         Debug.Log("Natto");
         MainGameManager.OnDead = true;
         MainGameManager.OpenChunkStage = true;
+       // MainGameManager.LimitTouchingphase = 0;
+
         Destroy(PhysicsMul.transform.gameObject);
 
 

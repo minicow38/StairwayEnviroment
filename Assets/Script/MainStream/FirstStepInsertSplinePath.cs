@@ -22,6 +22,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     [SerializeField] float coinLocalHeight = 0f;
     [SerializeField] NearestKnotDetector knotDetector;
+    public SlopeStickCore resumeOnly;
 
     public MainGameManager ActiveSlopeReciver;
     [Header("Source")] [SerializeField] Transform stairPlane;
@@ -100,10 +101,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     public (Vector3, Vector3) playBackDownWard;
     public int ActiveTurnPoint;
 
-    List<int> startPattern = new List<int>
+    static readonly int[] InitialStartPattern =
     {
-        -1, 0, -1, 0, -5, 0, -3, 0, -5, 0, -1, 0, -1, 0, -1, 0, -1
+        -1, 0, -1, 0, -5, 0, -3, 0, -5, 0,
+        -1, 0, -1, 0, -1, 0, -1
     };
+
+    List<int> startPattern =
+        new List<int>(InitialStartPattern);
 
     private Vector3[] ShiftCoint =
     {
@@ -153,15 +158,23 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     int arcSlabCount;
     int stairwayCount;
 
+    bool rebuilding = false;
+
     void FixedUpdate()
     {
+        if (rebuilding)
+            return;
+
         if (MainGameManager.OpenChunkStage)
         {
             MainGameManager.OpenChunkStage = false;
-           
-            Start();
-        }
 
+            rebuilding = true;
+
+            Start();
+
+            rebuilding = false;
+        }
     }
 
     [ContextMenu("RebuildSpline")]
@@ -171,18 +184,36 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         {
             Debug.Log("");
         }
+       
         if (RogicalEntity == null || RogicalEntity.Count == 0 || MainGameManager.OnDead)
         {
             
            // ActiveSlopeReciver = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
             RogicalEntity = new Dictionary<String, List<GameObject>>();
-            StackStairway1 = new List<GameObject>();
-            StackStairway2 = new List<GameObject>();
+            if (StackStairway1 == null)
+                StackStairway1 = new List<GameObject>();
+            else
+                StackStairway1.Clear();
+
+            if (StackStairway2 == null)
+                StackStairway2 = new List<GameObject>();
+            else
+                StackStairway2.Clear();
             RogicalEntity["Physics"] = StackStairway1;
             RogicalEntity["Renderer"] = StackStairway2;
             points = null;
             outcount.Clear();
-            MainGameManager.OnDead = false;
+
+            // ここが現在ない
+            startPattern.Clear();
+            startPattern.AddRange(InitialStartPattern);
+            //MainGameManager.LimitTouchingphase = 8;
+            ContinuousPattern = 0;
+            resumeOnly = GameObject.Find("InSubject").transform.GetComponent<SlopeStickCore>();
+            FirstShift = 0;
+            
+
+           
         }
 
         // Time.timeScale = 0.5f;
@@ -245,8 +276,18 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         for (int i = 0; i < finalCount; i++)
             PrevInclined.Add(points[finalOffset + i]);
-
+        if (MainGameManager.OnDead == true)
+        {
+            
+            MainGameManager.OnDead = false;
+        }
+        if (MainGameManager.OnDead == true)
+        {
+            StartCoroutine(resumeOnly.delayStart());
+            MainGameManager.OnDead = false;
+        }
         StartCoroutine(DelayStandOnObject());
+        
         accumulatedSpline = lanes[Center];
         if (knotDetector)
             knotDetector.RebuildCache();
