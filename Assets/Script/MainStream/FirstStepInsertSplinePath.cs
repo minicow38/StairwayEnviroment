@@ -276,11 +276,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         for (int i = 0; i < finalCount; i++)
             PrevInclined.Add(points[finalOffset + i]);
-        if (MainGameManager.OnDead == true)
-        {
-            
-            MainGameManager.OnDead = false;
-        }
+       
         if (MainGameManager.OnDead == true)
         {
             StartCoroutine(resumeOnly.delayStart());
