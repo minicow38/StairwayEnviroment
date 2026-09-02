@@ -8,7 +8,6 @@ public class GettingTraffic_Corn : MonoBehaviour
 {
     public GameObject PhysicsMul;
     public GameObject RendererMul;
-    public MainGameManager mainGameManger;
    // public TextMeshUGUI textMesh
     
 
@@ -30,7 +29,7 @@ public class GettingTraffic_Corn : MonoBehaviour
     IEnumerator delayStart()
     {
         yield return new WaitForSeconds(0.8f);
-        mainGameManger = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
+      //  mainGameManger = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
         Debug.Log("");
 
     }
@@ -39,11 +38,17 @@ public class GettingTraffic_Corn : MonoBehaviour
     {
         string hit1 = "";
         Match fit = Regex.Match(transform.parent.name, @"(.*)_Physics");
+        
         if (fit.Success)
         {
             hit1 = fit.Groups[1].Value;
-            Destroy(transform.gameObject);
+           // Destroy(transform.gameObject);
         }
+        else
+        {
+            return;
+        }
+        
 
         Match subReg = Regex.Match(transform.name, @"(.*)_Physics");
         string subChr=subReg.Groups[1].Value;
@@ -56,15 +61,24 @@ public class GettingTraffic_Corn : MonoBehaviour
         {
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
-               // mainGameManger.Coin++;
-                Destroy(PhysicsMul.transform.gameObject);
+                StartCoroutine(delayResume());
+              
             }
             /*if (Regex.Match(PhysicsMul.name,pattern).Success)
             {
                 Debug.Log("");
             }*/
         }
+    }
 
-        int x = 0;
+    IEnumerator delayResume()
+    {
+        yield return new WaitForSeconds(0.8f);
+        Debug.Log("Natto");
+        MainGameManager.OnDead = true;
+        MainGameManager.OpenChunkStage = true;
+        Destroy(PhysicsMul.transform.gameObject);
+
+
     }
 }

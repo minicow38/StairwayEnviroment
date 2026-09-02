@@ -49,7 +49,7 @@ public class AndroidOneOnly : MonoBehaviour
     {
        
         PlayerPrefs.SetInt(CallForCurrrentScore, mainDrive.PointToPlane);
-        PlayerPrefs.SetInt(CallForCurrrentCoin, mainGameManager.Coin);
+        PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
 
 
         if (mainDrive.PointToPlane >bestScore)

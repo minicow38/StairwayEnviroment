@@ -8,7 +8,6 @@ public class GettingItem : MonoBehaviour
 {
     public GameObject PhysicsMul;
     public GameObject RendererMul;
-    public MainGameManager mainGameManger;
    // public TextMeshUGUI textMesh
     
 
@@ -30,7 +29,7 @@ public class GettingItem : MonoBehaviour
     IEnumerator delayStart()
     {
         yield return new WaitForSeconds(0.8f);
-        mainGameManger = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
+      //  mainGameManger = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
         Debug.Log("");
 
     }
@@ -56,7 +55,7 @@ public class GettingItem : MonoBehaviour
         {
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
-                mainGameManger.Coin++;
+                MainGameManager.Coin++;
                 Destroy(PhysicsMul.transform.gameObject);
             }
             /*if (Regex.Match(PhysicsMul.name,pattern).Success)
@@ -64,7 +63,5 @@ public class GettingItem : MonoBehaviour
                 Debug.Log("");
             }*/
         }
-
-        int x = 0;
     }
 }

@@ -821,12 +821,13 @@ public sealed class SlopeStickCore : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
-          /*  Debug.Log("");
+          Debug.Log("");
             mainGameManager.TopTitle.SetActive(false);
             mainGameManager.PreviewIconRoot.SetActive(false);
             mainGameManager.TopLiteral.SetActive(false);
-            mainGameManager.PlayButton.SetActive(false);*/
-            
+            mainGameManager.PlayButton.SetActive(false);
+            mainGameManager.Userbility.SetActive(true);
+
           BeginCommandOnTouch = true;
         }
         // Build the stable read-only Spline plan used by BallVisual.

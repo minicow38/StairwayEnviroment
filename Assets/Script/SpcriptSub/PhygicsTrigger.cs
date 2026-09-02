@@ -57,7 +57,7 @@ public class PhygicsTrigger : MonoBehaviour
 
             if (match.Success && BringActiveSlope)
             {
-                BringActiveSlope.lastTouch = int.Parse(match.Value);
+                MainGameManager.lastTouch = int.Parse(match.Value);
             }
             transform.GetComponent<MeshCollider>().isTrigger = false;
            

@@ -155,9 +155,10 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     void FixedUpdate()
     {
-        if (ActiveSlopeReciver.OpenChunkStage)
+        if (MainGameManager.OpenChunkStage)
         {
-            ActiveSlopeReciver.OpenChunkStage = false;
+            MainGameManager.OpenChunkStage = false;
+           
             Start();
         }
 
@@ -166,14 +167,22 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     [ContextMenu("RebuildSpline")]
     void Start()
     {
-        if (RogicalEntity == null || RogicalEntity.Count == 0)
+        if (MainGameManager.OnDead)
         {
-            ActiveSlopeReciver = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
+            Debug.Log("");
+        }
+        if (RogicalEntity == null || RogicalEntity.Count == 0 || MainGameManager.OnDead)
+        {
+            
+           // ActiveSlopeReciver = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
             RogicalEntity = new Dictionary<String, List<GameObject>>();
             StackStairway1 = new List<GameObject>();
             StackStairway2 = new List<GameObject>();
             RogicalEntity["Physics"] = StackStairway1;
             RogicalEntity["Renderer"] = StackStairway2;
+            points = null;
+            outcount.Clear();
+            MainGameManager.OnDead = false;
         }
 
         // Time.timeScale = 0.5f;
@@ -194,6 +203,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
 
             CacheTransforms();
+            Debug.Log("");
         }
         else
         {
@@ -1232,8 +1242,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     IEnumerator DelayStandOnObject()
     {
         yield return new WaitForSeconds(0.1f);
-        for (int i = ActiveSlopeReciver.LimitTouchingphase + FirstShift;
-             i < ActiveSlopeReciver.LimitTouchingphase + 8 + FirstShift;
+        for (int i = MainGameManager.LimitTouchingphase + FirstShift;
+             i < MainGameManager.LimitTouchingphase + 8 + FirstShift;
              i++)
         {
             bool DontSeqItem = false;
@@ -1260,10 +1270,10 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         }
 
-        if (ActiveSlopeReciver.LimitTouchingphase < 8)
+        if (MainGameManager.LimitTouchingphase < 8)
         {
             FirstShift = 2;
-            ActiveSlopeReciver.LimitTouchingphase = 8;
+            MainGameManager.LimitTouchingphase = 8;
         }
 
         Debug.Log("");
