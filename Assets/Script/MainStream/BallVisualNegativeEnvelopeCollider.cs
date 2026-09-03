@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.Serialization;
+using Sirenix.OdinInspector;
 
 
 /// <summary>
@@ -33,20 +34,38 @@ using UnityEngine.Serialization;
 /// LowerはVirtual Turnpointです。物理Lower Collider/Trigger/Pressは生成しません。
 /// Equalizer自身の直下Spline射影をLower中心とし、現在Presentation center travelを
 /// Upper中心までのHybrid Wave振幅としてSyncへ公開します。
+/// Upper経験後の下降終盤だけは、Lower近傍のSmoothStep profileをSyncへ公開し、
+/// Spring/Damperの減衰比率を弱めて下降速度を人工的に殺さないようにします。
 ///
 /// S(T) は以前成功した300-400m/s^2帯の中心値を基準に [2R,4R] で保持します。
 /// gammaはReleaseからExact LimitまでのSpline移動時間から一度だけ求めます。
 /// First Contact方式選択、Curved Offset、World-Y補正は使用しません。
 /// SlopeStickCore / CorrespondSubjectはREAD ONLYです。
 /// </summary>
+/// 
+[Searchable]
 [DisallowMultipleComponent]
 public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 {
+    [System.Serializable]
+    public struct DescendingLowerDecayProfile
+    {
+        public bool active;
+        public float bandMeters;
+        public float nearLower01;
+        public float heightNearLower01;
+        public float timeNearLower01;
+        public float timeToVirtualLowerSeconds;
+        public float damperRatio01;
+        public float restoringBrakeRatio01;
+    }
+
     // ================================================================
     // FLOATING RIGIDBODY ENVELOPE 2026-08-31
-    // Upper is the only physical impact boundary. Lower is the live under-Spline
-    // virtual reference. This component owns geometry + 4R-Hn + decay only.
-    // Sync owns Rigidbody Spring/Damper and velocity-deficit catch-up.
+    // Upper is a physical impact boundary. Virtual Lower is a live under-Spline
+    // authority boundary, NOT a physical collider. Real StairWay contact is the
+    // Physical Lower and may feed measured energy retention into the next wave.
+    // Sync owns jerk-limited normal acceleration and velocity-deficit catch-up.
     // No master phase clock is imposed on the Rigidbody.
     // ================================================================
 
@@ -63,10 +82,12 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     [SerializeField]
     private CorrespondSubject correspondSubject;
 
-    [Tooltip("包絡線内を実際に跳ねるBallVisualEqualizerのRigidbodyです。")] [SerializeField]
+    [Tooltip("包絡線内を実際に跳ねるBallVisualEqualizerのRigidbodyです。")]
+    [SerializeField]
     private Rigidbody ballVisualEqualizer;
 
-    [Tooltip("BallVisualEqualizerのSphereColliderです。")] [SerializeField]
+    [Tooltip("BallVisualEqualizerのSphereColliderです。")]
+    [SerializeField]
     private SphereCollider ballVisualEqualizerCollider;
 
     [SerializeField] private Collider inSubjectCollider;
@@ -75,10 +96,15 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     // 物理挙動を調整する値ではなく、Collider近似精度です。
     // ================================================================
 
-    [Header("Envelope Geometry")] [Tooltip("指数Envelope Meshを進行方向に何分割してサンプリングするか。")] [Range(8, 64)] [SerializeField]
+    [Header("Envelope Geometry")]
+    [Tooltip("指数Envelope Meshを進行方向に何分割してサンプリングするか。")]
+    [Range(8, 64)]
+    [SerializeField]
     private int segmentCount = 32;
 
-    [Tooltip("進行方向と直交するEnvelopeの全幅[m]。中心から左右へ envelopeWidth / 2 ずつ広がります。")] [Min(0.1f)] [SerializeField]
+    [Tooltip("進行方向と直交するEnvelopeの全幅[m]。中心から左右へ envelopeWidth / 2 ずつ広がります。")]
+    [Min(0.1f)]
+    [SerializeField]
     private float envelopeWidth = 10.0f;
 
     // ================================================================
@@ -87,24 +113,24 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 
     [Header("Wave Presentation - Human Controls")]
     [Tooltip(
-        "Upper -> Lower -> Upper の好ましい1周期 T[s]。絶対deadlineではありません。\n" +
-        "通常LegはこのT/2を目安にし、Turnpointで物理時間が不足する場合は実時間を優先します。")]
+    "Upper -> Lower -> Upper の好ましい1周期 T[s]。絶対deadlineではありません。\n" +
+    "通常LegはこのT/2を目安にし、Turnpointで物理時間が不足する場合は実時間を優先します。")]
     [Min(0.04f)]
     [FormerlySerializedAs("targetContactPeriodSeconds")]
     [SerializeField, HideInInspector]
     private float preferredContactPeriodSeconds = 0.10f;
 
     [Tooltip(
-        "X=波番号(0が第1波)、Y=その波で許可するLower->Upper中心移動量[R]。\n" +
-        "これは目標値ではなくCeilingです。旧減衰モデルがこれより低ければ旧減衰を優先します。")]
+    "X=波番号(0が第1波)、Y=その波で許可するLower->Upper中心移動量[R]。\n" +
+    "これは目標値ではなくCeilingです。旧減衰モデルがこれより低ければ旧減衰を優先します。")]
     [SerializeField, HideInInspector]
     private AnimationCurve presentationCeilingR =
-        new AnimationCurve(
-            new Keyframe(0f, 4.0f),
-            new Keyframe(1f, 3.8f),
-            new Keyframe(2f, 3.3f),
-            new Keyframe(3f, 2.5f),
-            new Keyframe(6f, 0.8f));
+    new AnimationCurve(
+    new Keyframe(0f, 4.0f),
+    new Keyframe(1f, 3.8f),
+    new Keyframe(2f, 3.3f),
+    new Keyframe(3f, 2.5f),
+    new Keyframe(6f, 0.8f));
 
     [Tooltip("Ceiling Curveが極端に小さくなった場合の数値安全下限[R]。演出値ではありません。")]
     [Min(0.01f)]
@@ -112,13 +138,88 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private float minimumPresentationCeilingR = 0.05f;
 
     [Tooltip(
-        "時間減衰 exp(-gamma*t) とCanonical Energy減衰をWave Ceilingへ何割反映するか。\n" +
-        "0 = Ceilingだけ、1 = 減衰率を100%反映。0.35なら損失の35%を連続Wave収縮へ反映します。\n" +
-        "旧D_legacyの絶対高さは使わないため、H0が小さいReleaseでも波全体が即座に潰れません。")]
+    "時間減衰 exp(-gamma*t) とCanonical Energy減衰をWave Ceilingへ何割反映するか。\n" +
+    "0 = Ceilingだけ、1 = 減衰率を100%反映。0.35なら損失の35%を連続Wave収縮へ反映します。\n" +
+    "旧D_legacyの絶対高さは使わないため、H0が小さいReleaseでも波全体が即座に潰れません。")]
     [Range(0f, 1f)]
     [FormerlySerializedAs("legacyDecayLossInfluence")]
     [SerializeField, HideInInspector]
     private float waveTimeDecayInfluence = 0.35f;
+
+    [Header("Descending Lower Boundary Decay Preservation")]
+
+    [Tooltip(
+    "ON: Accepted Upper後の下降中だけ、Virtual Lower近傍で減衰比率を弱めます。\n" +
+    "Upper高さ4R-HnやEnvelope Meshは廃止せず、SyncへSmoothStep profileだけを公開します。")]
+    [SerializeField] private bool useDescendingLowerBoundaryDecayPreservation = true;
+
+    [Tooltip(
+    "Virtual Lower直前でrideSpringDamperをここまで弱めます。\n" +
+    "0.12なら通常Damperの12%。0にはせず波形の連続性を残します。")]
+    [Range(0.01f, 1f)]
+    [SerializeField] private float minimumDescendingLowerDamperRatio01 = 0.12f;
+
+    [Tooltip(
+    "下降速度を止める向き(+Stable-N)の復元AccelerationをLower直前でここまで残します。\n" +
+    "DamperだけでなくSpring/重力補償由来のブレーキも弱めるための比率です。")]
+    [Range(0.01f, 1f)]
+    [SerializeField] private float minimumDescendingLowerRestoringBrakeRatio01 = 0.20f;
+
+    [Tooltip(
+    "24m/s対応。高さbandへ入る前でもVirtual Lower到達予測時間が短ければ弱減衰を先行開始します。")]
+    [SerializeField] private bool useTimeToVirtualLowerDecayLead = true;
+
+    [Tooltip(
+    "予測Virtual Lower到達がこの秒数以内なら時間側Boundary Blendを開始します。")]
+    [Range(0.02f, 0.25f)]
+    [SerializeField] private float descendingLowerTimeLeadSeconds = 0.10f;
+
+    [Header("Equalizer Projection Continuity - 24m/s")]
+
+    [Tooltip(
+    "Equalizer直下Spline射影で前FixedUpdate進捗の近傍を優先し、Turn/別区間への巨大ジャンプを抑えます。")]
+    [SerializeField] private bool useEqualizerProjectionContinuity = true;
+
+    [Tooltip(
+    "前回進捗から予測される1FixedUpdate移動量へ掛ける探索倍率。")]
+    [Range(1f, 6f)]
+    [SerializeField] private float equalizerProjectionContinuityWindowMultiplier = 2.5f;
+
+    [Tooltip(
+    "低速でも最低限許すSpline progress探索幅。")]
+    [Range(0.001f, 0.10f)]
+    [SerializeField] private float minimumEqualizerProjectionContinuityWindow01 = 0.02f;
+
+    [Header("Turn Guide Handoff Coordination")]
+
+    [Tooltip(
+    "ON: SlopeStickCoreがTurn Guide待機中、またはVisual Frame旋回中は、\n" +
+    "Equalizer直下Spline射影とEnvelope recook/commitを一時停止します。\n" +
+    "旋回前progressを新Visual frameへ誤接続しないためのGuardです。")]
+    [SerializeField] private bool suspendProjectionDuringTurnHandoff = true;
+
+    [Tooltip("Turn handoff終了時にEqualizer projection continuity履歴を破棄します。")]
+    [SerializeField] private bool resetProjectionContinuityAfterTurnHandoff = true;
+
+    [Tooltip("Envelope側Turn handoff状態遷移をログ出力します。")]
+    [SerializeField] private bool logTurnHandoffCoordination = true;
+
+    [Header("Physical Stair Lower Energy Dissipation")]
+
+    [Tooltip(
+    "実StairWay Lower衝突の前後速度から得たEnergy retentionをCanonical epsilonへ反映します。\n" +
+    "exp(-gamma*t)の論理減衰に、階段PhysX衝突の実損失を掛け合わせるための設定です。")]
+    [SerializeField] private bool usePhysicalLowerImpactEnergyLoss = true;
+
+    [Tooltip(
+    "実StairWay衝突Energy lossをCanonical epsilonへ何割反映するか。\n" +
+    "0=無視、1=測定retentionをそのまま反映。")]
+    [Range(0f, 1f)]
+    [SerializeField] private float physicalLowerImpactEnergyInfluence = 1f;
+
+    [Tooltip("Physical Lower Energy retentionの数値安全下限。")]
+    [Range(0f, 1f)]
+    [SerializeField] private float minimumPhysicalLowerImpactRetention01 = 0.05f;
 
     [Header("Hybrid Wave Event Capture")]
     [Tooltip("ApproachUpper中の実Upper接触を正規Wave eventとして認識するN方向Capture幅[R]。物理Collider形状は変更しません。")]
@@ -135,8 +236,8 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 
     [Header("Wave Presentation - Physical Timing Resolver")]
     [Tooltip(
-        "A_n = B_n R - H_n をPreferred T/2へ押し込むために必要なPhase加速度の上限[m/s^2]。\n" +
-        "超える場合は振幅を潰さず、T/2をFixedUpdate整数ステップで延長します。")]
+    "A_n = B_n R - H_n をPreferred T/2へ押し込むために必要なPhase加速度の上限[m/s^2]。\n" +
+    "超える場合は振幅を潰さず、T/2をFixedUpdate整数ステップで延長します。")]
     [Min(1f)]
     [SerializeField, HideInInspector]
     private float maximumPresentationPhaseAcceleration = 350f;
@@ -157,7 +258,6 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     // 内部基準だけに使う。実際のPhase Drive加速度はSphereCast距離から毎F解く。
     private const float PeriodicHeightReferencePhaseAcceleration = 350f;
 
-
     // ================================================================
     // maxGroundSpeed -> period-cycle experiment (READ ONLY)
     // ================================================================
@@ -168,23 +268,23 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private const float MaximumObservedPeriodCorrectionRatio = 1.05f;
 
     [Tooltip(
-        "実測周期をMaster Tへ弱く補正する割合。K版では補正幅を±5%以内に制限します。")]
+    "実測周期をMaster Tへ弱く補正する割合。K版では補正幅を±5%以内に制限します。")]
     [Range(0f, 0.25f)]
     [SerializeField]
     private float periodObservationBlend = 0.15f;
 
     private static readonly FieldInfo MaxGroundSpeedField =
-        typeof(SlopeStickCore).GetField(
-            "maxGroundSpeed",
-            BindingFlags.Instance |
-            BindingFlags.NonPublic);
-
+    typeof(SlopeStickCore).GetField(
+    "maxGroundSpeed",
+    BindingFlags.Instance |
+    BindingFlags.NonPublic);
 
     // ================================================================
     // Runtime
     // ================================================================
 
-    [Header("Runtime - Read Only")] [SerializeField]
+    [Header("Runtime - Read Only")]
+    [SerializeField]
     private bool armed;
 
     [SerializeField] private bool envelopeBuilt;
@@ -199,6 +299,12 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 
     [Tooltip("現在のCanonical Oscillation Energy比 epsilon = E/E0。")]
     [SerializeField, Range(0f, 1f)] private float canonicalEnergyRatio = 1f;
+
+    [Header("Physical Lower Energy Runtime - Read Only")]
+    [SerializeField] private int physicalLowerImpactEnergySampleCount;
+    [SerializeField, Range(0f, 1f)] private float lastPhysicalLowerRawRetention01 = 1f;
+    [SerializeField, Range(0f, 1f)] private float lastPhysicalLowerAppliedRetention01 = 1f;
+    [SerializeField] private string lastPhysicalLowerEnergyReason = "None";
 
     [SerializeField] private float canonicalNormalAcceleration;
 
@@ -243,18 +349,24 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     [SerializeField] private float equalizerUnderClearanceMeters;
     [SerializeField] private bool equalizerUnderProjectionValid;
 
+    [Header("Descending Lower Decay Runtime - Read Only")]
+    [SerializeField] private bool descendingLowerDecayProfileActive;
+    [SerializeField] private float descendingLowerDecayBandMeters;
+    [SerializeField, Range(0f, 1f)] private float descendingLowerNear01;
+    [SerializeField, Range(0f, 1f)] private float descendingLowerDamperRatio01 = 1f;
+    [SerializeField, Range(0f, 1f)] private float descendingLowerRestoringBrakeRatio01 = 1f;
+
     [Header("Arrival Terminal Gate - Read Only")]
     [SerializeField] private bool arrivalTerminalActive;
     [SerializeField] private float arrivalTerminalTimeToGo;
     [SerializeField] private float arrivalTerminalBlend01;
-
 
     private Transform generatedRoot;
     private Mesh generatedMesh;
 
     // 最新Envelopeだけを保持する。次の生成前に旧Rootは破棄する。
     private readonly List<Transform> generatedEnvelopeRoots =
-        new List<Transform>();
+    new List<Transform>();
 
     // 現在「最後に生成された」Envelopeだけをリアルタイム更新するための参照。
     private Transform generatedMeshTransform;
@@ -266,12 +378,24 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private MeshCollider generatedMeshSensorCollider;
     private bool upperEnvelopeSolidRequested;
 
+    // ------------------------------------------------------------
+    // Monotonic Trigger Pulse experiment
+    // ------------------------------------------------------------
+    // Current Upper is normally a concave MeshCollider and therefore cannot be
+    // a Trigger. For this one-FixedUpdate experiment only, recook it convex,
+    // set isTrigger=true, then restore concave Solid on the following step.
+    private bool monotonicTriggerPulseActive;
+    private float monotonicTriggerPulseRestoreFixedTime;
+    private bool monotonicTriggerPulsePreviousConvex;
+    private bool monotonicTriggerPulsePreviousTrigger;
+    private int monotonicTriggerPulseCount;
+    private string monotonicTriggerPulseReason = "None";
+
     // Double-buffered geometry. Build a standby Mesh first, then swap only while
     // the active Upper Solid is disabled.
     private Mesh pendingUpperEnvelopeMesh;
     private bool pendingUpperEnvelopeMeshReady;
     private float nextPendingUpperEnvelopeBuildRetryTime;
-
 
     [Header("Periodic Contact Runtime - Read Only")]
     [Tooltip("FixedUpdate解像度を考慮した実際の1周期T[s]。")]
@@ -285,7 +409,7 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     [Tooltip("自動決定されたUpper基準R倍率 S(T)。")]
     [SerializeField]
     private float resolvedEnvelopeRadiusClearanceScale =
-        MinimumPeriodicRadiusClearanceScale;
+    MinimumPeriodicRadiusClearanceScale;
 
     [Tooltip("Release時点のLower中心 -> Upper中心の自動目標距離[m]。")]
     [SerializeField]
@@ -325,7 +449,6 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float presentationCurrentLegacyTimeRetention01 = 1f;
     [SerializeField, Range(0f, 1f)] private float presentationCurrentRawLegacyRetention01 = 1f;
     [SerializeField, Range(0f, 1f)] private float presentationCurrentAppliedRetention01 = 1f;
-
 
     [Header("maxGroundSpeed Adaptive Runtime - Read Only")]
     [SerializeField] private int maxGroundSpeedExperimentCycleIndex;
@@ -374,6 +497,9 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private float lastWaveTimeDecayInfluence;
     private int lastPresentationCeilingCurveHash;
 
+    private bool turnHandoffCoordinationActive;
+    private bool turnHandoffExternallyForced;
+    private bool previousTurnHandoffCoordinationActive;
 
     // ================================================================
     // Unity
@@ -381,18 +507,41 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 
     private void Awake()
     {
-        Debug.Log("[ENVELOPE BUILD] HybridWave-20260830-StairLower-A", this);
+        Debug.Log("[ENVELOPE BUILD] Spatial24-TurnSafeProjection-20260902-E", this);
         ResolveReferences();
         CaptureLiveSettingsSnapshot();
     }
     private void FixedUpdate()
     {
+        // Trigger pulse is kept for one complete FixedUpdate interval.
+        // While active, do not recook/swap the same MeshCollider.
+        if (monotonicTriggerPulseActive)
+        {
+            if (Time.fixedTime + 0.000001f >=
+            monotonicTriggerPulseRestoreFixedTime)
+            {
+                RestoreCurrentEnvelopeAfterMonotonicTriggerPulse();
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        UpdateTurnHandoffCoordination();
+
+        if (turnHandoffCoordinationActive &&
+        suspendProjectionDuringTurnHandoff)
+        {
+            return;
+        }
+
         TryBuildEnvelopeIfReady();
 
         // Geometry changes are prepared/committed outside contact callbacks.
         if (pendingCanonicalGeometryRebuild &&
-            envelopeBuilt &&
-            latestEnvelopeGeometryCached)
+        envelopeBuilt &&
+        latestEnvelopeGeometryCached)
         {
             PreparePendingUpperEnvelopeMesh();
         }
@@ -400,6 +549,88 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         TryCommitPendingUpperEnvelopeMesh();
     }
 
+    private void UpdateTurnHandoffCoordination()
+    {
+        ResolveReferences();
+
+        bool coreWaiting =
+        slopeCore &&
+        slopeCore.IsWaitingForTurnGuide;
+
+        bool visualTurning =
+        correspondSubject &&
+        correspondSubject.IsVisualFrameTurning;
+
+        turnHandoffCoordinationActive =
+        turnHandoffExternallyForced ||
+        coreWaiting ||
+        visualTurning;
+
+        if (turnHandoffCoordinationActive ==
+        previousTurnHandoffCoordinationActive)
+        {
+            return;
+        }
+
+        if (turnHandoffCoordinationActive)
+        {
+            if (resetProjectionContinuityAfterTurnHandoff)
+            ResetEqualizerProjectionContinuity();
+
+            if (logTurnHandoffCoordination)
+            {
+                Debug.Log(
+                $"[ENVELOPE TURN HANDOFF START] " +
+                $"coreWaiting={coreWaiting} " +
+                $"visualTurning={visualTurning} " +
+                $"forced={turnHandoffExternallyForced}",
+                this);
+            }
+        }
+        else
+        {
+            if (resetProjectionContinuityAfterTurnHandoff)
+            ResetEqualizerProjectionContinuity();
+
+            if (logTurnHandoffCoordination)
+            {
+                Debug.Log(
+                "[ENVELOPE TURN HANDOFF END] projection continuity reset",
+                this);
+            }
+        }
+
+        previousTurnHandoffCoordinationActive =
+        turnHandoffCoordinationActive;
+    }
+
+    public void NotifyTurnHandoffStarted()
+    {
+        turnHandoffExternallyForced = true;
+        UpdateTurnHandoffCoordination();
+    }
+
+    public void NotifyTurnHandoffCompleted()
+    {
+        turnHandoffExternallyForced = false;
+        UpdateTurnHandoffCoordination();
+    }
+
+    public void ResetProjectionContinuityAfterVisualTurn()
+    {
+        ResetEqualizerProjectionContinuity();
+    }
+
+    private void ResetEqualizerProjectionContinuity()
+    {
+        equalizerUnderProjectionValid = false;
+        equalizerUnderProgress01 = 0f;
+        equalizerUnderSurfaceVisual = Vector3.zero;
+        equalizerUnderCenterVisual = Vector3.zero;
+        equalizerUnderTangentVisual = Vector3.forward;
+        equalizerUnderNormalVisual = Vector3.up;
+        equalizerUnderClearanceMeters = 0f;
+    }
 
     private void Update()
     {
@@ -413,26 +644,24 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         // ------------------------------------------------------------
 
         if (!Application.isPlaying)
-            return;
+        return;
 
         if (!envelopeBuilt ||
-            !latestEnvelopeGeometryCached ||
-            !generatedMeshTransform ||
-            !generatedMeshFilter ||
-            !generatedMeshCollider)
+        !latestEnvelopeGeometryCached ||
+        !generatedMeshTransform ||
+        !generatedMeshFilter ||
+        !generatedMeshCollider)
         {
             CaptureLiveSettingsSnapshot();
             return;
         }
 
         if (!LiveSettingsChanged())
-            return;
+        return;
 
         // Defer recook to FixedUpdate. The active Solid is never modified here.
         pendingCanonicalGeometryRebuild = true;
     }
-
-
 
     // ================================================================
     // Arm - compatibility overloads
@@ -442,19 +671,19 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     /// 旧2引数API。新規コードでは4引数のCanonical APIを使用してください。
     /// </summary>
     public void ArmFromBallVisualEnergy(
-        float energyJoule,
-        Vector3 equalizerLaunchDirectionVisual)
+    float energyJoule,
+    Vector3 equalizerLaunchDirectionVisual)
     {
         ResolveReferences();
 
         if (!ballVisualEqualizer)
-            return;
+        return;
 
         Vector3 direction =
-            equalizerLaunchDirectionVisual;
+        equalizerLaunchDirectionVisual;
 
         if (direction.sqrMagnitude <=
-            0.000001f)
+        0.000001f)
         {
             return;
         }
@@ -462,112 +691,110 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         direction.Normalize();
 
         float mass =
-            Mathf.Max(
-                0.0001f,
-                ballVisualEqualizer.mass);
+        Mathf.Max(
+        0.0001f,
+        ballVisualEqualizer.mass);
 
         float safeEnergy =
-            Mathf.Max(
-                0f,
-                energyJoule);
+        Mathf.Max(
+        0f,
+        energyJoule);
 
         if (safeEnergy <=
-            0.000001f)
+        0.000001f)
         {
             return;
         }
 
         float speed =
-            Mathf.Sqrt(
-                2f *
-                safeEnergy /
-                mass);
+        Mathf.Sqrt(
+        2f *
+        safeEnergy /
+        mass);
 
         Vector3 launchVelocity =
-            direction *
-            speed;
+        direction *
+        speed;
 
         float gravity =
-            Mathf.Max(
-                0.0001f,
-                Mathf.Abs(
-                    Physics.gravity.y));
+        Mathf.Max(
+        0.0001f,
+        Mathf.Abs(
+        Physics.gravity.y));
 
         float verticalSpeed =
-            Mathf.Max(
-                0f,
-                Vector3.Dot(
-                    launchVelocity,
-                    Vector3.up));
+        Mathf.Max(
+        0f,
+        Vector3.Dot(
+        launchVelocity,
+        Vector3.up));
 
         float legacyReferenceHeight =
-            Mathf.Max(
-                0.01f,
-                verticalSpeed *
-                verticalSpeed /
-                (2f * gravity));
+        Mathf.Max(
+        0.01f,
+        verticalSpeed *
+        verticalSpeed /
+        (2f * gravity));
 
         ArmFromBallVisualEnergy(
-            safeEnergy,
-            legacyReferenceHeight,
-            launchVelocity,
-            direction);
+        safeEnergy,
+        legacyReferenceHeight,
+        launchVelocity,
+        direction);
     }
-
 
     /// <summary>
     /// 旧Equalizer初速API。新規コードでは4引数Canonical APIを使用してください。
     /// </summary>
     public void ArmFromEqualizerLaunchVelocity(
-        Vector3 launchVelocityVisual)
+    Vector3 launchVelocityVisual)
     {
         ResolveReferences();
 
         float mass =
-            ballVisualEqualizer
-                ? Mathf.Max(
-                    0.0001f,
-                    ballVisualEqualizer.mass)
-                : 1f;
+        ballVisualEqualizer
+        ? Mathf.Max(
+        0.0001f,
+        ballVisualEqualizer.mass)
+        : 1f;
 
         float energy =
-            0.5f *
-            mass *
-            launchVelocityVisual.sqrMagnitude;
+        0.5f *
+        mass *
+        launchVelocityVisual.sqrMagnitude;
 
         Vector3 axis =
-            launchVelocityVisual.sqrMagnitude >
-            0.000001f
-                ? launchVelocityVisual.normalized
-                : Vector3.up;
+        launchVelocityVisual.sqrMagnitude >
+        0.000001f
+        ? launchVelocityVisual.normalized
+        : Vector3.up;
 
         float gravity =
-            Mathf.Max(
-                0.0001f,
-                Mathf.Abs(
-                    Physics.gravity.y));
+        Mathf.Max(
+        0.0001f,
+        Mathf.Abs(
+        Physics.gravity.y));
 
         float verticalSpeed =
-            Mathf.Max(
-                0f,
-                Vector3.Dot(
-                    launchVelocityVisual,
-                    Vector3.up));
+        Mathf.Max(
+        0f,
+        Vector3.Dot(
+        launchVelocityVisual,
+        Vector3.up));
 
         float legacyReferenceHeight =
-            Mathf.Max(
-                0.01f,
-                verticalSpeed *
-                verticalSpeed /
-                (2f * gravity));
+        Mathf.Max(
+        0.01f,
+        verticalSpeed *
+        verticalSpeed /
+        (2f * gravity));
 
         ArmFromBallVisualEnergy(
-            energy,
-            legacyReferenceHeight,
-            launchVelocityVisual,
-            axis);
+        energy,
+        legacyReferenceHeight,
+        launchVelocityVisual,
+        axis);
     }
-
 
     // ================================================================
     // Build
@@ -576,170 +803,170 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private void BuildNegativeEnvelope()
     {
         if (!ReferencesValid())
-            return;
+        return;
 
         if (!slopeCore.TryGetBallVisualTargetProgressCenterPhysics(
-                out Vector3 limitCenterPhysics))
+        out Vector3 limitCenterPhysics))
         {
             return;
         }
 
         capturedReleaseProgress01 =
-            Mathf.Clamp01(
-                slopeCore.BallVisualSlopeProgress01);
+        Mathf.Clamp01(
+        slopeCore.BallVisualSlopeProgress01);
 
         capturedTargetProgress01 =
-            Mathf.Clamp01(
-                slopeCore.BallVisualSlopeProgress01 -
-                slopeCore.slopeProgressErrorPercent *
-                0.01f);
+        Mathf.Clamp01(
+        slopeCore.BallVisualSlopeProgress01 -
+        slopeCore.slopeProgressErrorPercent *
+        0.01f);
 
         if (!slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-                0f,
-                out Vector3 sectionEntryCenterPhysics,
-                out _,
-                out _) ||
-            !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-                1f,
-                out Vector3 sectionEndCenterPhysics,
-                out _,
-                out _) ||
-            !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-                capturedReleaseProgress01,
-                out _,
-                out Vector3 releaseTangentPhysics,
-                out Vector3 releaseNormalPhysics) ||
-            !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-                capturedTargetProgress01,
-                out _,
-                out _,
-                out _))
+        0f,
+        out Vector3 sectionEntryCenterPhysics,
+        out _,
+        out _) ||
+        !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
+        1f,
+        out Vector3 sectionEndCenterPhysics,
+        out _,
+        out _) ||
+        !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
+        capturedReleaseProgress01,
+        out _,
+        out Vector3 releaseTangentPhysics,
+        out Vector3 releaseNormalPhysics) ||
+        !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
+        capturedTargetProgress01,
+        out _,
+        out _,
+        out _))
         {
             Debug.LogWarning(
-                "[ENVELOPE SPLINE] Full section sampling is not ready.",
-                this);
+            "[ENVELOPE SPLINE] Full section sampling is not ready.",
+            this);
             return;
         }
 
         Vector3 sourceNormalPhysics =
-            correspondSubject.InverseMapDirection(
-                sourceEnergyAxisVisual);
+        correspondSubject.InverseMapDirection(
+        sourceEnergyAxisVisual);
 
         if (sourceNormalPhysics.sqrMagnitude <= 0.000001f)
-            sourceNormalPhysics = releaseNormalPhysics;
+        sourceNormalPhysics = releaseNormalPhysics;
 
         sourceNormalPhysics.Normalize();
 
         releaseNormalPhysics =
-            Vector3.ProjectOnPlane(
-                releaseNormalPhysics,
-                releaseTangentPhysics);
+        Vector3.ProjectOnPlane(
+        releaseNormalPhysics,
+        releaseTangentPhysics);
 
         if (releaseNormalPhysics.sqrMagnitude <= 0.000001f)
-            releaseNormalPhysics = sourceNormalPhysics;
+        releaseNormalPhysics = sourceNormalPhysics;
 
         releaseNormalPhysics.Normalize();
 
         if (Vector3.Dot(
-                releaseNormalPhysics,
-                sourceNormalPhysics) < 0f)
+        releaseNormalPhysics,
+        sourceNormalPhysics) < 0f)
         {
             releaseNormalPhysics = -releaseNormalPhysics;
         }
 
         releaseTangentPhysics =
-            Vector3.ProjectOnPlane(
-                releaseTangentPhysics,
-                releaseNormalPhysics);
+        Vector3.ProjectOnPlane(
+        releaseTangentPhysics,
+        releaseNormalPhysics);
 
         if (releaseTangentPhysics.sqrMagnitude <= 0.000001f)
-            return;
+        return;
 
         releaseTangentPhysics.Normalize();
 
         capturedEntryPhysics =
-            sectionEntryCenterPhysics;
+        sectionEntryCenterPhysics;
 
         capturedLimitPhysics =
-            limitCenterPhysics;
+        limitCenterPhysics;
 
         float equalizerRadius =
-            ResolveEqualizerWorldRadius();
+        ResolveEqualizerWorldRadius();
 
         float subjectRadius =
-            ResolveSlopeCoreWorldRadius();
+        ResolveSlopeCoreWorldRadius();
 
         if (!TryEvaluateSplineSurfacePhysics(
-                capturedReleaseProgress01,
-                subjectRadius,
-                out _,
-                out Vector3 releaseSurfacePhysics,
-                out _,
-                out Vector3 stableReleaseNormalPhysics) ||
-            !TryEvaluateSplineSurfacePhysics(
-                capturedTargetProgress01,
-                subjectRadius,
-                out _,
-                out Vector3 limitSurfacePhysics,
-                out _,
-                out _))
+        capturedReleaseProgress01,
+        subjectRadius,
+        out _,
+        out Vector3 releaseSurfacePhysics,
+        out _,
+        out Vector3 stableReleaseNormalPhysics) ||
+        !TryEvaluateSplineSurfacePhysics(
+        capturedTargetProgress01,
+        subjectRadius,
+        out _,
+        out Vector3 limitSurfacePhysics,
+        out _,
+        out _))
         {
             return;
         }
 
         float contactOffset =
-            ballVisualEqualizerCollider
-                ? Mathf.Max(
-                    ballVisualEqualizerCollider.contactOffset,
-                    Physics.defaultContactOffset)
-                : Physics.defaultContactOffset;
+        ballVisualEqualizerCollider
+        ? Mathf.Max(
+        ballVisualEqualizerCollider.contactOffset,
+        Physics.defaultContactOffset)
+        : Physics.defaultContactOffset;
 
         minimumFreeAmplitude =
-            Mathf.Max(
-                0.001f,
-                contactOffset * 2f);
+        Mathf.Max(
+        0.001f,
+        contactOffset * 2f);
 
         // Canonical contract:
         // H0 is already the Stable-N free amplitude at Release.
         float A0 =
-            Mathf.Max(
-                minimumFreeAmplitude,
-                canonicalReferenceHeight);
+        Mathf.Max(
+        minimumFreeAmplitude,
+        canonicalReferenceHeight);
         float releaseToLimitDistance =
-            EstimateSplineArcDistancePhysics(
-                capturedReleaseProgress01,
-                capturedTargetProgress01,
-                32);
+        EstimateSplineArcDistancePhysics(
+        capturedReleaseProgress01,
+        capturedTargetProgress01,
+        32);
 
         if (releaseToLimitDistance <= 0.0001f)
         {
             releaseToLimitDistance =
-                Vector3.Distance(
-                    releaseSurfacePhysics,
-                    limitSurfacePhysics);
+            Vector3.Distance(
+            releaseSurfacePhysics,
+            limitSurfacePhysics);
         }
 
         float timeToLimit =
-            ResolveTravelTimeForArcDistance(
-                releaseToLimitDistance,
-                releaseTangentPhysics);
+        ResolveTravelTimeForArcDistance(
+        releaseToLimitDistance,
+        releaseTangentPhysics);
 
         decayTimeCostSeconds =
-            Mathf.Max(
-                0f,
-                timeToLimit);
+        Mathf.Max(
+        0f,
+        timeToLimit);
 
         float AL =
-            Mathf.Min(
-                A0,
-                minimumFreeAmplitude);
+        Mathf.Min(
+        A0,
+        minimumFreeAmplitude);
 
         decayRatePerSecond =
-            A0 > AL + 0.000001f &&
-            timeToLimit > 0.0001f
-                ? Mathf.Log(A0 / AL) /
-                  timeToLimit
-                : 0f;
+        A0 > AL + 0.000001f &&
+        timeToLimit > 0.0001f
+        ? Mathf.Log(A0 / AL) /
+        timeToLimit
+        : 0f;
 
         // Backward diagnostic alias.  In this integrated version gamma is 1/s.
         gamma = decayRatePerSecond;
@@ -747,88 +974,87 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         // 周期Tを唯一の時間スケールとして、Release時の高さ・速度を
         // 同じ幾何式から解決する。R倍率は [2R, 4R] の範囲で自動決定。
         ResolvePeriodicContactPlan(
-            A0,
-            equalizerRadius);
+        A0,
+        equalizerRadius);
 
         // Existing cached fields remain the compatibility cache.
         // cachedEntry = section entry, cachedLimit = section end.
         if (!TryEvaluateSplineSurfacePhysics(
-                0f,
-                subjectRadius,
-                out _,
-                out Vector3 entrySurfacePhysics,
-                out _,
-                out _) ||
-            !TryEvaluateSplineSurfacePhysics(
-                1f,
-                subjectRadius,
-                out _,
-                out Vector3 slopeEndSurfacePhysics,
-                out _,
-                out _))
+        0f,
+        subjectRadius,
+        out _,
+        out Vector3 entrySurfacePhysics,
+        out _,
+        out _) ||
+        !TryEvaluateSplineSurfacePhysics(
+        1f,
+        subjectRadius,
+        out _,
+        out Vector3 slopeEndSurfacePhysics,
+        out _,
+        out _))
         {
             return;
         }
 
         CacheLatestEnvelopeGeometry(
-            entrySurfacePhysics,
-            slopeEndSurfacePhysics,
-            releaseTangentPhysics,
-            stableReleaseNormalPhysics,
-            A0,
-            decayRatePerSecond,
-            equalizerRadius);
+        entrySurfacePhysics,
+        slopeEndSurfacePhysics,
+        releaseTangentPhysics,
+        stableReleaseNormalPhysics,
+        A0,
+        decayRatePerSecond,
+        equalizerRadius);
 
         CreateRoot();
 
         envelopeBuilt =
-            CreateFullSplineEnvelopeMesh(
-                A0,
-                decayRatePerSecond,
-                equalizerRadius);
+        CreateFullSplineEnvelopeMesh(
+        A0,
+        decayRatePerSecond,
+        equalizerRadius);
 
         if (envelopeBuilt)
         {
             Debug.Log(
-                $"[ENVELOPE FULL SPLINE DOMAIN] " +
-                $"releaseP={capturedReleaseProgress01 * 100f:F2}% " +
-                $"limitP={capturedTargetProgress01 * 100f:F2}% " +
-                $"baseLength={latestSlopeBaseLength:F4}m " +
-                $"curveLength={latestColliderCurveLength:F4}m " +
-                $"curveRatio={latestCurveLengthRatio:F6} " +
-                $"timeToLimit={timeToLimit:F4}s " +
-                $"k={decayRatePerSecond:F4}/s " +
-                $"preferredT={preferredContactPeriodSeconds:F4}s " +
-                $"resolvedT={resolvedContactPeriodSeconds:F4}s " +
-                $"S={resolvedEnvelopeRadiusClearanceScale:F4}R " +
-                $"wave={presentationWaveIndex + 1} " +
-                $"ceiling={presentationCurrentCeilingR:F3}R " +
-                $"legacy={presentationCurrentLegacyTravelR:F3}R " +
-                $"resolved={presentationCurrentResolvedTravelR:F3}R " +
-                $"Hn={presentationCurrentLossHnR:F3}R " +
-                $"rawRet={presentationCurrentRawLegacyRetention01:F4} " +
-                $"appliedRet={presentationCurrentAppliedRetention01:F4} " +
-                $"lossInfluence={waveTimeDecayInfluence:F3} " +
-                $"releaseSpan={resolvedReleaseCenterTravelDistance:F4}m " +
-                $"targetVN={resolvedReleaseTargetNormalSpeed:F4}m/s " +
-                $"phaseA0={resolvedReleasePhaseAcceleration:F4}m/s2 " +
-                $"timingExpanded={presentationTimingExpanded} " +
-                $"halfSteps={presentationResolvedHalfCycleFixedSteps} " +
-                $"requiredPhaseA={presentationRequiredPhaseAcceleration:F4}m/s2 " +
-                $"phaseBudget={presentationPhaseAccelerationBudget:F4}m/s2 " +
-                $"E0={sourceEnergyJoule:F4}J " +
-                $"H0={canonicalReferenceHeight:F4}m " +
-                $"epsilon={canonicalEnergyRatio:F4} " +
-                $"adaptiveMaxGround={sourceMaxGroundSpeedReadOnly:F3}m/s " +
-                $"periodScaleFromMaxGround=1.0000 " +
-                $"expCycle={maxGroundSpeedExperimentCycleIndex} " +
-                $"maxGround0={sourceMaxGroundSpeedReadOnly:F3}m/s " +
-                $"plannedMaxGround={plannedMaxGroundSpeedForCycle:F3}m/s " +
-                $"adaptiveMode=Common",
-                this);
+            $"[ENVELOPE FULL SPLINE DOMAIN] " +
+            $"releaseP={capturedReleaseProgress01 * 100f:F2}% " +
+            $"limitP={capturedTargetProgress01 * 100f:F2}% " +
+            $"baseLength={latestSlopeBaseLength:F4}m " +
+            $"curveLength={latestColliderCurveLength:F4}m " +
+            $"curveRatio={latestCurveLengthRatio:F6} " +
+            $"timeToLimit={timeToLimit:F4}s " +
+            $"k={decayRatePerSecond:F4}/s " +
+            $"preferredT={preferredContactPeriodSeconds:F4}s " +
+            $"resolvedT={resolvedContactPeriodSeconds:F4}s " +
+            $"S={resolvedEnvelopeRadiusClearanceScale:F4}R " +
+            $"wave={presentationWaveIndex + 1} " +
+            $"ceiling={presentationCurrentCeilingR:F3}R " +
+            $"legacy={presentationCurrentLegacyTravelR:F3}R " +
+            $"resolved={presentationCurrentResolvedTravelR:F3}R " +
+            $"Hn={presentationCurrentLossHnR:F3}R " +
+            $"rawRet={presentationCurrentRawLegacyRetention01:F4} " +
+            $"appliedRet={presentationCurrentAppliedRetention01:F4} " +
+            $"lossInfluence={waveTimeDecayInfluence:F3} " +
+            $"releaseSpan={resolvedReleaseCenterTravelDistance:F4}m " +
+            $"targetVN={resolvedReleaseTargetNormalSpeed:F4}m/s " +
+            $"phaseA0={resolvedReleasePhaseAcceleration:F4}m/s2 " +
+            $"timingExpanded={presentationTimingExpanded} " +
+            $"halfSteps={presentationResolvedHalfCycleFixedSteps} " +
+            $"requiredPhaseA={presentationRequiredPhaseAcceleration:F4}m/s2 " +
+            $"phaseBudget={presentationPhaseAccelerationBudget:F4}m/s2 " +
+            $"E0={sourceEnergyJoule:F4}J " +
+            $"H0={canonicalReferenceHeight:F4}m " +
+            $"epsilon={canonicalEnergyRatio:F4} " +
+            $"adaptiveMaxGround={sourceMaxGroundSpeedReadOnly:F3}m/s " +
+            $"periodScaleFromMaxGround=1.0000 " +
+            $"expCycle={maxGroundSpeedExperimentCycleIndex} " +
+            $"maxGround0={sourceMaxGroundSpeedReadOnly:F3}m/s " +
+            $"plannedMaxGround={plannedMaxGroundSpeedForCycle:F3}m/s " +
+            $"adaptiveMode=Common",
+            this);
         }
     }
-
 
     // ================================================================
     // First contact prediction / selection
@@ -837,31 +1063,31 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     // Envelope mesh
     // ================================================================
     private void CacheLatestEnvelopeGeometry(
-        Vector3 entrySurfacePhysics,
-        Vector3 limitSurfacePhysics,
-        Vector3 axisPhysics,
-        Vector3 slopeNormalPhysics,
-        float A0,
-        float gammaValue,
-        float equalizerRadius)
+    Vector3 entrySurfacePhysics,
+    Vector3 limitSurfacePhysics,
+    Vector3 axisPhysics,
+    Vector3 slopeNormalPhysics,
+    float A0,
+    float gammaValue,
+    float equalizerRadius)
     {
         cachedAxisPhysics =
-            axisPhysics;
+        axisPhysics;
 
         cachedSlopeNormalPhysics =
-            slopeNormalPhysics;
+        slopeNormalPhysics;
 
         cachedA0 =
-            A0;
+        A0;
 
         cachedGamma =
-            gammaValue;
+        gammaValue;
 
         cachedEqualizerRadius =
-            equalizerRadius;
+        equalizerRadius;
 
         latestEnvelopeGeometryCached =
-            true;
+        true;
     }
     private int ComputePresentationCeilingCurveHash()
     {
@@ -870,7 +1096,7 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
             int hash = 17;
 
             if (presentationCeilingR == null)
-                return hash;
+            return hash;
 
             Keyframe[] keys = presentationCeilingR.keys;
             hash = hash * 31 + keys.Length;
@@ -890,35 +1116,35 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
     private bool LiveSettingsChanged()
     {
         if (!liveSettingsSnapshotValid)
-            return true;
+        return true;
 
         return
-            segmentCount != lastSegmentCount ||
-            Mathf.Abs(envelopeWidth - lastEnvelopeWidth) > 0.00001f ||
-            Mathf.Abs(
-                preferredContactPeriodSeconds -
-                lastPreferredContactPeriodSeconds) > 0.00001f ||
-            Mathf.Abs(
-                minimumPresentationCeilingR -
-                lastMinimumPresentationCeilingR) > 0.00001f ||
-            Mathf.Abs(
-                waveTimeDecayInfluence -
-                lastWaveTimeDecayInfluence) > 0.00001f ||
-            ComputePresentationCeilingCurveHash() !=
-                lastPresentationCeilingCurveHash;
+        segmentCount != lastSegmentCount ||
+        Mathf.Abs(envelopeWidth - lastEnvelopeWidth) > 0.00001f ||
+        Mathf.Abs(
+        preferredContactPeriodSeconds -
+        lastPreferredContactPeriodSeconds) > 0.00001f ||
+        Mathf.Abs(
+        minimumPresentationCeilingR -
+        lastMinimumPresentationCeilingR) > 0.00001f ||
+        Mathf.Abs(
+        waveTimeDecayInfluence -
+        lastWaveTimeDecayInfluence) > 0.00001f ||
+        ComputePresentationCeilingCurveHash() !=
+        lastPresentationCeilingCurveHash;
     }
     private void CaptureLiveSettingsSnapshot()
     {
         lastSegmentCount = segmentCount;
         lastEnvelopeWidth = envelopeWidth;
         lastPreferredContactPeriodSeconds =
-            preferredContactPeriodSeconds;
+        preferredContactPeriodSeconds;
         lastMinimumPresentationCeilingR =
-            minimumPresentationCeilingR;
+        minimumPresentationCeilingR;
         lastWaveTimeDecayInfluence =
-            waveTimeDecayInfluence;
+        waveTimeDecayInfluence;
         lastPresentationCeilingCurveHash =
-            ComputePresentationCeilingCurveHash();
+        ComputePresentationCeilingCurveHash();
         liveSettingsSnapshotValid = true;
     }
     private void RebuildLatestGeneratedMesh()
@@ -927,44 +1153,43 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         pendingCanonicalGeometryRebuild = true;
     }
 
-
     private void PreparePendingUpperEnvelopeMesh()
     {
         if (!pendingCanonicalGeometryRebuild ||
-            pendingUpperEnvelopeMeshReady ||
-            Time.fixedTime < nextPendingUpperEnvelopeBuildRetryTime ||
-            !latestEnvelopeGeometryCached ||
-            !generatedMeshTransform ||
-            !generatedMeshFilter ||
-            !generatedMeshCollider)
+        pendingUpperEnvelopeMeshReady ||
+        Time.fixedTime < nextPendingUpperEnvelopeBuildRetryTime ||
+        !latestEnvelopeGeometryCached ||
+        !generatedMeshTransform ||
+        !generatedMeshFilter ||
+        !generatedMeshCollider)
         {
             return;
         }
 
         ResolvePeriodicContactPlan(
-            cachedA0,
-            cachedEqualizerRadius);
+        cachedA0,
+        cachedEqualizerRadius);
 
         Mesh newMesh =
-            BuildFullSplineEnvelopeMeshAsset(
-                generatedMeshTransform,
-                cachedA0,
-                cachedGamma,
-                cachedEqualizerRadius);
+        BuildFullSplineEnvelopeMeshAsset(
+        generatedMeshTransform,
+        cachedA0,
+        cachedGamma,
+        cachedEqualizerRadius);
 
         if (!newMesh)
         {
             nextPendingUpperEnvelopeBuildRetryTime =
-                Time.fixedTime + 0.10f;
+            Time.fixedTime + 0.10f;
 
             Debug.LogWarning(
-                "[ENVELOPE STANDBY BUILD] Full Spline mesh build failed; active mesh preserved. Retry in 0.10s.",
-                this);
+            "[ENVELOPE STANDBY BUILD] Full Spline mesh build failed; active mesh preserved. Retry in 0.10s.",
+            this);
             return;
         }
 
         if (pendingUpperEnvelopeMesh &&
-            pendingUpperEnvelopeMesh != newMesh)
+        pendingUpperEnvelopeMesh != newMesh)
         {
             Destroy(pendingUpperEnvelopeMesh);
         }
@@ -975,13 +1200,12 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         nextPendingUpperEnvelopeBuildRetryTime = 0f;
     }
 
-
     private void TryCommitPendingUpperEnvelopeMesh()
     {
         if (!pendingUpperEnvelopeMeshReady ||
-            !pendingUpperEnvelopeMesh ||
-            !generatedMeshFilter ||
-            !generatedMeshCollider)
+        !pendingUpperEnvelopeMesh ||
+        !generatedMeshFilter ||
+        !generatedMeshCollider)
         {
             return;
         }
@@ -989,40 +1213,40 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         // Mesh recook is deferred to FixedUpdate. Temporarily disable the Upper,
         // swap the cooked Mesh, then restore the requested solid state.
         bool restoreSolid =
-            upperEnvelopeSolidRequested;
+        upperEnvelopeSolidRequested;
 
         Mesh oldMesh =
-            generatedMesh;
+        generatedMesh;
 
         generatedMeshCollider.enabled =
-            false;
+        false;
 
         generatedMeshFilter.sharedMesh =
-            pendingUpperEnvelopeMesh;
+        pendingUpperEnvelopeMesh;
 
         generatedMeshCollider.sharedMesh =
-            null;
+        null;
 
         generatedMeshCollider.sharedMesh =
-            pendingUpperEnvelopeMesh;
+        pendingUpperEnvelopeMesh;
 
         generatedMesh =
-            pendingUpperEnvelopeMesh;
+        pendingUpperEnvelopeMesh;
 
         pendingUpperEnvelopeMesh =
-            null;
+        null;
 
         pendingUpperEnvelopeMeshReady =
-            false;
+        false;
 
         generatedMeshCollider.enabled =
-            restoreSolid;
+        restoreSolid;
 
         upperEnvelopeSolidEnabled =
-            generatedMeshCollider.enabled;
+        generatedMeshCollider.enabled;
 
         if (oldMesh &&
-            oldMesh != generatedMesh)
+        oldMesh != generatedMesh)
         {
             Destroy(oldMesh);
         }
@@ -1031,33 +1255,31 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
         CaptureLiveSettingsSnapshot();
 
         UpdatePresentationRuntimeDiagnostics(
-            Mathf.Max(
-                0f,
-                Time.fixedTime -
-                presentationReleaseFixedTime));
+        Mathf.Max(
+        0f,
+        Time.fixedTime -
+        presentationReleaseFixedTime));
 
         upperEnvelopeMeshSwapCount++;
 
         Debug.Log(
-            $"[ENVELOPE FLOATING SWAP] " +
-            $"swapCount={upperEnvelopeMeshSwapCount} " +
-            $"wave={presentationWaveIndex + 1} " +
-            $"ceiling={presentationCurrentCeilingR:F3}R " +
-            $"resolved={presentationCurrentResolvedTravelR:F3}R " +
-            $"Hn={presentationCurrentLossHnR:F3}R " +
-            $"solidEnabled={generatedMeshCollider.enabled}",
-            this);
+        $"[ENVELOPE FLOATING SWAP] " +
+        $"swapCount={upperEnvelopeMeshSwapCount} " +
+        $"wave={presentationWaveIndex + 1} " +
+        $"ceiling={presentationCurrentCeilingR:F3}R " +
+        $"resolved={presentationCurrentResolvedTravelR:F3}R " +
+        $"Hn={presentationCurrentLossHnR:F3}R " +
+        $"solidEnabled={generatedMeshCollider.enabled}",
+        this);
     }
 
-
-
-private bool TryEvaluateSplineSurfacePhysics(
-        float progress01,
-        float subjectRadius,
-        out Vector3 centerPhysics,
-        out Vector3 surfacePhysics,
-        out Vector3 tangentPhysics,
-        out Vector3 normalPhysics)
+    private bool TryEvaluateSplineSurfacePhysics(
+    float progress01,
+    float subjectRadius,
+    out Vector3 centerPhysics,
+    out Vector3 surfacePhysics,
+    out Vector3 tangentPhysics,
+    out Vector3 normalPhysics)
     {
         centerPhysics = Vector3.zero;
         surfacePhysics = Vector3.zero;
@@ -1065,63 +1287,62 @@ private bool TryEvaluateSplineSurfacePhysics(
         normalPhysics = Vector3.up;
 
         if (!slopeCore ||
-            !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-                Mathf.Clamp01(progress01),
-                out centerPhysics,
-                out tangentPhysics,
-                out normalPhysics))
+        !slopeCore.TryEvaluateBallVisualSectionFramePhysics(
+        Mathf.Clamp01(progress01),
+        out centerPhysics,
+        out tangentPhysics,
+        out normalPhysics))
         {
             return false;
         }
 
         Vector3 sourceAxisPhysics =
-            correspondSubject
-                ? correspondSubject.InverseMapDirection(
-                    sourceEnergyAxisVisual)
-                : Vector3.up;
+        correspondSubject
+        ? correspondSubject.InverseMapDirection(
+        sourceEnergyAxisVisual)
+        : Vector3.up;
 
         tangentPhysics.Normalize();
 
         normalPhysics =
-            Vector3.ProjectOnPlane(
-                normalPhysics,
-                tangentPhysics);
+        Vector3.ProjectOnPlane(
+        normalPhysics,
+        tangentPhysics);
 
         if (normalPhysics.sqrMagnitude <= 0.000001f)
-            return false;
+        return false;
 
         normalPhysics.Normalize();
 
         if (sourceAxisPhysics.sqrMagnitude > 0.000001f &&
-            Vector3.Dot(normalPhysics, sourceAxisPhysics) < 0f)
+        Vector3.Dot(normalPhysics, sourceAxisPhysics) < 0f)
         {
             normalPhysics = -normalPhysics;
         }
 
         tangentPhysics =
-            Vector3.ProjectOnPlane(
-                tangentPhysics,
-                normalPhysics).normalized;
+        Vector3.ProjectOnPlane(
+        tangentPhysics,
+        normalPhysics).normalized;
 
         surfacePhysics =
-            centerPhysics -
-            normalPhysics *
-            Mathf.Max(0f, subjectRadius);
+        centerPhysics -
+        normalPhysics *
+        Mathf.Max(0f, subjectRadius);
 
         return true;
     }
 
-
     private float EstimateSplineArcDistancePhysics(
-        float progressA,
-        float progressB,
-        int samples)
+    float progressA,
+    float progressB,
+    int samples)
     {
         float a = Mathf.Clamp01(progressA);
         float b = Mathf.Clamp01(progressB);
 
         if (Mathf.Abs(b - a) <= 0.000001f)
-            return 0f;
+        return 0f;
 
         int count = Mathf.Max(2, samples);
         float distance = 0f;
@@ -1131,22 +1352,22 @@ private bool TryEvaluateSplineSurfacePhysics(
         for (int i = 0; i <= count; i++)
         {
             float p =
-                Mathf.Lerp(
-                    a,
-                    b,
-                    i / (float)count);
+            Mathf.Lerp(
+            a,
+            b,
+            i / (float)count);
 
             if (!slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-                    p,
-                    out Vector3 center,
-                    out _,
-                    out _))
+            p,
+            out Vector3 center,
+            out _,
+            out _))
             {
                 continue;
             }
 
             if (hasPrevious)
-                distance += Vector3.Distance(previous, center);
+            distance += Vector3.Distance(previous, center);
 
             previous = center;
             hasPrevious = true;
@@ -1155,52 +1376,51 @@ private bool TryEvaluateSplineSurfacePhysics(
         return distance;
     }
 
-
     private float ResolveTravelTimeForArcDistance(
-        float distance,
-        Vector3 tangentPhysics)
+    float distance,
+    Vector3 tangentPhysics)
     {
         float safeDistance = Mathf.Max(0f, distance);
         if (safeDistance <= 0.000001f)
-            return 0f;
+        return 0f;
 
         Vector3 tangentVisual =
-            correspondSubject
-                ? correspondSubject.MapDirection(tangentPhysics)
-                : tangentPhysics;
+        correspondSubject
+        ? correspondSubject.MapDirection(tangentPhysics)
+        : tangentPhysics;
 
         if (tangentVisual.sqrMagnitude <= 0.000001f)
-            return 0f;
+        return 0f;
 
         tangentVisual.Normalize();
 
         float initialTangentSpeed =
-            Vector3.Dot(
-                capturedEqualizerLaunchVelocityVisual,
-                tangentVisual);
+        Vector3.Dot(
+        capturedEqualizerLaunchVelocityVisual,
+        tangentVisual);
 
         if (initialTangentSpeed <= 0.0001f)
         {
             initialTangentSpeed =
-                Mathf.Max(
-                    0.01f,
-                    capturedEqualizerLaunchVelocityVisual.magnitude);
+            Mathf.Max(
+            0.01f,
+            capturedEqualizerLaunchVelocityVisual.magnitude);
         }
 
         float tangentAcceleration =
-            Vector3.Dot(
-                Physics.gravity,
-                tangentVisual);
+        Vector3.Dot(
+        Physics.gravity,
+        tangentVisual);
 
         if (Mathf.Abs(tangentAcceleration) <= 0.0001f)
-            return safeDistance / initialTangentSpeed;
+        return safeDistance / initialTangentSpeed;
 
         float discriminant =
-            initialTangentSpeed * initialTangentSpeed +
-            2f * tangentAcceleration * safeDistance;
+        initialTangentSpeed * initialTangentSpeed +
+        2f * tangentAcceleration * safeDistance;
 
         if (discriminant < 0f)
-            return safeDistance / initialTangentSpeed;
+        return safeDistance / initialTangentSpeed;
 
         float sqrtD = Mathf.Sqrt(discriminant);
         float t1 = (-initialTangentSpeed + sqrtD) / tangentAcceleration;
@@ -1211,143 +1431,139 @@ private bool TryEvaluateSplineSurfacePhysics(
         if (t2 >= 0f && t2 < best) best = t2;
 
         return float.IsInfinity(best) || float.IsNaN(best)
-            ? safeDistance / initialTangentSpeed
-            : best;
+        ? safeDistance / initialTangentSpeed
+        : best;
     }
     private float EvaluateEnvelopeAmplitudeAtTime(
-        float A0,
-        float decayRatePerSecondValue,
-        float timeSeconds)
+    float A0,
+    float decayRatePerSecondValue,
+    float timeSeconds)
     {
         // Legacy O-model. Do not replace this with the presentation curve.
         // This is the physical/decay side that produces H_n.
         float epsilon = Mathf.Clamp01(canonicalEnergyRatio);
 
         float amplitude =
-            Mathf.Max(0f, A0) *
-            epsilon *
-            Mathf.Exp(
-                -Mathf.Max(0f, decayRatePerSecondValue) *
-                Mathf.Max(0f, timeSeconds));
+        Mathf.Max(0f, A0) *
+        epsilon *
+        Mathf.Exp(
+        -Mathf.Max(0f, decayRatePerSecondValue) *
+        Mathf.Max(0f, timeSeconds));
 
         return Mathf.Max(minimumFreeAmplitude, amplitude);
     }
 
-
     private float EvaluatePresentationCeilingR(
-        float waveCoordinate)
+    float waveCoordinate)
     {
         float safeMinimum =
-            Mathf.Max(0.01f, minimumPresentationCeilingR);
+        Mathf.Max(0.01f, minimumPresentationCeilingR);
 
         if (presentationCeilingR == null ||
-            presentationCeilingR.length == 0)
+        presentationCeilingR.length == 0)
         {
             return safeMinimum;
         }
 
         return
-            Mathf.Max(
-                safeMinimum,
-                presentationCeilingR.Evaluate(
-                    Mathf.Max(0f, waveCoordinate)));
+        Mathf.Max(
+        safeMinimum,
+        presentationCeilingR.Evaluate(
+        Mathf.Max(0f, waveCoordinate)));
     }
 
-
     private float EvaluatePresentationWaveCoordinate(
-        float timeSeconds)
+    float timeSeconds)
     {
         float safePeriod =
-            Mathf.Max(0.0001f, resolvedContactPeriodSeconds);
+        Mathf.Max(0.0001f, resolvedContactPeriodSeconds);
 
         // Actual canonical Upper peaks advance presentationWaveIndex.
         // The predicted time coordinate is used for future Spline samples.
         // max() prevents a late physical turnpoint from moving the presentation
         // envelope backwards after a real wave has already completed.
         float predictedWaveCoordinate =
-            Mathf.Max(
-                0f,
-                Mathf.Max(0f, timeSeconds) / safePeriod -
-                0.5f);
+        Mathf.Max(
+        0f,
+        Mathf.Max(0f, timeSeconds) / safePeriod -
+        0.5f);
 
         // Upper peaks occur at T/2, 3T/2, 5T/2... .
         // Therefore the first visible peak maps to curve X=0, the second to X=1.
         return
-            Mathf.Max(
-                presentationWaveIndex,
-                predictedWaveCoordinate);
+        Mathf.Max(
+        presentationWaveIndex,
+        predictedWaveCoordinate);
     }
 
-
     private float EvaluateLegacyCenterTravelAtTime(
-        float A0,
-        float decayRatePerSecondValue,
-        float timeSeconds,
-        float equalizerRadius)
+    float A0,
+    float decayRatePerSecondValue,
+    float timeSeconds,
+    float equalizerRadius)
     {
         float radius =
-            Mathf.Max(0.0001f, equalizerRadius);
+        Mathf.Max(0.0001f, equalizerRadius);
 
         float legacyAmplitude =
-            EvaluateEnvelopeAmplitudeAtTime(
-                A0,
-                decayRatePerSecondValue,
-                timeSeconds);
+        EvaluateEnvelopeAmplitudeAtTime(
+        A0,
+        decayRatePerSecondValue,
+        timeSeconds);
 
         // Original O geometry:
         // Upper offset = S(T)R + A(t)
         // Center free travel = Upper offset - 2R
         //                    = (S(T)-2)R + A(t).
         return
-            Mathf.Max(
-                minimumFreeAmplitude,
-                (resolvedEnvelopeRadiusClearanceScale -
-                 MinimumPeriodicRadiusClearanceScale) *
-                    radius +
-                legacyAmplitude);
+        Mathf.Max(
+        minimumFreeAmplitude,
+        (resolvedEnvelopeRadiusClearanceScale -
+        MinimumPeriodicRadiusClearanceScale) *
+        radius +
+        legacyAmplitude);
     }
 
-
     private float EvaluatePresentationCenterTravelAtTime(
-        float A0,
-        float decayRatePerSecondValue,
-        float timeSeconds,
-        float equalizerRadius,
-        out float ceilingR,
-        out float legacyTravelR,
-        out float lossHnR,
-        out float legacyEnergyRetention01,
-        out float legacyTimeRetention01,
-        out float rawLegacyRetention01,
-        out float appliedRetention01)
+    float A0,
+    float decayRatePerSecondValue,
+    float timeSeconds,
+    float equalizerRadius,
+    out float ceilingR,
+    out float legacyTravelR,
+    out float lossHnR,
+    out float legacyEnergyRetention01,
+    out float legacyTimeRetention01,
+    out float rawLegacyRetention01,
+    out float appliedRetention01)
     {
         float radius =
-            Mathf.Max(0.0001f, equalizerRadius);
+        Mathf.Max(0.0001f, equalizerRadius);
 
         float safeTime =
-            Mathf.Max(0f, timeSeconds);
+        Mathf.Max(0f, timeSeconds);
 
         float waveCoordinate =
-            EvaluatePresentationWaveCoordinate(
-                safeTime);
+        EvaluatePresentationWaveCoordinate(
+        safeTime);
 
         ceilingR =
-            EvaluatePresentationCeilingR(
-                waveCoordinate);
+        EvaluatePresentationCeilingR(
+        waveCoordinate);
 
         // Keep the original O/Q absolute geometry as a diagnostic only.
         // It is intentionally NOT used as the resolved presentation height.
         // Q used min(C_n, D_legacy) and the log showed 3.8R ceilings collapsing
         // to roughly 0.1R-0.9R.  R instead extracts only the old decay SHAPE.
         float legacyMeters =
-            EvaluateLegacyCenterTravelAtTime(
-                A0,
-                decayRatePerSecondValue,
-                safeTime,
-                radius);
+        EvaluateLegacyCenterTravelAtTime(
+        A0,
+        decayRatePerSecondValue,
+        safeTime,
+        radius);
 
         legacyTravelR =
-            legacyMeters / radius;
+        legacyMeters / radius;
 
         // Old Envelope:
         //     A_old(t) = H0 * epsilon * exp(-gamma*t)
@@ -1356,21 +1572,21 @@ private bool TryEvaluateSplineSurfacePhysics(
         // H0 cancels, so a small handoff height cannot collapse a 3-4R
         // presentation ceiling merely because the old absolute geometry was small.
         legacyEnergyRetention01 =
-            Mathf.Clamp01(canonicalEnergyRatio);
+        Mathf.Clamp01(canonicalEnergyRatio);
 
         legacyTimeRetention01 =
-            Mathf.Clamp01(
-                Mathf.Exp(
-                    -Mathf.Max(0f, decayRatePerSecondValue) *
-                    safeTime));
+        Mathf.Clamp01(
+        Mathf.Exp(
+        -Mathf.Max(0f, decayRatePerSecondValue) *
+        safeTime));
 
         rawLegacyRetention01 =
-            Mathf.Clamp01(
-                legacyEnergyRetention01 *
-                legacyTimeRetention01);
+        Mathf.Clamp01(
+        legacyEnergyRetention01 *
+        legacyTimeRetention01);
 
         float influence =
-            Mathf.Clamp01(waveTimeDecayInfluence);
+        Mathf.Clamp01(waveTimeDecayInfluence);
 
         // Apply only a tunable fraction of the old loss:
         //     q_applied = 1 - influence * (1 - q_old)
@@ -1379,23 +1595,23 @@ private bool TryEvaluateSplineSurfacePhysics(
         // Example: q_old=0.20, influence=0.35 -> q_applied=0.72.
         // A 3.8R ceiling then resolves to 2.736R instead of 0.76R.
         appliedRetention01 =
-            Mathf.Clamp01(
-                Mathf.Lerp(
-                    1f,
-                    rawLegacyRetention01,
-                    influence));
+        Mathf.Clamp01(
+        Mathf.Lerp(
+        1f,
+        rawLegacyRetention01,
+        influence));
 
         float resolvedR =
-            Mathf.Max(
-                minimumFreeAmplitude / radius,
-                ceilingR * appliedRetention01);
+        Mathf.Max(
+        minimumFreeAmplitude / radius,
+        ceilingR * appliedRetention01);
 
         // Never exceed the human ceiling even when the numerical minimum floor
         // would otherwise be slightly larger.
         resolvedR =
-            Mathf.Min(
-                ceilingR,
-                resolvedR);
+        Mathf.Min(
+        ceilingR,
+        resolvedR);
 
         // Floating Rigidbody版では4R-Hnが振幅Authorityです。
         // 周期/実現可能性の都合で振幅を縮めません。Rigidbody側がSpring/Damperと
@@ -1403,153 +1619,151 @@ private bool TryEvaluateSplineSurfacePhysics(
         resolvedR = Mathf.Min(ceilingR, resolvedR);
 
         lossHnR =
-            Mathf.Max(
-                0f,
-                ceilingR - resolvedR);
+        Mathf.Max(
+        0f,
+        ceilingR - resolvedR);
 
         return
-            resolvedR * radius;
+        resolvedR * radius;
     }
 
-
     private void UpdatePresentationRuntimeDiagnostics(
-        float elapsedTimeSeconds)
+    float elapsedTimeSeconds)
     {
         if (cachedEqualizerRadius <= 0.0001f ||
-            cachedA0 <= 0f)
+        cachedA0 <= 0f)
         {
             return;
         }
 
         float resolvedMeters =
-            EvaluatePresentationCenterTravelAtTime(
-                cachedA0,
-                cachedGamma,
-                Mathf.Max(0f, elapsedTimeSeconds),
-                cachedEqualizerRadius,
-                out presentationCurrentCeilingR,
-                out presentationCurrentLegacyTravelR,
-                out presentationCurrentLossHnR,
-                out presentationCurrentLegacyEnergyRetention01,
-                out presentationCurrentLegacyTimeRetention01,
-                out presentationCurrentRawLegacyRetention01,
-                out presentationCurrentAppliedRetention01);
+        EvaluatePresentationCenterTravelAtTime(
+        cachedA0,
+        cachedGamma,
+        Mathf.Max(0f, elapsedTimeSeconds),
+        cachedEqualizerRadius,
+        out presentationCurrentCeilingR,
+        out presentationCurrentLegacyTravelR,
+        out presentationCurrentLossHnR,
+        out presentationCurrentLegacyEnergyRetention01,
+        out presentationCurrentLegacyTimeRetention01,
+        out presentationCurrentRawLegacyRetention01,
+        out presentationCurrentAppliedRetention01);
 
         presentationCurrentResolvedTravelR =
-            resolvedMeters /
-            Mathf.Max(0.0001f, cachedEqualizerRadius);
+        resolvedMeters /
+        Mathf.Max(0.0001f, cachedEqualizerRadius);
     }
     private float ResolvePresentationHalfPeriodForSpan(
-        float spanMeters,
-        float canonicalLaunchNormalSpeed,
-        float canonicalNormalAccelerationValue,
-        float preferredHalfPeriod,
-        float fixedDt,
-        out int resolvedSteps,
-        out float requiredPhaseAcceleration,
-        out bool expanded)
+    float spanMeters,
+    float canonicalLaunchNormalSpeed,
+    float canonicalNormalAccelerationValue,
+    float preferredHalfPeriod,
+    float fixedDt,
+    out int resolvedSteps,
+    out float requiredPhaseAcceleration,
+    out bool expanded)
     {
         float safeDt = Mathf.Max(0.0001f, fixedDt);
         float preferredHalf =
-            Mathf.Max(
-                safeDt * MinimumPeriodicHalfCycleFixedSteps,
-                preferredHalfPeriod);
+        Mathf.Max(
+        safeDt * MinimumPeriodicHalfCycleFixedSteps,
+        preferredHalfPeriod);
 
         int preferredSteps =
-            Mathf.Max(
-                MinimumPeriodicHalfCycleFixedSteps,
-                Mathf.CeilToInt(
-                    preferredHalf / safeDt - 0.00001f));
+        Mathf.Max(
+        MinimumPeriodicHalfCycleFixedSteps,
+        Mathf.CeilToInt(
+        preferredHalf / safeDt - 0.00001f));
 
         int maximumSteps =
-            Mathf.Max(
-                preferredSteps,
-                Mathf.Clamp(
-                    maximumPresentationHalfCycleFixedSteps,
-                    MinimumPeriodicHalfCycleFixedSteps,
-                    64));
+        Mathf.Max(
+        preferredSteps,
+        Mathf.Clamp(
+        maximumPresentationHalfCycleFixedSteps,
+        MinimumPeriodicHalfCycleFixedSteps,
+        64));
 
         float phaseBudget =
-            Mathf.Max(
-                1f,
-                maximumPresentationPhaseAcceleration);
+        Mathf.Max(
+        1f,
+        maximumPresentationPhaseAcceleration);
 
         presentationPhaseAccelerationBudget =
-            phaseBudget;
+        phaseBudget;
 
         resolvedSteps = preferredSteps;
         requiredPhaseAcceleration = 0f;
         expanded = false;
 
         float safeSpan =
-            Mathf.Max(
-                minimumFreeAmplitude,
-                spanMeters);
+        Mathf.Max(
+        minimumFreeAmplitude,
+        spanMeters);
 
         for (int steps = preferredSteps;
-             steps <= maximumSteps;
-             steps++)
+        steps <= maximumSteps;
+        steps++)
         {
             float h = steps * safeDt;
 
             float requiredTotalNormalAcceleration =
-                2f *
-                (safeSpan -
-                 canonicalLaunchNormalSpeed * h) /
-                (h * h);
+            2f *
+            (safeSpan -
+            canonicalLaunchNormalSpeed * h) /
+            (h * h);
 
             float phaseAcceleration =
-                requiredTotalNormalAcceleration +
-                Mathf.Max(
-                    0f,
-                    canonicalNormalAccelerationValue);
+            requiredTotalNormalAcceleration +
+            Mathf.Max(
+            0f,
+            canonicalNormalAccelerationValue);
 
             resolvedSteps = steps;
             requiredPhaseAcceleration = phaseAcceleration;
 
             if (Mathf.Abs(phaseAcceleration) <=
-                phaseBudget + 0.0001f)
+            phaseBudget + 0.0001f)
             {
                 expanded =
-                    steps > preferredSteps;
+                steps > preferredSteps;
 
                 return h;
             }
         }
 
         expanded =
-            resolvedSteps > preferredSteps;
+        resolvedSteps > preferredSteps;
 
         return
-            resolvedSteps * safeDt;
+        resolvedSteps * safeDt;
     }
 
-
     private void ResolvePeriodicContactPlan(
-        float A0,
-        float equalizerRadius)
+    float A0,
+    float equalizerRadius)
     {
         float fixedDt =
-            Mathf.Max(
-                0.0001f,
-                Time.fixedDeltaTime);
+        Mathf.Max(
+        0.0001f,
+        Time.fixedDeltaTime);
 
         float fallbackPeriod =
-            Mathf.Max(
-                fixedDt * MinimumPeriodicHalfCycleFixedSteps * 2f,
-                preferredContactPeriodSeconds);
+        Mathf.Max(
+        fixedDt * MinimumPeriodicHalfCycleFixedSteps * 2f,
+        preferredContactPeriodSeconds);
 
         baseExperimentPeriodSeconds =
-            fallbackPeriod;
+        fallbackPeriod;
 
         nominalExperimentPeriodSeconds =
-            fallbackPeriod;
+        fallbackPeriod;
 
         if (TryReadSlopeCoreMaxGroundSpeed(
-                out float currentMaxGroundSpeed))
+        out float currentMaxGroundSpeed))
         {
             plannedMaxGroundSpeedForCycle =
-                currentMaxGroundSpeed;
+            currentMaxGroundSpeed;
         }
         else
         {
@@ -1563,60 +1777,60 @@ private bool TryEvaluateSplineSurfacePhysics(
         // Before the first measured cycle, keep the old Preferred T only as a
         // compatibility/diagnostic fallback.
         resolvedContactPeriodSeconds =
-            observedGeometryPeriodValid &&
-            observedGeometryPeriodSeconds > 0.0001f
-                ? observedGeometryPeriodSeconds
-                : fallbackPeriod;
+        observedGeometryPeriodValid &&
+        observedGeometryPeriodSeconds > 0.0001f
+        ? observedGeometryPeriodSeconds
+        : fallbackPeriod;
 
         resolvedHalfPeriodSeconds =
-            resolvedContactPeriodSeconds * 0.5f;
+        resolvedContactPeriodSeconds * 0.5f;
 
         float radius =
-            Mathf.Max(
-                0.0001f,
-                equalizerRadius);
+        Mathf.Max(
+        0.0001f,
+        equalizerRadius);
 
         resolvedReleaseCenterTravelDistance =
-            EvaluatePresentationCenterTravelAtTime(
-                A0,
-                decayRatePerSecond,
-                0f,
-                radius,
-                out float releaseCeilingR,
-                out float releaseLegacyR,
-                out float releaseLossHnR,
-                out float releaseEnergyRetention01,
-                out float releaseTimeRetention01,
-                out float releaseRawRetention01,
-                out float releaseAppliedRetention01);
+        EvaluatePresentationCenterTravelAtTime(
+        A0,
+        decayRatePerSecond,
+        0f,
+        radius,
+        out float releaseCeilingR,
+        out float releaseLegacyR,
+        out float releaseLossHnR,
+        out float releaseEnergyRetention01,
+        out float releaseTimeRetention01,
+        out float releaseRawRetention01,
+        out float releaseAppliedRetention01);
 
         // Geometry is now simply:
         // Upper center = Virtual Lower center + (4R-Hn) * N.
         // The old S(T) and phase-acceleration timing resolver no longer own height.
         resolvedEnvelopeRadiusClearanceScale =
-            Mathf.Clamp(
-                MinimumPeriodicRadiusClearanceScale +
-                resolvedReleaseCenterTravelDistance / radius,
-                MinimumPeriodicRadiusClearanceScale,
-                MaximumPeriodicRadiusClearanceScale);
+        Mathf.Clamp(
+        MinimumPeriodicRadiusClearanceScale +
+        resolvedReleaseCenterTravelDistance / radius,
+        MinimumPeriodicRadiusClearanceScale,
+        MaximumPeriodicRadiusClearanceScale);
 
         resolvedReleaseSurfaceClearance =
-            MinimumPeriodicRadiusClearanceScale *
-                radius +
-            resolvedReleaseCenterTravelDistance;
+        MinimumPeriodicRadiusClearanceScale *
+        radius +
+        resolvedReleaseCenterTravelDistance;
 
         float mass =
-            ballVisualEqualizer
-                ? Mathf.Max(0.0001f, ballVisualEqualizer.mass)
-                : 1f;
+        ballVisualEqualizer
+        ? Mathf.Max(0.0001f, ballVisualEqualizer.mass)
+        : 1f;
 
         resolvedReleaseTargetNormalSpeed =
-            sourceEnergyJoule > 0f
-                ? Mathf.Sqrt(
-                    2f *
-                    Mathf.Max(0f, sourceEnergyJoule) /
-                    mass)
-                : 0f;
+        sourceEnergyJoule > 0f
+        ? Mathf.Sqrt(
+        2f *
+        Mathf.Max(0f, sourceEnergyJoule) /
+        mass)
+        : 0f;
 
         // These remain only for old Inspector/log compatibility.
         resolvedReleasePhaseAcceleration = 0f;
@@ -1624,86 +1838,83 @@ private bool TryEvaluateSplineSurfacePhysics(
         presentationRequiredPhaseAcceleration = 0f;
         presentationPhaseAccelerationBudget = 0f;
         presentationResolvedHalfCycleFixedSteps =
-            Mathf.Max(
-                MinimumPeriodicHalfCycleFixedSteps,
-                Mathf.RoundToInt(
-                    resolvedHalfPeriodSeconds /
-                    fixedDt));
+        Mathf.Max(
+        MinimumPeriodicHalfCycleFixedSteps,
+        Mathf.RoundToInt(
+        resolvedHalfPeriodSeconds /
+        fixedDt));
 
         presentationCurrentCeilingR =
-            releaseCeilingR;
+        releaseCeilingR;
 
         presentationCurrentLegacyTravelR =
-            releaseLegacyR;
+        releaseLegacyR;
 
         presentationCurrentResolvedTravelR =
-            resolvedReleaseCenterTravelDistance /
-            radius;
+        resolvedReleaseCenterTravelDistance /
+        radius;
 
         presentationCurrentLossHnR =
-            releaseLossHnR;
+        releaseLossHnR;
 
         presentationCurrentLegacyEnergyRetention01 =
-            releaseEnergyRetention01;
+        releaseEnergyRetention01;
 
         presentationCurrentLegacyTimeRetention01 =
-            releaseTimeRetention01;
+        releaseTimeRetention01;
 
         presentationCurrentRawLegacyRetention01 =
-            releaseRawRetention01;
+        releaseRawRetention01;
 
         presentationCurrentAppliedRetention01 =
-            releaseAppliedRetention01;
+        releaseAppliedRetention01;
     }
 
-
-
     private float ResolveEnvelopeClearance(
-        float equalizerRadius,
-        float A0,
-        float decayRatePerSecondValue,
-        float timeSeconds)
+    float equalizerRadius,
+    float A0,
+    float decayRatePerSecondValue,
+    float timeSeconds)
     {
         float radius =
-            Mathf.Max(0.0001f, equalizerRadius);
+        Mathf.Max(0.0001f, equalizerRadius);
 
         float resolvedCenterTravel =
-            EvaluatePresentationCenterTravelAtTime(
-                A0,
-                decayRatePerSecondValue,
-                timeSeconds,
-                radius,
-                out _,
-                out _,
-                out _,
-                out _,
-                out _,
-                out _,
-                out _);
+        EvaluatePresentationCenterTravelAtTime(
+        A0,
+        decayRatePerSecondValue,
+        timeSeconds,
+        radius,
+        out _,
+        out _,
+        out _,
+        out _,
+        out _,
+        out _,
+        out _);
 
         // Surface offset must always contain the sphere diameter 2R.
         return
-            MinimumPeriodicRadiusClearanceScale *
-                radius +
-            resolvedCenterTravel;
+        MinimumPeriodicRadiusClearanceScale *
+        radius +
+        resolvedCenterTravel;
     }
 
-
     private bool CreateFullSplineEnvelopeMesh(
-        float A0,
-        float decayRatePerSecondValue,
-        float equalizerRadius)
+    float A0,
+    float decayRatePerSecondValue,
+    float equalizerRadius)
     {
         if (!generatedRoot)
-            return false;
+        return false;
 
         GameObject meshObject =
-            new GameObject("NegativeEnvelopeMesh");
+        new GameObject("NegativeEnvelopeMesh");
 
         meshObject.layer =
-            ballVisualEqualizerCollider
-                ? ballVisualEqualizerCollider.gameObject.layer
-                : gameObject.layer;
+        ballVisualEqualizerCollider
+        ? ballVisualEqualizerCollider.gameObject.layer
+        : gameObject.layer;
 
         generatedMeshTransform = meshObject.transform;
         generatedMeshTransform.SetParent(generatedRoot, false);
@@ -1712,11 +1923,11 @@ private bool TryEvaluateSplineSurfacePhysics(
         generatedMeshTransform.localScale = Vector3.one;
 
         Mesh mesh =
-            BuildFullSplineEnvelopeMeshAsset(
-                generatedMeshTransform,
-                A0,
-                decayRatePerSecondValue,
-                equalizerRadius);
+        BuildFullSplineEnvelopeMeshAsset(
+        generatedMeshTransform,
+        A0,
+        decayRatePerSecondValue,
+        equalizerRadius);
 
         if (!mesh)
         {
@@ -1726,22 +1937,22 @@ private bool TryEvaluateSplineSurfacePhysics(
         }
 
         generatedMeshFilter =
-            meshObject.AddComponent<MeshFilter>();
+        meshObject.AddComponent<MeshFilter>();
 
         generatedMeshFilter.sharedMesh =
-            mesh;
+        mesh;
 
         generatedMeshCollider =
-            meshObject.AddComponent<MeshCollider>();
+        meshObject.AddComponent<MeshCollider>();
 
         generatedMeshCollider.sharedMesh =
-            mesh;
+        mesh;
 
         generatedMeshCollider.convex =
-            false;
+        false;
 
         generatedMeshCollider.isTrigger =
-            false;
+        false;
 
         meshObject.AddComponent<BallVisualEnvelopeSurfaceMarker>();
 
@@ -1752,11 +1963,11 @@ private bool TryEvaluateSplineSurfacePhysics(
         upperEnvelopeSensorOccupied = false;
 
         ConfigureEqualizerOnlyBoundaryCollider(
-            generatedMeshCollider);
+        generatedMeshCollider);
 
         ForceEnableEqualizerBoundaryCollision(
-            generatedMeshCollider,
-            "UpperSolid");
+        generatedMeshCollider,
+        "UpperSolid");
 
         // No rhythm gate: the physical Upper is continuously available while armed.
         upperEnvelopeSolidRequested = true;
@@ -1768,46 +1979,44 @@ private bool TryEvaluateSplineSurfacePhysics(
         CaptureLiveSettingsSnapshot();
 
         Debug.Log(
-            $"[ENVELOPE FLOATING RIDE READY] " +
-            $"wave={presentationWaveIndex + 1} " +
-            $"centerTravel={presentationCurrentResolvedTravelR:F3}R " +
-            $"ceiling={presentationCurrentCeilingR:F3}R " +
-            $"Hn={presentationCurrentLossHnR:F3}R " +
-            $"upperSolid=True " +
-            $"physicalLowerCollider=False " +
-            $"sensor=False",
-            this);
+        $"[ENVELOPE FLOATING RIDE READY] " +
+        $"wave={presentationWaveIndex + 1} " +
+        $"centerTravel={presentationCurrentResolvedTravelR:F3}R " +
+        $"ceiling={presentationCurrentCeilingR:F3}R " +
+        $"Hn={presentationCurrentLossHnR:F3}R " +
+        $"upperSolid=True " +
+        $"physicalLowerCollider=False " +
+        $"sensor=False",
+        this);
 
         return true;
     }
 
-
-
     private void ConfigureEqualizerOnlyBoundaryCollider(
-        Collider boundary)
+    Collider boundary)
     {
         if (!boundary)
-            return;
+        return;
 
         Collider[] colliders =
-            FindObjectsByType<Collider>(
-                FindObjectsInactive.Include,
-                FindObjectsSortMode.None);
+        FindObjectsByType<Collider>(
+        FindObjectsInactive.Include,
+        FindObjectsSortMode.None);
 
         foreach (Collider other in colliders)
         {
             if (!other || other == boundary)
-                continue;
+            continue;
 
             bool isEqualizerCollider =
-                other == ballVisualEqualizerCollider ||
-                (ballVisualEqualizer &&
-                 other.attachedRigidbody == ballVisualEqualizer);
+            other == ballVisualEqualizerCollider ||
+            (ballVisualEqualizer &&
+            other.attachedRigidbody == ballVisualEqualizer);
 
             Physics.IgnoreCollision(
-                boundary,
-                other,
-                !isEqualizerCollider);
+            boundary,
+            other,
+            !isEqualizerCollider);
         }
     }
     /// <summary>
@@ -1818,11 +2027,11 @@ private bool TryEvaluateSplineSurfacePhysics(
     public void RefreshEqualizerBoundaryCollisionOwnership()
     {
         ConfigureEqualizerOnlyBoundaryCollider(
-            generatedMeshCollider);
+        generatedMeshCollider);
 
         ForceEnableEqualizerBoundaryCollision(
-            generatedMeshCollider,
-            "UpperSolid");
+        generatedMeshCollider,
+        "UpperSolid");
 
         generatedMeshSensorCollider = null;
         upperEnvelopeSensorEnabled = false;
@@ -1836,95 +2045,93 @@ private bool TryEvaluateSplineSurfacePhysics(
         }
     }
 
-
-
-/// <summary>
+    /// <summary>
     /// Boundary -> Equalizer の物理衝突だけは必ず有効にします。
     /// Upper/LowerはEqualizerと同じLayerへ揃え、Layer MatrixとPair Ignoreを
     /// 両方解除します。他Colliderとの衝突は
     /// ConfigureEqualizerOnlyBoundaryCollider() がPair単位で遮断します。
     /// </summary>
     private void ForceEnableEqualizerBoundaryCollision(
-        Collider boundary,
-        string kind)
+    Collider boundary,
+    string kind)
     {
         if (!boundary ||
-            !ballVisualEqualizerCollider)
+        !ballVisualEqualizerCollider)
         {
             return;
         }
 
         int equalizerLayer =
-            ballVisualEqualizerCollider.gameObject.layer;
+        ballVisualEqualizerCollider.gameObject.layer;
 
         if (boundary.gameObject.layer != equalizerLayer)
         {
             boundary.gameObject.layer =
-                equalizerLayer;
+            equalizerLayer;
         }
 
         bool rhythmUpperSolid =
-            boundary == generatedMeshCollider;
+        boundary == generatedMeshCollider;
 
         boundary.enabled =
-            rhythmUpperSolid
-                ? upperEnvelopeSolidRequested
-                : true;
+        rhythmUpperSolid
+        ? upperEnvelopeSolidRequested
+        : true;
 
         if (rhythmUpperSolid)
-            boundary.isTrigger = false;
+        boundary.isTrigger = false;
 
         // Layer MatrixがOFFならPhysics.IgnoreCollision(..., false)だけでは
         // 接触イベントは復活しない。ここでLayer Pairを先に有効化する。
         Physics.IgnoreLayerCollision(
-            equalizerLayer,
-            boundary.gameObject.layer,
-            false);
+        equalizerLayer,
+        boundary.gameObject.layer,
+        false);
 
         // Equalizer Sphere <-> Boundary Mesh のPairを最後に必ず許可する。
         Physics.IgnoreCollision(
-            boundary,
-            ballVisualEqualizerCollider,
-            false);
+        boundary,
+        ballVisualEqualizerCollider,
+        false);
 
         bool layerIgnored =
-            Physics.GetIgnoreLayerCollision(
-                equalizerLayer,
-                boundary.gameObject.layer);
+        Physics.GetIgnoreLayerCollision(
+        equalizerLayer,
+        boundary.gameObject.layer);
 
         bool pairIgnored =
-            Physics.GetIgnoreCollision(
-                boundary,
-                ballVisualEqualizerCollider);
+        Physics.GetIgnoreCollision(
+        boundary,
+        ballVisualEqualizerCollider);
 
         Debug.Log(
-            $"[EQUALIZER BOUNDARY PHYSICS] " +
-            $"kind={kind} " +
-            $"boundary={boundary.name} " +
-            $"boundaryLayer={LayerMask.LayerToName(boundary.gameObject.layer)}({boundary.gameObject.layer}) " +
-            $"equalizer={ballVisualEqualizerCollider.name} " +
-            $"equalizerLayer={LayerMask.LayerToName(equalizerLayer)}({equalizerLayer}) " +
-            $"layerIgnored={layerIgnored} " +
-            $"pairIgnored={pairIgnored} " +
-            $"enabled={boundary.enabled} " +
-            $"trigger={boundary.isTrigger}",
-            this);
+        $"[EQUALIZER BOUNDARY PHYSICS] " +
+        $"kind={kind} " +
+        $"boundary={boundary.name} " +
+        $"boundaryLayer={LayerMask.LayerToName(boundary.gameObject.layer)}({boundary.gameObject.layer}) " +
+        $"equalizer={ballVisualEqualizerCollider.name} " +
+        $"equalizerLayer={LayerMask.LayerToName(equalizerLayer)}({equalizerLayer}) " +
+        $"layerIgnored={layerIgnored} " +
+        $"pairIgnored={pairIgnored} " +
+        $"enabled={boundary.enabled} " +
+        $"trigger={boundary.isTrigger}",
+        this);
     }
 
-
     // Compatibility surface: physical Lower was removed in AC.
-    public void SetLowerGuideTriggerMode(bool trigger, string reason) { }
+    public void SetLowerGuideTriggerMode(bool trigger, string reason)
+    { }
     public bool LowerGuideTriggerMode => false;
     public bool LowerGuideSolidActive => false;
     public bool LowerGuideTriggerProxyActive => false;
 
     public bool TryMeasureLowerGuideSpherePressDepth(
-        Vector3 sphereCenterWorld,
-        float sphereRadiusWorld,
-        out float pressDepth,
-        out Vector3 outwardNormalWorld,
-        out Vector3 surfacePointWorld,
-        out int proxyIndex)
+    Vector3 sphereCenterWorld,
+    float sphereRadiusWorld,
+    out float pressDepth,
+    out Vector3 outwardNormalWorld,
+    out Vector3 surfacePointWorld,
+    out int proxyIndex)
     {
         pressDepth = 0f;
         outwardNormalWorld = Vector3.up;
@@ -1932,7 +2139,6 @@ private bool TryEvaluateSplineSurfacePhysics(
         proxyIndex = -1;
         return false;
     }
-
 
     /// <summary>
     /// BallVisualEqualizer自身の現在位置をSplineへ局所射影します。
@@ -1943,12 +2149,12 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// surfaceVisual は実Spline surface位置です。
     /// </summary>
     public bool TryGetEqualizerUnderProjectionFrameVisual(
-        out Vector3 centerVisual,
-        out Vector3 surfaceVisual,
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual,
-        out float progress01,
-        out float clearanceMeters)
+    out Vector3 centerVisual,
+    out Vector3 surfaceVisual,
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual,
+    out float progress01,
+    out float clearanceMeters)
     {
         centerVisual = Vector3.zero;
         surfaceVisual = Vector3.zero;
@@ -1958,24 +2164,33 @@ private bool TryEvaluateSplineSurfacePhysics(
         clearanceMeters = 0f;
 
         ResolveReferences();
+        UpdateTurnHandoffCoordination();
+
+        if (turnHandoffCoordinationActive &&
+        suspendProjectionDuringTurnHandoff)
+        {
+            equalizerUnderProjectionValid = false;
+            return false;
+        }
 
         if (!slopeCore ||
-            !correspondSubject ||
-            !ballVisualEqualizer ||
-            !ballVisualEqualizerCollider)
+        !correspondSubject ||
+        !ballVisualEqualizer ||
+        !ballVisualEqualizerCollider)
         {
             equalizerUnderProjectionValid = false;
             return false;
         }
 
         if (!TryProjectVisualPointToSplineFrame(
-                ballVisualEqualizer.position,
-                out centerVisual,
-                out surfaceVisual,
-                out tangentVisual,
-                out normalVisual,
-                out progress01,
-                out clearanceMeters))
+        ballVisualEqualizer.position,
+        useEqualizerProjectionContinuity,
+        out centerVisual,
+        out surfaceVisual,
+        out tangentVisual,
+        out normalVisual,
+        out progress01,
+        out clearanceMeters))
         {
             equalizerUnderProjectionValid = false;
             return false;
@@ -1991,40 +2206,38 @@ private bool TryEvaluateSplineSurfacePhysics(
         return true;
     }
 
-
     /// <summary>
     /// 任意のVisual座標点を現在のSpline区間へ射影します。
     /// Equalizer終着点を同じSpline座標へ落とす用途にも使用します。
     /// </summary>
     public bool TryProjectVisualPointToSplineFrameVisual(
-        Vector3 pointVisual,
-        out Vector3 centerVisual,
-        out Vector3 surfaceVisual,
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual,
-        out float progress01)
+    Vector3 pointVisual,
+    out Vector3 centerVisual,
+    out Vector3 surfaceVisual,
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual,
+    out float progress01)
     {
         return TryProjectVisualPointToSplineFrame(
-            pointVisual,
-            out centerVisual,
-            out surfaceVisual,
-            out tangentVisual,
-            out normalVisual,
-            out progress01,
-            out _);
+        pointVisual,
+        false,
+        out centerVisual,
+        out surfaceVisual,
+        out tangentVisual,
+        out normalVisual,
+        out progress01,
+        out _);
     }
-
 
     public float EstimateSplineArcDistanceBetweenProgress(
-        float progressA,
-        float progressB)
+    float progressA,
+    float progressB)
     {
         return EstimateSplineArcDistancePhysics(
-            progressA,
-            progressB,
-            40);
+        progressA,
+        progressB,
+        40);
     }
-
 
     /// <summary>
     /// BallVisualDriveのTerminal到達計画をEqualizerSyncから受け取る軽量ゲート。
@@ -2032,9 +2245,9 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// 最終区間ではUpper Solidだけを開放し、3者同一点収束をColliderが妨げないようにします。
     /// </summary>
     public void SetArrivalTerminalState(
-        bool active,
-        float timeToGo,
-        float totalTerminalTime)
+    bool active,
+    float timeToGo,
+    float totalTerminalTime)
     {
         arrivalTerminalActive = active;
         arrivalTerminalTimeToGo = Mathf.Max(0f, timeToGo);
@@ -2051,18 +2264,18 @@ private bool TryEvaluateSplineSurfacePhysics(
 
         // Final 35%ではUpper物理境界を開放する。Sensorは残す。
         if (arrivalTerminalBlend01 >= 0.65f)
-            SetUpperEnvelopeSolidEnabled(false, "ArrivalTerminalGate");
+        SetUpperEnvelopeSolidEnabled(false, "ArrivalTerminalGate");
     }
 
-
     private bool TryProjectVisualPointToSplineFrame(
-        Vector3 pointVisual,
-        out Vector3 centerVisual,
-        out Vector3 surfaceVisual,
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual,
-        out float progress01,
-        out float clearanceMeters)
+    Vector3 pointVisual,
+    bool preferEqualizerProgressContinuity,
+    out Vector3 centerVisual,
+    out Vector3 surfaceVisual,
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual,
+    out float progress01,
+    out float clearanceMeters)
     {
         centerVisual = Vector3.zero;
         surfaceVisual = Vector3.zero;
@@ -2074,8 +2287,8 @@ private bool TryEvaluateSplineSurfacePhysics(
         ResolveReferences();
 
         if (!slopeCore ||
-            !correspondSubject ||
-            !ballVisualEqualizerCollider)
+        !correspondSubject ||
+        !ballVisualEqualizerCollider)
         {
             return false;
         }
@@ -2088,16 +2301,79 @@ private bool TryEvaluateSplineSurfacePhysics(
         float bestScore = float.PositiveInfinity;
         bool found = false;
 
+        float searchMin = 0f;
+        float searchMax = 1f;
+
+        if (preferEqualizerProgressContinuity &&
+        equalizerUnderProjectionValid)
+        {
+            float totalArcLength =
+            EstimateSplineArcDistancePhysics(
+            0f,
+            1f,
+            40);
+
+            float tangentSpeed =
+            0f;
+
+            if (equalizerUnderTangentVisual.sqrMagnitude > 0.000001f &&
+            ballVisualEqualizer)
+            {
+                tangentSpeed =
+                Mathf.Abs(
+                Vector3.Dot(
+                ballVisualEqualizer.velocity,
+                equalizerUnderTangentVisual.normalized));
+            }
+
+            float expectedProgressStep =
+            totalArcLength > 0.0001f
+            ? tangentSpeed *
+            Mathf.Max(Time.fixedDeltaTime, 0.000001f) /
+            totalArcLength
+            : 0f;
+
+            float window =
+            Mathf.Max(
+            Mathf.Clamp(
+            minimumEqualizerProjectionContinuityWindow01,
+            0.001f,
+            0.10f),
+            expectedProgressStep *
+            Mathf.Max(
+            1f,
+            equalizerProjectionContinuityWindowMultiplier));
+
+            searchMin =
+            Mathf.Clamp01(
+            equalizerUnderProgress01 - window);
+
+            searchMax =
+            Mathf.Clamp01(
+            equalizerUnderProgress01 + window);
+
+            if (searchMax - searchMin < 0.0001f)
+            {
+                searchMin = 0f;
+                searchMax = 1f;
+            }
+        }
+
         for (int i = 0; i <= coarseSamples; i++)
         {
-            float p = i / (float)coarseSamples;
+            float p =
+            Mathf.Lerp(
+            searchMin,
+            searchMax,
+            i / (float)coarseSamples);
+
             if (!TryScoreProjectionCandidate(
-                    pointVisual,
-                    p,
-                    subjectRadius,
-                    equalizerRadius,
-                    out float score,
-                    out _, out _, out _, out _, out _))
+            pointVisual,
+            p,
+            subjectRadius,
+            equalizerRadius,
+            out float score,
+            out _, out _, out _, out _, out _))
             {
                 continue;
             }
@@ -2110,13 +2386,58 @@ private bool TryEvaluateSplineSurfacePhysics(
             }
         }
 
+        if (!found &&
+        (searchMin > 0f || searchMax < 1f))
+        {
+            // Continuity window内で評価不能なら安全に全域探索へ戻す。
+            searchMin = 0f;
+            searchMax = 1f;
+
+            for (int i = 0; i <= coarseSamples; i++)
+            {
+                float p = i / (float)coarseSamples;
+
+                if (!TryScoreProjectionCandidate(
+                pointVisual,
+                p,
+                subjectRadius,
+                equalizerRadius,
+                out float score,
+                out _, out _, out _, out _, out _))
+                {
+                    continue;
+                }
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestProgress = p;
+                    found = true;
+                }
+            }
+        }
+
         if (!found)
-            return false;
+        return false;
 
         // Coarse winnerの前後1区間を三分探索して、Knot密度に依存しない局所射影へ絞る。
-        float step = 1f / coarseSamples;
-        float lo = Mathf.Clamp01(bestProgress - step);
-        float hi = Mathf.Clamp01(bestProgress + step);
+        float step =
+        Mathf.Max(
+        0.0001f,
+        (searchMax - searchMin) /
+        coarseSamples);
+
+        float lo =
+        Mathf.Clamp(
+        bestProgress - step,
+        searchMin,
+        searchMax);
+
+        float hi =
+        Mathf.Clamp(
+        bestProgress + step,
+        searchMin,
+        searchMax);
 
         for (int iteration = 0; iteration < 7; iteration++)
         {
@@ -2124,34 +2445,34 @@ private bool TryEvaluateSplineSurfacePhysics(
             float p2 = Mathf.Lerp(lo, hi, 2f / 3f);
 
             bool ok1 = TryScoreProjectionCandidate(
-                pointVisual, p1, subjectRadius, equalizerRadius,
-                out float s1, out _, out _, out _, out _, out _);
+            pointVisual, p1, subjectRadius, equalizerRadius,
+            out float s1, out _, out _, out _, out _, out _);
             bool ok2 = TryScoreProjectionCandidate(
-                pointVisual, p2, subjectRadius, equalizerRadius,
-                out float s2, out _, out _, out _, out _, out _);
+            pointVisual, p2, subjectRadius, equalizerRadius,
+            out float s2, out _, out _, out _, out _, out _);
 
             if (!ok1 && !ok2)
-                break;
+            break;
 
             if (!ok2 || (ok1 && s1 <= s2))
-                hi = p2;
+            hi = p2;
             else
-                lo = p1;
+            lo = p1;
         }
 
         progress01 = Mathf.Clamp01((lo + hi) * 0.5f);
 
         if (!TryScoreProjectionCandidate(
-                pointVisual,
-                progress01,
-                subjectRadius,
-                equalizerRadius,
-                out _,
-                out centerVisual,
-                out surfaceVisual,
-                out tangentVisual,
-                out normalVisual,
-                out clearanceMeters))
+        pointVisual,
+        progress01,
+        subjectRadius,
+        equalizerRadius,
+        out _,
+        out centerVisual,
+        out surfaceVisual,
+        out tangentVisual,
+        out normalVisual,
+        out clearanceMeters))
         {
             return false;
         }
@@ -2159,18 +2480,17 @@ private bool TryEvaluateSplineSurfacePhysics(
         return true;
     }
 
-
     private bool TryScoreProjectionCandidate(
-        Vector3 pointVisual,
-        float progress01,
-        float subjectRadius,
-        float equalizerRadius,
-        out float score,
-        out Vector3 centerVisual,
-        out Vector3 surfaceVisual,
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual,
-        out float clearanceMeters)
+    Vector3 pointVisual,
+    float progress01,
+    float subjectRadius,
+    float equalizerRadius,
+    out float score,
+    out Vector3 centerVisual,
+    out Vector3 surfaceVisual,
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual,
+    out float clearanceMeters)
     {
         score = float.PositiveInfinity;
         centerVisual = Vector3.zero;
@@ -2180,12 +2500,12 @@ private bool TryEvaluateSplineSurfacePhysics(
         clearanceMeters = 0f;
 
         if (!TryEvaluateSplineSurfacePhysics(
-                progress01,
-                subjectRadius,
-                out _,
-                out Vector3 surfacePhysics,
-                out Vector3 tangentPhysics,
-                out Vector3 normalPhysics))
+        progress01,
+        subjectRadius,
+        out _,
+        out Vector3 surfacePhysics,
+        out Vector3 tangentPhysics,
+        out Vector3 normalPhysics))
         {
             return false;
         }
@@ -2195,7 +2515,7 @@ private bool TryEvaluateSplineSurfacePhysics(
         normalVisual = correspondSubject.MapDirection(normalPhysics);
 
         if (normalVisual.sqrMagnitude <= 0.000001f ||
-            tangentVisual.sqrMagnitude <= 0.000001f)
+        tangentVisual.sqrMagnitude <= 0.000001f)
         {
             return false;
         }
@@ -2203,7 +2523,7 @@ private bool TryEvaluateSplineSurfacePhysics(
         normalVisual.Normalize();
         tangentVisual = Vector3.ProjectOnPlane(tangentVisual, normalVisual);
         if (tangentVisual.sqrMagnitude <= 0.000001f)
-            return false;
+        return false;
         tangentVisual.Normalize();
 
         centerVisual = surfaceVisual + normalVisual * equalizerRadius;
@@ -2213,37 +2533,35 @@ private bool TryEvaluateSplineSurfacePhysics(
 
         // 「真下」を優先: T/L誤差を主尺度にし、Splineの裏側は強く罰する。
         float behindPenalty = signedHeight < -0.01f
-            ? 1000f + signedHeight * signedHeight * 100f
-            : 0f;
+        ? 1000f + signedHeight * signedHeight * 100f
+        : 0f;
 
         score =
-            planeError.sqrMagnitude * 8f +
-            delta.sqrMagnitude * 0.05f +
-            behindPenalty;
+        planeError.sqrMagnitude * 8f +
+        delta.sqrMagnitude * 0.05f +
+        behindPenalty;
 
         clearanceMeters = Mathf.Max(0f, signedHeight);
         return true;
     }
-
 
     /// <summary>
     /// 互換API。今後のVirtual LowerはSubject進歩率ではなく
     /// BallVisualEqualizer自身の直下Spline射影で決めます。
     /// </summary>
     public bool TryGetVirtualLowerTurnpointFrameVisual(
-        out Vector3 centerVisual,
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual)
+    out Vector3 centerVisual,
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual)
     {
         return TryGetEqualizerUnderProjectionFrameVisual(
-            out centerVisual,
-            out _,
-            out tangentVisual,
-            out normalVisual,
-            out _,
-            out _);
+        out centerVisual,
+        out _,
+        out tangentVisual,
+        out normalVisual,
+        out _,
+        out _);
     }
-
 
     /// <summary>
     /// 現在のPresentation waveが要求する中心移動量を返します。
@@ -2251,46 +2569,45 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// 4RをVirtual Lower/Upper間へ実際に噛ませるための正式APIです。
     /// </summary>
     public bool TryGetCurrentPresentationCenterTravel(
-        out float centerTravelMeters,
-        out float centerTravelR)
+    out float centerTravelMeters,
+    out float centerTravelR)
     {
         centerTravelMeters = 0f;
         centerTravelR = 0f;
 
         float radius =
-            Mathf.Max(0.0001f, cachedEqualizerRadius);
+        Mathf.Max(0.0001f, cachedEqualizerRadius);
 
         if (!envelopeBuilt ||
-            cachedA0 <= 0f ||
-            radius <= 0.0001f)
+        cachedA0 <= 0f ||
+        radius <= 0.0001f)
         {
             return false;
         }
 
         float elapsed =
-            Mathf.Max(
-                0f,
-                Time.fixedTime - presentationReleaseFixedTime);
+        Mathf.Max(
+        0f,
+        Time.fixedTime - presentationReleaseFixedTime);
 
         centerTravelMeters =
-            EvaluatePresentationCenterTravelAtTime(
-                cachedA0,
-                cachedGamma,
-                elapsed,
-                radius,
-                out presentationCurrentCeilingR,
-                out presentationCurrentLegacyTravelR,
-                out presentationCurrentLossHnR,
-                out presentationCurrentLegacyEnergyRetention01,
-                out presentationCurrentLegacyTimeRetention01,
-                out presentationCurrentRawLegacyRetention01,
-                out presentationCurrentAppliedRetention01);
+        EvaluatePresentationCenterTravelAtTime(
+        cachedA0,
+        cachedGamma,
+        elapsed,
+        radius,
+        out presentationCurrentCeilingR,
+        out presentationCurrentLegacyTravelR,
+        out presentationCurrentLossHnR,
+        out presentationCurrentLegacyEnergyRetention01,
+        out presentationCurrentLegacyTimeRetention01,
+        out presentationCurrentRawLegacyRetention01,
+        out presentationCurrentAppliedRetention01);
 
         centerTravelR = centerTravelMeters / radius;
         presentationCurrentResolvedTravelR = centerTravelR;
         return true;
     }
-
 
     /// <summary>
     /// Hybrid Wave Controllerへ現在の連続減衰状態を返します。
@@ -2304,18 +2621,18 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// Inspector switchのauthorityはSync側だけに置き、Envelopeは状態をmirrorします。
     /// </summary>
     public void ConfigureSpatialWaveAuthority(
-        bool enabled,
-        int waveCount)
+    bool enabled,
+    int waveCount)
     {
         int safeCount =
-            Mathf.Clamp(
-                waveCount,
-                1,
-                8);
+        Mathf.Clamp(
+        waveCount,
+        1,
+        8);
 
         bool changed =
-            spatialWaveAuthorityActive != enabled ||
-            spatialWaveAuthorityCount != safeCount;
+        spatialWaveAuthorityActive != enabled ||
+        spatialWaveAuthorityCount != safeCount;
 
         spatialWaveAuthorityActive = enabled;
         spatialWaveAuthorityCount = safeCount;
@@ -2334,41 +2651,40 @@ private bool TryEvaluateSplineSurfacePhysics(
             if (envelopeBuilt)
             {
                 UpdatePresentationRuntimeDiagnostics(
-                    Mathf.Max(
-                        0f,
-                        Time.fixedTime -
-                        presentationReleaseFixedTime));
+                Mathf.Max(
+                0f,
+                Time.fixedTime -
+                presentationReleaseFixedTime));
 
                 pendingCanonicalGeometryRebuild = true;
             }
         }
     }
 
-
     /// <summary>
     /// Release->Terminal targetを「1つのactive stair wave domain」として公開します。
     /// 3-wave modeではこの区間へN波を空間配置します。
     /// </summary>
     public bool TryGetActiveSplineWaveDomain(
-        out float releaseProgress01,
-        out float targetProgress01,
-        out float equalizerProgress01,
-        out float activeArcLengthMeters)
+    out float releaseProgress01,
+    out float targetProgress01,
+    out float equalizerProgress01,
+    out float activeArcLengthMeters)
     {
         releaseProgress01 =
-            capturedReleaseProgress01;
+        capturedReleaseProgress01;
 
         targetProgress01 =
-            capturedTargetProgress01;
+        capturedTargetProgress01;
 
         equalizerProgress01 =
-            equalizerUnderProgress01;
+        equalizerUnderProgress01;
 
         activeArcLengthMeters = 0f;
 
         if (!envelopeBuilt ||
-            targetProgress01 <=
-            releaseProgress01 + 0.000001f)
+        targetProgress01 <=
+        releaseProgress01 + 0.000001f)
         {
             return false;
         }
@@ -2376,12 +2692,12 @@ private bool TryEvaluateSplineSurfacePhysics(
         if (!equalizerUnderProjectionValid)
         {
             if (!TryGetEqualizerUnderProjectionFrameVisual(
-                    out _,
-                    out _,
-                    out _,
-                    out _,
-                    out equalizerProgress01,
-                    out _))
+            out _,
+            out _,
+            out _,
+            out _,
+            out equalizerProgress01,
+            out _))
             {
                 return false;
             }
@@ -2389,84 +2705,81 @@ private bool TryEvaluateSplineSurfacePhysics(
         else
         {
             equalizerProgress01 =
-                equalizerUnderProgress01;
+            equalizerUnderProgress01;
         }
 
         activeArcLengthMeters =
-            EstimateSplineArcDistancePhysics(
-                releaseProgress01,
-                targetProgress01,
-                40);
+        EstimateSplineArcDistancePhysics(
+        releaseProgress01,
+        targetProgress01,
+        40);
 
         return activeArcLengthMeters > 0.0001f;
     }
-
 
     /// <summary>
     /// Spatial progressだけでPresentation wave indexを進めます。
     /// Physical Upper contactはこのmode中にwave index authorityを持ちません。
     /// </summary>
     public void SetSpatialPresentationProgress(
-        float normalizedProgress01)
+    float normalizedProgress01)
     {
         if (!spatialWaveAuthorityActive)
-            return;
+        return;
 
         float p =
-            Mathf.Clamp01(
-                normalizedProgress01);
+        Mathf.Clamp01(
+        normalizedProgress01);
 
         spatialWaveAuthorityProgress01 = p;
 
         int count =
-            Mathf.Max(
-                1,
-                spatialWaveAuthorityCount);
+        Mathf.Max(
+        1,
+        spatialWaveAuthorityCount);
 
         int desiredWaveIndex =
-            Mathf.Clamp(
-                Mathf.FloorToInt(
-                    p * count),
-                0,
-                count - 1);
+        Mathf.Clamp(
+        Mathf.FloorToInt(
+        p * count),
+        0,
+        count - 1);
 
         if (desiredWaveIndex ==
-            presentationWaveIndex)
+        presentationWaveIndex)
         {
             return;
         }
 
         presentationWaveIndex =
-            desiredWaveIndex;
+        desiredWaveIndex;
 
         float elapsed =
-            Mathf.Max(
-                0f,
-                Time.fixedTime -
-                presentationReleaseFixedTime);
+        Mathf.Max(
+        0f,
+        Time.fixedTime -
+        presentationReleaseFixedTime);
 
         UpdatePresentationRuntimeDiagnostics(
-            elapsed);
+        elapsed);
 
         pendingCanonicalGeometryRebuild = true;
 
         Debug.Log(
-            $"[ENVELOPE SPATIAL WAVE] " +
-            $"wave={presentationWaveIndex + 1}/{count} " +
-            $"domainP={p:F4} " +
-            $"elapsed={elapsed:F4}s " +
-            $"resolved={presentationCurrentResolvedTravelR:F3}R " +
-            $"Hn={presentationCurrentLossHnR:F3}R",
-            this);
+        $"[ENVELOPE SPATIAL WAVE] " +
+        $"wave={presentationWaveIndex + 1}/{count} " +
+        $"domainP={p:F4} " +
+        $"elapsed={elapsed:F4}s " +
+        $"resolved={presentationCurrentResolvedTravelR:F3}R " +
+        $"Hn={presentationCurrentLossHnR:F3}R",
+        this);
     }
 
-
     public bool SpatialWaveAuthorityActive =>
-        spatialWaveAuthorityActive;
+    spatialWaveAuthorityActive;
 
     public float SpatialWaveAuthorityProgress01 =>
-        spatialWaveAuthorityProgress01;
-
+    spatialWaveAuthorityProgress01;
 
     /// <summary>
     /// Floating Rigidbody controller用の正式なRide Frame。
@@ -2477,14 +2790,14 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// 重要: このAPIは周期を指示しません。4R-Hn/Spline幾何だけを公開します。
     /// </summary>
     public bool TryGetFloatingRideFrame(
-        out Vector3 lowerCenterVisual,
-        out Vector3 rideCenterVisual,
-        out Vector3 upperCenterVisual,
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual,
-        out float spanMeters,
-        out float spanR,
-        out float observedPeriodSeconds)
+    out Vector3 lowerCenterVisual,
+    out Vector3 rideCenterVisual,
+    out Vector3 upperCenterVisual,
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual,
+    out float spanMeters,
+    out float spanR,
+    out float observedPeriodSeconds)
     {
         lowerCenterVisual = Vector3.zero;
         rideCenterVisual = Vector3.zero;
@@ -2494,116 +2807,266 @@ private bool TryEvaluateSplineSurfacePhysics(
         spanMeters = 0f;
         spanR = 0f;
         observedPeriodSeconds =
-            observedGeometryPeriodValid
-                ? observedGeometryPeriodSeconds
-                : 0f;
+        observedGeometryPeriodValid
+        ? observedGeometryPeriodSeconds
+        : 0f;
 
         if (!TryGetEqualizerUnderProjectionFrameVisual(
-                out lowerCenterVisual,
-                out _,
-                out tangentVisual,
-                out normalVisual,
-                out _,
-                out _))
+        out lowerCenterVisual,
+        out _,
+        out tangentVisual,
+        out normalVisual,
+        out _,
+        out _))
         {
             return false;
         }
 
         if (!TryGetCurrentPresentationCenterTravel(
-                out spanMeters,
-                out spanR))
+        out spanMeters,
+        out spanR))
         {
             return false;
         }
 
         if (normalVisual.sqrMagnitude <= 0.000001f)
-            return false;
+        return false;
 
         normalVisual.Normalize();
 
         tangentVisual =
-            Vector3.ProjectOnPlane(
-                tangentVisual,
-                normalVisual);
+        Vector3.ProjectOnPlane(
+        tangentVisual,
+        normalVisual);
 
         if (tangentVisual.sqrMagnitude <= 0.000001f)
-            return false;
+        return false;
 
         tangentVisual.Normalize();
 
         rideCenterVisual =
-            lowerCenterVisual +
-            normalVisual *
-            (spanMeters * 0.5f);
+        lowerCenterVisual +
+        normalVisual *
+        (spanMeters * 0.5f);
 
         upperCenterVisual =
-            lowerCenterVisual +
-            normalVisual *
-            spanMeters;
+        lowerCenterVisual +
+        normalVisual *
+        spanMeters;
 
         return envelopeBuilt;
     }
 
+    /// <summary>
+    /// Accepted Upper後の下降終盤だけ有効になるVirtual Lower近傍の減衰Profile。
+    /// 4R-Hn / Upper Mesh / exp(-gamma*t)そのものは壊さず、
+    /// Rigidbody controllerへ「どの程度Damperと復元ブレーキを弱めるか」を返します。
+    ///
+    /// nearLower01:
+    ///   0 = Boundary Layer外
+    ///   1 = Virtual Lower
+    /// </summary>
+    public bool TryResolveDescendingLowerDecayProfile(
+    float signedHeightFromVirtualLower,
+    float relativeNormalVelocity,
+    bool physicalUpperSeen,
+    float boundaryBandR,
+    out DescendingLowerDecayProfile profile)
+    {
+        profile =
+        new DescendingLowerDecayProfile
+        {
+            active = false,
+            bandMeters = 0f,
+            nearLower01 = 0f,
+            heightNearLower01 = 0f,
+            timeNearLower01 = 0f,
+            timeToVirtualLowerSeconds = float.PositiveInfinity,
+            damperRatio01 = 1f,
+            restoringBrakeRatio01 = 1f
+        };
+
+        float radius =
+        Mathf.Max(
+        0.0001f,
+        ResolveEqualizerWorldRadius());
+
+        float bandMeters =
+        Mathf.Max(
+        0.001f,
+        radius * Mathf.Max(0.10f, boundaryBandR));
+
+        profile.bandMeters = bandMeters;
+
+        bool descendingAfterUpper =
+        useDescendingLowerBoundaryDecayPreservation &&
+        physicalUpperSeen &&
+        relativeNormalVelocity < 0f;
+
+        if (!descendingAfterUpper)
+        {
+            descendingLowerDecayProfileActive = false;
+            descendingLowerDecayBandMeters = bandMeters;
+            descendingLowerNear01 = 0f;
+            descendingLowerDamperRatio01 = 1f;
+            descendingLowerRestoringBrakeRatio01 = 1f;
+            return false;
+        }
+
+        float distance01 =
+        Mathf.Clamp01(
+        Mathf.Max(0f, signedHeightFromVirtualLower) /
+        bandMeters);
+
+        float heightNearLower01 =
+        signedHeightFromVirtualLower < bandMeters
+        ? 1f -
+        Mathf.SmoothStep(
+        0f,
+        1f,
+        distance01)
+        : 0f;
+
+        float timeToVirtualLower =
+        relativeNormalVelocity < -0.0001f
+        ? Mathf.Max(
+        0f,
+        signedHeightFromVirtualLower) /
+        -relativeNormalVelocity
+        : float.PositiveInfinity;
+
+        float timeNearLower01 = 0f;
+
+        if (useTimeToVirtualLowerDecayLead &&
+        !float.IsInfinity(timeToVirtualLower))
+        {
+            float leadSeconds =
+            Mathf.Max(
+            0.02f,
+            descendingLowerTimeLeadSeconds);
+
+            timeNearLower01 =
+            1f -
+            Mathf.SmoothStep(
+            0f,
+            1f,
+            Mathf.Clamp01(
+            timeToVirtualLower /
+            leadSeconds));
+        }
+
+        float nearLower01 =
+        Mathf.Max(
+        heightNearLower01,
+        timeNearLower01);
+
+        if (nearLower01 <= 0f)
+        {
+            descendingLowerDecayProfileActive = false;
+            descendingLowerDecayBandMeters = bandMeters;
+            descendingLowerNear01 = 0f;
+            descendingLowerDamperRatio01 = 1f;
+            descendingLowerRestoringBrakeRatio01 = 1f;
+            return false;
+        }
+
+        float damperRatio01 =
+        Mathf.Lerp(
+        1f,
+        Mathf.Clamp(
+        minimumDescendingLowerDamperRatio01,
+        0.01f,
+        1f),
+        nearLower01);
+
+        float restoringBrakeRatio01 =
+        Mathf.Lerp(
+        1f,
+        Mathf.Clamp(
+        minimumDescendingLowerRestoringBrakeRatio01,
+        0.01f,
+        1f),
+        nearLower01);
+
+        profile =
+        new DescendingLowerDecayProfile
+        {
+            active = true,
+            bandMeters = bandMeters,
+            nearLower01 = nearLower01,
+            heightNearLower01 = heightNearLower01,
+            timeNearLower01 = timeNearLower01,
+            timeToVirtualLowerSeconds = timeToVirtualLower,
+            damperRatio01 = damperRatio01,
+            restoringBrakeRatio01 = restoringBrakeRatio01
+        };
+
+        descendingLowerDecayProfileActive = true;
+        descendingLowerDecayBandMeters = bandMeters;
+        descendingLowerNear01 = nearLower01;
+        descendingLowerDamperRatio01 = damperRatio01;
+        descendingLowerRestoringBrakeRatio01 = restoringBrakeRatio01;
+
+        return true;
+    }
 
     public bool TryGetHybridWaveState(
-        out float centerTravelMeters,
-        out float centerTravelR,
-        out float halfPeriodSeconds,
-        out float timeEnergyCeiling01,
-        out float gammaPerSecond)
+    out float centerTravelMeters,
+    out float centerTravelR,
+    out float halfPeriodSeconds,
+    out float timeEnergyCeiling01,
+    out float gammaPerSecond)
     {
         centerTravelMeters = 0f;
         centerTravelR = 0f;
 
         float period =
-            observedGeometryPeriodValid &&
-            observedGeometryPeriodSeconds > 0.0001f
-                ? observedGeometryPeriodSeconds
-                : Mathf.Max(
-                    Time.fixedDeltaTime * 4f,
-                    preferredContactPeriodSeconds);
+        observedGeometryPeriodValid &&
+        observedGeometryPeriodSeconds > 0.0001f
+        ? observedGeometryPeriodSeconds
+        : Mathf.Max(
+        Time.fixedDeltaTime * 4f,
+        preferredContactPeriodSeconds);
 
         halfPeriodSeconds =
-            period * 0.5f;
+        period * 0.5f;
 
         timeEnergyCeiling01 = 1f;
 
         gammaPerSecond =
-            Mathf.Max(
-                0f,
-                decayRatePerSecond);
+        Mathf.Max(
+        0f,
+        decayRatePerSecond);
 
         if (!TryGetCurrentPresentationCenterTravel(
-                out centerTravelMeters,
-                out centerTravelR))
+        out centerTravelMeters,
+        out centerTravelR))
         {
             return false;
         }
 
         float elapsed =
-            Mathf.Max(
-                0f,
-                Time.fixedTime -
-                presentationReleaseFixedTime);
+        Mathf.Max(
+        0f,
+        Time.fixedTime -
+        presentationReleaseFixedTime);
 
         float rawTimeRetention01 =
-            Mathf.Clamp01(
-                Mathf.Exp(
-                    -gammaPerSecond *
-                    elapsed));
+        Mathf.Clamp01(
+        Mathf.Exp(
+        -gammaPerSecond *
+        elapsed));
 
         timeEnergyCeiling01 =
-            Mathf.Clamp01(
-                Mathf.Lerp(
-                    1f,
-                    rawTimeRetention01,
-                    Mathf.Clamp01(
-                        waveTimeDecayInfluence)));
+        Mathf.Clamp01(
+        Mathf.Lerp(
+        1f,
+        rawTimeRetention01,
+        Mathf.Clamp01(
+        waveTimeDecayInfluence)));
 
         return envelopeBuilt;
     }
-
-
 
     /// <summary>
     /// Hybrid Waveのイベント認識だけに使う動的Capture profileです。
@@ -2611,10 +3074,10 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// FixedUpdateの離散化に合わせ、時間閾値は最低2 physics ticksを確保します。
     /// </summary>
     public bool TryGetHybridWaveEventProfile(
-        out float upperCaptureDistanceMeters,
-        out float lowerCandidateDistanceMeters,
-        out float minimumUpperApproachSpeed,
-        out float minimumEventIntervalSeconds)
+    out float upperCaptureDistanceMeters,
+    out float lowerCandidateDistanceMeters,
+    out float minimumUpperApproachSpeed,
+    out float minimumEventIntervalSeconds)
     {
         upperCaptureDistanceMeters = 0f;
         lowerCandidateDistanceMeters = 0f;
@@ -2622,44 +3085,43 @@ private bool TryEvaluateSplineSurfacePhysics(
         minimumEventIntervalSeconds = Mathf.Max(Time.fixedDeltaTime * 2f, 0.04f);
 
         float radius = Mathf.Max(
-            0.0001f,
-            cachedEqualizerRadius > 0f
-                ? cachedEqualizerRadius
-                : ResolveEqualizerWorldRadius());
+        0.0001f,
+        cachedEqualizerRadius > 0f
+        ? cachedEqualizerRadius
+        : ResolveEqualizerWorldRadius());
 
         if (!TryGetHybridWaveState(
-                out float centerTravelMeters,
-                out _,
-                out float halfPeriodSeconds,
-                out _,
-                out _))
+        out float centerTravelMeters,
+        out _,
+        out float halfPeriodSeconds,
+        out _,
+        out _))
         {
             return false;
         }
 
         upperCaptureDistanceMeters = Mathf.Max(
-            radius * Mathf.Max(0.10f, hybridUpperCaptureDistanceR),
-            centerTravelMeters * 0.10f);
+        radius * Mathf.Max(0.10f, hybridUpperCaptureDistanceR),
+        centerTravelMeters * 0.10f);
 
         lowerCandidateDistanceMeters = Mathf.Max(
-            radius * Mathf.Max(0.10f, hybridLowerCandidateDistanceR),
-            radius * 0.05f);
+        radius * Mathf.Max(0.10f, hybridLowerCandidateDistanceR),
+        radius * 0.05f);
 
         float meanHalfWaveSpeed =
-            centerTravelMeters /
-            Mathf.Max(Time.fixedDeltaTime * 2f, halfPeriodSeconds);
+        centerTravelMeters /
+        Mathf.Max(Time.fixedDeltaTime * 2f, halfPeriodSeconds);
 
         minimumUpperApproachSpeed = Mathf.Max(
-            0.05f,
-            meanHalfWaveSpeed * Mathf.Max(0.005f, hybridUpperApproachSpeedRatio));
+        0.05f,
+        meanHalfWaveSpeed * Mathf.Max(0.005f, hybridUpperApproachSpeedRatio));
 
         minimumEventIntervalSeconds = Mathf.Max(
-            Time.fixedDeltaTime * 2f,
-            halfPeriodSeconds * 0.25f);
+        Time.fixedDeltaTime * 2f,
+        halfPeriodSeconds * 0.25f);
 
         return envelopeBuilt;
     }
-
 
     /// <summary>
     /// D: Equalizer SchedulerからREAD/DERIVEDな実現可能Wave profileを受け取ります。
@@ -2667,20 +3129,18 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// double-buffer経路で安全に再生成します。Inspector調整値は増やしません。
     /// </summary>
     public void SetHybridWaveFeasibilityProfile(
-        float amplitudeScale01,
-        float halfPeriodSeconds)
+    float amplitudeScale01,
+    float halfPeriodSeconds)
     {
         // Compatibility only.
         // Floating Rigidbody版ではT都合で4R-Hn振幅を縮めません。
         hybridWaveFeasibilityAmplitudeScale01 = 1f;
         hybridWaveFeasibilityHalfPeriodSeconds =
-            Mathf.Max(
-                0f,
-                halfPeriodSeconds);
+        Mathf.Max(
+        0f,
+        halfPeriodSeconds);
         hybridWaveFeasibilityAmplitudeLimited = false;
     }
-
-
 
     public void ResetHybridWaveFeasibilityProfile()
     {
@@ -2689,70 +3149,174 @@ private bool TryEvaluateSplineSurfacePhysics(
         hybridWaveFeasibilityAmplitudeLimited = false;
     }
 
-
-
     public Collider CurrentUpperEnvelopeCollider =>
-        generatedMeshCollider;
+    generatedMeshCollider;
 
     public Collider CurrentUpperEnvelopeSensorCollider => null;
 
     public bool UpperEnvelopeSolidEnabled =>
-        generatedMeshCollider &&
-        generatedMeshCollider.enabled;
+    generatedMeshCollider &&
+    generatedMeshCollider.enabled;
 
     public bool UpperEnvelopeSensorEnabled => false;
 
     public bool UpperEnvelopeSensorOccupied => false;
 
-
     public void SetUpperEnvelopeSensorOccupied(
-        bool occupied)
+    bool occupied)
     {
         // Compatibility no-op. Concave MeshCollider sensor was removed.
         upperEnvelopeSensorOccupied = false;
     }
 
+    /// <summary>
+    /// Spatial Monotonic Holdへ入った瞬間の実験用。
+    /// 現在のUpper Envelope MeshColliderを1 FixedUpdateだけ
+    /// convex Triggerへ変更し、次のFixedUpdateで元のconcave Solidへ戻します。
+    /// </summary>
+    public bool PulseCurrentEnvelopeTriggerOneFixedStep(
+    string reason = "SpatialMonotonicBackstep")
+    {
+        if (!Application.isPlaying ||
+        !envelopeBuilt ||
+        !generatedMeshCollider ||
+        !generatedMeshCollider.sharedMesh)
+        {
+            return false;
+        }
 
+        // 同じMonotonic episode中の多重pulseは作らない。
+        if (monotonicTriggerPulseActive)
+        return true;
+
+        monotonicTriggerPulsePreviousConvex =
+        generatedMeshCollider.convex;
+        monotonicTriggerPulsePreviousTrigger =
+        generatedMeshCollider.isTrigger;
+        monotonicTriggerPulseReason =
+        string.IsNullOrEmpty(reason)
+        ? "SpatialMonotonicBackstep"
+        : reason;
+
+        bool shouldBeEnabled =
+        upperEnvelopeSolidRequested;
+
+        // MeshColliderはisTrigger=trueにするにはconvexが必須。
+        // いったん無効化してからConvex recook -> Trigger化する。
+        generatedMeshCollider.enabled = false;
+        generatedMeshCollider.isTrigger = false;
+        generatedMeshCollider.convex = true;
+        generatedMeshCollider.isTrigger = true;
+        generatedMeshCollider.enabled = shouldBeEnabled;
+
+        upperEnvelopeSolidEnabled = false;
+        monotonicTriggerPulseActive = true;
+        monotonicTriggerPulseRestoreFixedTime =
+        Time.fixedTime +
+        Mathf.Max(Time.fixedDeltaTime, 0.000001f) * 0.5f;
+        monotonicTriggerPulseCount++;
+
+        Physics.SyncTransforms();
+
+        Debug.Log(
+        $"[ENVELOPE MONOTONIC TRIGGER PULSE] " +
+        $"trigger=True convex=True " +
+        $"enabled={generatedMeshCollider.enabled} " +
+        $"restoreAt={monotonicTriggerPulseRestoreFixedTime:F4} " +
+        $"reason={monotonicTriggerPulseReason} " +
+        $"count={monotonicTriggerPulseCount}",
+        this);
+
+        return
+        generatedMeshCollider.convex &&
+        generatedMeshCollider.isTrigger;
+    }
+
+    private void RestoreCurrentEnvelopeAfterMonotonicTriggerPulse()
+    {
+        if (!monotonicTriggerPulseActive)
+        return;
+
+        monotonicTriggerPulseActive = false;
+
+        if (!generatedMeshCollider)
+        return;
+
+        generatedMeshCollider.enabled = false;
+        generatedMeshCollider.isTrigger = false;
+        generatedMeshCollider.convex =
+        monotonicTriggerPulsePreviousConvex;
+        generatedMeshCollider.isTrigger =
+        monotonicTriggerPulsePreviousTrigger;
+        generatedMeshCollider.enabled =
+        upperEnvelopeSolidRequested;
+
+        upperEnvelopeSolidEnabled =
+        generatedMeshCollider.enabled &&
+        !generatedMeshCollider.isTrigger;
+
+        // 通常仕様へ戻ったのでEqualizer境界ownershipも復元する。
+        ConfigureEqualizerOnlyBoundaryCollider(
+        generatedMeshCollider);
+        ForceEnableEqualizerBoundaryCollision(
+        generatedMeshCollider,
+        "MonotonicTriggerPulseRestore");
+
+        Physics.SyncTransforms();
+
+        Debug.Log(
+        $"[ENVELOPE MONOTONIC TRIGGER RESTORE] " +
+        $"trigger={generatedMeshCollider.isTrigger} " +
+        $"convex={generatedMeshCollider.convex} " +
+        $"solid={upperEnvelopeSolidEnabled} " +
+        $"reason={monotonicTriggerPulseReason}",
+        this);
+    }
 
     public void SetUpperEnvelopeSolidEnabled(
-        bool enabled,
-        string reason)
+    bool enabled,
+    string reason)
     {
         upperEnvelopeSolidRequested = enabled;
 
         if (!generatedMeshCollider)
+        return;
+
+        if (monotonicTriggerPulseActive)
+        {
+            // Pulse中はTrigger状態を維持し、次のrestore時にrequested状態へ戻す。
+            generatedMeshCollider.enabled = enabled;
+            upperEnvelopeSolidEnabled = false;
             return;
+        }
 
         generatedMeshCollider.isTrigger = false;
         generatedMeshCollider.enabled = enabled;
         upperEnvelopeSolidEnabled = enabled;
 
         Debug.Log(
-            $"[EQUALIZER UPPER SOLID] " +
-            $"solid={enabled} " +
-            $"wave={presentationWaveIndex + 1} " +
-            $"reason={reason}",
-            this);
+        $"[EQUALIZER UPPER SOLID] " +
+        $"solid={enabled} " +
+        $"wave={presentationWaveIndex + 1} " +
+        $"reason={reason}",
+        this);
     }
 
-
-
     public Collider CurrentLowerGuideCollider => null;
-
 
     /// <summary>
     /// SlopeStickCore.maxGroundSpeedをREAD ONLYで取得します。
     /// </summary>
     private bool TryReadSlopeCoreMaxGroundSpeed(
-        out float speed)
+    out float speed)
     {
         speed = 0f;
 
         if (!slopeCore)
-            ResolveReferences();
+        ResolveReferences();
 
         if (!slopeCore ||
-            MaxGroundSpeedField == null)
+        MaxGroundSpeedField == null)
         {
             maxGroundSpeedReadAvailable = false;
             sourceMaxGroundSpeedReadOnly = 0f;
@@ -2760,8 +3324,8 @@ private bool TryEvaluateSplineSurfacePhysics(
         }
 
         object raw =
-            MaxGroundSpeedField.GetValue(
-                slopeCore);
+        MaxGroundSpeedField.GetValue(
+        slopeCore);
 
         if (!(raw is float value))
         {
@@ -2771,79 +3335,76 @@ private bool TryEvaluateSplineSurfacePhysics(
         }
 
         speed =
-            Mathf.Max(0f, value);
+        Mathf.Max(0f, value);
 
         sourceMaxGroundSpeedReadOnly = speed;
         maxGroundSpeedReadAvailable = true;
         return true;
     }
 
-
     public void SubmitObservedGeometryPeriod(
-        float observedPeriodSeconds)
+    float observedPeriodSeconds)
     {
         if (float.IsNaN(observedPeriodSeconds) ||
-            float.IsInfinity(observedPeriodSeconds) ||
-            observedPeriodSeconds <= Time.fixedDeltaTime * 2f)
+        float.IsInfinity(observedPeriodSeconds) ||
+        observedPeriodSeconds <= Time.fixedDeltaTime * 2f)
         {
             return;
         }
 
         float blend =
-            Mathf.Clamp01(
-                periodObservationBlend);
+        Mathf.Clamp01(
+        periodObservationBlend);
 
         if (!observedGeometryPeriodValid)
         {
             observedGeometryPeriodSeconds =
-                observedPeriodSeconds;
+            observedPeriodSeconds;
         }
         else
         {
             observedGeometryPeriodSeconds =
-                Mathf.Lerp(
-                    observedGeometryPeriodSeconds,
-                    observedPeriodSeconds,
-                    blend);
+            Mathf.Lerp(
+            observedGeometryPeriodSeconds,
+            observedPeriodSeconds,
+            blend);
         }
 
         observedGeometryPeriodValid = true;
 
         // T is now an observed natural oscillator result, not a master schedule.
         resolvedContactPeriodSeconds =
-            Mathf.Max(
-                Time.fixedDeltaTime * 4f,
-                observedGeometryPeriodSeconds);
+        Mathf.Max(
+        Time.fixedDeltaTime * 4f,
+        observedGeometryPeriodSeconds);
 
         resolvedHalfPeriodSeconds =
-            resolvedContactPeriodSeconds * 0.5f;
+        resolvedContactPeriodSeconds * 0.5f;
 
         nominalExperimentPeriodSeconds =
-            Mathf.Max(
-                Time.fixedDeltaTime * 4f,
-                preferredContactPeriodSeconds);
+        Mathf.Max(
+        Time.fixedDeltaTime * 4f,
+        preferredContactPeriodSeconds);
 
         observedGeometryPeriodCorrectionRatio =
-            resolvedContactPeriodSeconds /
-            Mathf.Max(
-                0.0001f,
-                nominalExperimentPeriodSeconds);
+        resolvedContactPeriodSeconds /
+        Mathf.Max(
+        0.0001f,
+        nominalExperimentPeriodSeconds);
     }
 
-
-
     public void SetMaxGroundSpeedExperimentCycle(
-        int cycleIndex)
+    int cycleIndex)
     {
         // K compatibility API: synthetic decay cycles are disabled.
         // Always expose the current READ ONLY maxGroundSpeed as the planned value.
         maxGroundSpeedExperimentCycleIndex = 0;
 
         if (TryReadSlopeCoreMaxGroundSpeed(
-                out float sourceMaxGroundSpeed))
+        out float sourceMaxGroundSpeed))
         {
             plannedMaxGroundSpeedForCycle =
-                sourceMaxGroundSpeed;
+            sourceMaxGroundSpeed;
         }
         else
         {
@@ -2852,7 +3413,6 @@ private bool TryEvaluateSplineSurfacePhysics(
 
         plannedMaxGroundSpeedRatio = 1f;
     }
-
 
     public void ResetMaxGroundSpeedExperiment()
     {
@@ -2863,19 +3423,18 @@ private bool TryEvaluateSplineSurfacePhysics(
         SetMaxGroundSpeedExperimentCycle(0);
     }
 
-
     public bool TryEvaluateMaxGroundSpeedDecayExperiment(
-        int cycleIndex,
-        out float sourceMaxGroundSpeed,
-        out float plannedMaxGroundSpeed,
-        out float normalizedProgress01)
+    int cycleIndex,
+    out float sourceMaxGroundSpeed,
+    out float plannedMaxGroundSpeed,
+    out float normalizedProgress01)
     {
         // K compatibility API: there is no longer a 16->8 / 24->12 synthetic sweep.
         normalizedProgress01 = 0f;
         maxGroundSpeedExperimentCycleIndex = 0;
 
         if (!TryReadSlopeCoreMaxGroundSpeed(
-                out sourceMaxGroundSpeed))
+        out sourceMaxGroundSpeed))
         {
             plannedMaxGroundSpeed = 0f;
             plannedMaxGroundSpeedForCycle = 0f;
@@ -2884,37 +3443,36 @@ private bool TryEvaluateSplineSurfacePhysics(
         }
 
         plannedMaxGroundSpeed =
-            sourceMaxGroundSpeed;
+        sourceMaxGroundSpeed;
         plannedMaxGroundSpeedForCycle =
-            sourceMaxGroundSpeed;
+        sourceMaxGroundSpeed;
         plannedMaxGroundSpeedRatio = 1f;
         return true;
     }
 
-
     public int MaxGroundSpeedDecayCycleCount =>
-        0;
+    0;
 
     public int MaxGroundSpeedExperimentCycleIndex =>
-        maxGroundSpeedExperimentCycleIndex;
+    maxGroundSpeedExperimentCycleIndex;
 
     public float PreferredContactPeriodSeconds =>
-        preferredContactPeriodSeconds;
+    preferredContactPeriodSeconds;
 
     public float BaseExperimentPeriodSeconds =>
-        Mathf.Max(0.0001f, preferredContactPeriodSeconds);
+    Mathf.Max(0.0001f, preferredContactPeriodSeconds);
 
     public float ResolvedExperimentPeriodSeconds =>
-        resolvedContactPeriodSeconds;
+    resolvedContactPeriodSeconds;
 
     public float NominalExperimentPeriodSeconds =>
-        nominalExperimentPeriodSeconds;
+    nominalExperimentPeriodSeconds;
 
     public float ObservedGeometryPeriodSeconds =>
-        observedGeometryPeriodSeconds;
+    observedGeometryPeriodSeconds;
 
     public float ObservedGeometryPeriodCorrectionRatio =>
-        observedGeometryPeriodCorrectionRatio;
+    observedGeometryPeriodCorrectionRatio;
 
     /// <summary>
     /// SlopeStickCore.maxGroundSpeedをその場でREAD ONLY取得します。
@@ -2922,133 +3480,173 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// このAPIからSlopeStickCoreへ書き込みは行いません。
     /// </summary>
     public bool TryGetSourceMaxGroundSpeedReadOnly(
-        out float speed)
+    out float speed)
     {
         return TryReadSlopeCoreMaxGroundSpeed(
-            out speed);
+        out speed);
     }
-
 
     public float SourceMaxGroundSpeedReadOnly =>
-        sourceMaxGroundSpeedReadOnly;
+    sourceMaxGroundSpeedReadOnly;
 
     public float PlannedMaxGroundSpeedForCycle =>
-        plannedMaxGroundSpeedForCycle;
-
+    plannedMaxGroundSpeedForCycle;
 
     public bool TryGetPeriodicContactPlan(
-        out float periodSeconds,
-        out float halfPeriodSeconds,
-        out float timeCostSeconds,
-        out float gammaPerSecond,
-        out float radiusClearanceScale,
-        out float releaseCenterTravelDistance,
-        out float releaseTargetNormalSpeed,
-        out float releasePhaseAcceleration)
+    out float periodSeconds,
+    out float halfPeriodSeconds,
+    out float timeCostSeconds,
+    out float gammaPerSecond,
+    out float radiusClearanceScale,
+    out float releaseCenterTravelDistance,
+    out float releaseTargetNormalSpeed,
+    out float releasePhaseAcceleration)
     {
         periodSeconds =
-            resolvedContactPeriodSeconds;
+        resolvedContactPeriodSeconds;
 
         halfPeriodSeconds =
-            resolvedHalfPeriodSeconds;
+        resolvedHalfPeriodSeconds;
 
         timeCostSeconds =
-            decayTimeCostSeconds;
+        decayTimeCostSeconds;
 
         gammaPerSecond =
-            decayRatePerSecond;
+        decayRatePerSecond;
 
         radiusClearanceScale =
-            resolvedEnvelopeRadiusClearanceScale;
+        resolvedEnvelopeRadiusClearanceScale;
 
         releaseCenterTravelDistance =
-            resolvedReleaseCenterTravelDistance;
+        resolvedReleaseCenterTravelDistance;
 
         releaseTargetNormalSpeed =
-            resolvedReleaseTargetNormalSpeed;
+        resolvedReleaseTargetNormalSpeed;
 
         releasePhaseAcceleration =
-            resolvedReleasePhaseAcceleration;
+        resolvedReleasePhaseAcceleration;
 
         return
-            envelopeBuilt &&
-            generatedMeshCollider &&
-            periodSeconds > 0.0001f &&
-            halfPeriodSeconds > 0.0001f;
+        envelopeBuilt &&
+        generatedMeshCollider &&
+        periodSeconds > 0.0001f &&
+        halfPeriodSeconds > 0.0001f;
     }
-
 
     // Compatibility API. New code should use TryGetPeriodicContactPlan().
     public bool TryGetForcedOscillationTiming(
-        out float timeCostSeconds,
-        out float gammaPerSecond)
+    out float timeCostSeconds,
+    out float gammaPerSecond)
     {
         timeCostSeconds =
-            decayTimeCostSeconds;
+        decayTimeCostSeconds;
 
         gammaPerSecond =
-            decayRatePerSecond;
+        decayRatePerSecond;
 
         return
-            envelopeBuilt &&
-            generatedMeshCollider &&
-            resolvedContactPeriodSeconds > 0.0001f;
+        envelopeBuilt &&
+        generatedMeshCollider &&
+        resolvedContactPeriodSeconds > 0.0001f;
     }
 
+    /// <summary>
+    /// Logical/Physical Authority modeでPhysical Lower候補になれるStairWay Colliderを分類します。
+    /// ここでは幾何/Layer/名前だけを判定し、
+    /// 「Upper経験済み」「下降中」という時間条件はBallVisualEqualizerSyncが受理判定します。
+    /// Virtual Lowerはここには含まれません。
+    /// </summary>
+    public bool IsPhysicalLowerCandidateCollider(Collider collider)
+    {
+        if (!collider ||
+        collider == generatedMeshCollider ||
+        collider == generatedMeshSensorCollider ||
+        collider == ballVisualEqualizerCollider ||
+        collider == inSubjectCollider)
+        {
+            return false;
+        }
+
+        int stairwayLayer = LayerMask.NameToLayer("Stairway");
+        if (stairwayLayer >= 0 && collider.gameObject.layer == stairwayLayer)
+        return true;
+
+        Transform current = collider.transform;
+        int depth = 0;
+
+        while (current && depth < 8)
+        {
+            string objectName = current.name;
+
+            if (!string.IsNullOrEmpty(objectName) &&
+            (objectName.IndexOf("StairWay", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+            objectName.IndexOf("Stairway", System.StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                return true;
+            }
+
+            current = current.parent;
+            depth++;
+        }
+
+        return false;
+    }
+
+    // Compatibility wrapper for older Sync builds.
+    public bool IsPreferredPhysicalLowerCollider(Collider collider)
+    {
+        return IsPhysicalLowerCandidateCollider(collider);
+    }
 
     public bool IsUpperEnvelopeCollider(
-        Collider collider)
+    Collider collider)
     {
         return
-            collider &&
-            generatedMeshCollider &&
-            collider == generatedMeshCollider;
+        collider &&
+        generatedMeshCollider &&
+        collider == generatedMeshCollider;
     }
 
-
     public bool IsUpperEnvelopeSensorCollider(
-        Collider collider)
+    Collider collider)
     {
         return false;
     }
 
-
-
     public bool IsLowerGuideCollider(
-        Collider collider)
+    Collider collider)
     {
         return false;
     }
 
     public bool IsEqualizerBoundaryCollider(
-        Collider collider)
+    Collider collider)
     {
         return IsUpperEnvelopeCollider(collider);
     }
 
-
     private Mesh BuildFullSplineEnvelopeMeshAsset(
-        Transform meshTransform,
-        float A0,
-        float decayRatePerSecondValue,
-        float equalizerRadius)
+    Transform meshTransform,
+    float A0,
+    float decayRatePerSecondValue,
+    float equalizerRadius)
     {
         if (!meshTransform ||
-            !correspondSubject ||
-            !slopeCore)
+        !correspondSubject ||
+        !slopeCore)
         {
             return null;
         }
 
         int sampleCount =
-            Mathf.Max(2, segmentCount + 1);
+        Mathf.Max(2, segmentCount + 1);
 
         int vertexCount = sampleCount * 2;
         Vector3[] vertices = new Vector3[vertexCount];
         int[] triangles = new int[(sampleCount - 1) * 6];
 
         float halfWidth =
-            Mathf.Max(0.05f, envelopeWidth * 0.5f);
+        Mathf.Max(0.05f, envelopeWidth * 0.5f);
 
         float subjectRadius = ResolveSlopeCoreWorldRadius();
 
@@ -3059,17 +3657,17 @@ private bool TryEvaluateSplineSurfacePhysics(
         bool hasPreviousCenter = false;
         float curvedCenterlineLength = 0f;
         float basePathLength =
-            EstimateSplineArcDistancePhysics(
-                startProgress,
-                endProgress,
-                Mathf.Max(32, segmentCount * 2));
+        EstimateSplineArcDistancePhysics(
+        startProgress,
+        endProgress,
+        Mathf.Max(32, segmentCount * 2));
 
         Vector3 releaseTangentPhysics = slopeCore.BallVisualSlopeTangent;
         slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-            capturedReleaseProgress01,
-            out _,
-            out releaseTangentPhysics,
-            out _);
+        capturedReleaseProgress01,
+        out _,
+        out releaseTangentPhysics,
+        out _);
 
         float finalTravelTime = 0f;
 
@@ -3079,87 +3677,87 @@ private bool TryEvaluateSplineSurfacePhysics(
             float progress = Mathf.Lerp(startProgress, endProgress, u);
 
             if (!TryEvaluateSplineSurfacePhysics(
-                    progress,
-                    subjectRadius,
-                    out _,
-                    out Vector3 surfacePhysics,
-                    out Vector3 tangentPhysics,
-                    out Vector3 normalPhysics))
+            progress,
+            subjectRadius,
+            out _,
+            out Vector3 surfacePhysics,
+            out Vector3 tangentPhysics,
+            out Vector3 normalPhysics))
             {
                 return null;
             }
 
             float distanceFromRelease =
-                progress > capturedReleaseProgress01
-                    ? EstimateSplineArcDistancePhysics(
-                        capturedReleaseProgress01,
-                        progress,
-                        16)
-                    : 0f;
+            progress > capturedReleaseProgress01
+            ? EstimateSplineArcDistancePhysics(
+            capturedReleaseProgress01,
+            progress,
+            16)
+            : 0f;
 
             float timeSeconds =
-                progress > capturedReleaseProgress01
-                    ? ResolveTravelTimeForArcDistance(
-                        distanceFromRelease,
-                        releaseTangentPhysics)
-                    : 0f;
+            progress > capturedReleaseProgress01
+            ? ResolveTravelTimeForArcDistance(
+            distanceFromRelease,
+            releaseTangentPhysics)
+            : 0f;
 
             finalTravelTime = Mathf.Max(finalTravelTime, timeSeconds);
 
             float clearance =
-                ResolveEnvelopeClearance(
-                    equalizerRadius,
-                    A0,
-                    decayRatePerSecondValue,
-                    timeSeconds);
+            ResolveEnvelopeClearance(
+            equalizerRadius,
+            A0,
+            decayRatePerSecondValue,
+            timeSeconds);
 
             Vector3 centerPhysics =
-                surfacePhysics +
-                normalPhysics * clearance;
+            surfacePhysics +
+            normalPhysics * clearance;
 
             Vector3 widthAxisPhysics =
-                Vector3.Cross(
-                    normalPhysics,
-                    tangentPhysics);
+            Vector3.Cross(
+            normalPhysics,
+            tangentPhysics);
 
             if (widthAxisPhysics.sqrMagnitude <= 0.000001f)
-                return null;
+            return null;
 
             widthAxisPhysics.Normalize();
 
             Vector3 leftPhysics =
-                centerPhysics -
-                widthAxisPhysics * halfWidth;
+            centerPhysics -
+            widthAxisPhysics * halfWidth;
 
             Vector3 rightPhysics =
-                centerPhysics +
-                widthAxisPhysics * halfWidth;
+            centerPhysics +
+            widthAxisPhysics * halfWidth;
 
             Vector3 centerWorld =
-                correspondSubject.MapPoint(centerPhysics);
+            correspondSubject.MapPoint(centerPhysics);
 
             Vector3 leftWorld =
-                correspondSubject.MapPoint(leftPhysics);
+            correspondSubject.MapPoint(leftPhysics);
 
             Vector3 rightWorld =
-                correspondSubject.MapPoint(rightPhysics);
+            correspondSubject.MapPoint(rightPhysics);
 
             if (hasPreviousCenter)
             {
                 curvedCenterlineLength +=
-                    Vector3.Distance(
-                        previousCenterWorld,
-                        centerWorld);
+                Vector3.Distance(
+                previousCenterWorld,
+                centerWorld);
             }
 
             previousCenterWorld = centerWorld;
             hasPreviousCenter = true;
 
             vertices[i * 2 + 0] =
-                meshTransform.InverseTransformPoint(leftWorld);
+            meshTransform.InverseTransformPoint(leftWorld);
 
             vertices[i * 2 + 1] =
-                meshTransform.InverseTransformPoint(rightWorld);
+            meshTransform.InverseTransformPoint(rightWorld);
         }
 
         int ti = 0;
@@ -3189,14 +3787,13 @@ private bool TryEvaluateSplineSurfacePhysics(
         latestSlopeBaseLength = basePathLength;
         latestColliderCurveLength = curvedCenterlineLength;
         latestCurveLengthRatio =
-            basePathLength > 0.000001f
-                ? curvedCenterlineLength / basePathLength
-                : 1f;
+        basePathLength > 0.000001f
+        ? curvedCenterlineLength / basePathLength
+        : 1f;
         latestEnvelopeTravelTimeSeconds = finalTravelTime;
 
         return mesh;
     }
-
 
     // ================================================================
     // Root
@@ -3204,18 +3801,17 @@ private bool TryEvaluateSplineSurfacePhysics(
     private void CreateRoot()
     {
         if (generatedRoot)
-            ClearAllGeneratedEnvelopeRoots();
+        ClearAllGeneratedEnvelopeRoots();
 
         GameObject root =
-            new GameObject(
-                "BallVisualEqualizer_NegativeEnvelope");
+        new GameObject(
+        "BallVisualEqualizer_NegativeEnvelope");
 
         root.layer = gameObject.layer;
         generatedRoot = root.transform;
         generatedRoot.SetParent(transform, true);
         generatedEnvelopeRoots.Add(generatedRoot);
     }
-
 
     // ================================================================
     // Visual-frame turn mapping
@@ -3224,8 +3820,8 @@ private bool TryEvaluateSplineSurfacePhysics(
     // points/vectors and, when necessary, the generated Root transform are
     // transported by the incremental coordinate map.
     public void ApplyVisualFrameTurnDelta(
-        Vector3 pivot,
-        Quaternion deltaTurn)
+    Vector3 pivot,
+    Quaternion deltaTurn)
     {
         // Compatibility API only.  Normal specification clears/resynchronizes
         // the active Equalizer before Stage Turn, so no live Envelope transport
@@ -3244,52 +3840,57 @@ private bool TryEvaluateSplineSurfacePhysics(
         ClearAllGeneratedEnvelopeRoots();
 
         latestEnvelopeGeometryCached =
-            false;
+        false;
 
         liveSettingsSnapshotValid =
-            false;
+        false;
 
         armed =
-            false;
+        false;
 
         envelopeBuilt =
-            false;
+        false;
 
         sourceEnergyJoule =
-            0f;
+        0f;
 
         canonicalReferenceHeight =
-            0f;
+        0f;
 
         sourceEnergyAxisVisual =
-            Vector3.up;
+        Vector3.up;
 
         canonicalEnergyRatio =
-            1f;
+        1f;
+
+        physicalLowerImpactEnergySampleCount = 0;
+        lastPhysicalLowerRawRetention01 = 1f;
+        lastPhysicalLowerAppliedRetention01 = 1f;
+        lastPhysicalLowerEnergyReason = "None";
 
         canonicalNormalAcceleration =
-            0f;
+        0f;
 
         equalizerLaunchSpeed =
-            0f;
+        0f;
 
         equalizerVerticalLaunchSpeed =
-            0f;
+        0f;
 
         entryApexHeight =
-            0f;
+        0f;
 
         gamma =
-            0f;
+        0f;
 
         resolvedContactPeriodSeconds =
-            Mathf.Max(0.04f, preferredContactPeriodSeconds);
+        Mathf.Max(0.04f, preferredContactPeriodSeconds);
 
         resolvedHalfPeriodSeconds =
-            resolvedContactPeriodSeconds * 0.5f;
+        resolvedContactPeriodSeconds * 0.5f;
 
         resolvedEnvelopeRadiusClearanceScale =
-            MinimumPeriodicRadiusClearanceScale;
+        MinimumPeriodicRadiusClearanceScale;
 
         resolvedReleaseCenterTravelDistance = 0f;
         resolvedReleaseSurfaceClearance = 0f;
@@ -3326,7 +3927,6 @@ private bool TryEvaluateSplineSurfacePhysics(
         arrivalTerminalBlend01 = 0f;
     }
 
-
     /// <summary>
     /// 平面→斜面などで次のEnvelopeを生成する直前に使用する。
     /// 旧Envelopeは必ず破棄し、物理境界を一世代だけに保つ。
@@ -3345,14 +3945,13 @@ private bool TryEvaluateSplineSurfacePhysics(
         arrivalTerminalBlend01 = 0f;
     }
 
-
     /// <summary>
     /// 過去Envelope GameObjectをDestroyせず、
     /// 「最新Envelope」用参照だけnullへ戻す。
     ///
     /// Appendモードの核心。
     /// </summary>
-/// <summary>
+    /// <summary>
     /// 現在まで生成したEnvelope Rootを全て削除する。
     /// Replaceモードで次Slopeへ入る時と、
     /// 明示的Clear時に使用する。
@@ -3362,41 +3961,39 @@ private bool TryEvaluateSplineSurfacePhysics(
         // List外にcurrent Rootがある異常ケースも拾えるよう、
         // currentを先にListへ補完する。
         if (generatedRoot &&
-            !generatedEnvelopeRoots.Contains(
-                generatedRoot))
+        !generatedEnvelopeRoots.Contains(
+        generatedRoot))
         {
             generatedEnvelopeRoots.Add(
-                generatedRoot);
+            generatedRoot);
         }
 
-
         for (int i =
-                 generatedEnvelopeRoots.Count - 1;
-             i >= 0;
-             i--)
+        generatedEnvelopeRoots.Count - 1;
+        i >= 0;
+        i--)
         {
             Transform root =
-                generatedEnvelopeRoots[i];
+            generatedEnvelopeRoots[i];
 
             if (!root)
-                continue;
-
+            continue;
 
             // Root配下の全Colliderを先に切り離す。Upper Sensorは
             // MeshFilterを持たない別Childなので、Filter単位では漏れる。
             MeshCollider[] rootMeshColliders =
-                root.GetComponentsInChildren<MeshCollider>(
-                    true);
+            root.GetComponentsInChildren<MeshCollider>(
+            true);
 
             for (int c = 0;
-                 c < rootMeshColliders.Length;
-                 c++)
+            c < rootMeshColliders.Length;
+            c++)
             {
                 MeshCollider rootCollider =
-                    rootMeshColliders[c];
+                rootMeshColliders[c];
 
                 if (!rootCollider)
-                    continue;
+                continue;
 
                 rootCollider.enabled = false;
                 rootCollider.sharedMesh = null;
@@ -3404,60 +4001,58 @@ private bool TryEvaluateSplineSurfacePhysics(
 
             // Root配下にある生成Meshアセットも明示的に破棄。
             MeshFilter[] filters =
-                root.GetComponentsInChildren<MeshFilter>(
-                    true);
+            root.GetComponentsInChildren<MeshFilter>(
+            true);
 
             for (int j = 0;
-                 j < filters.Length;
-                 j++)
+            j < filters.Length;
+            j++)
             {
                 MeshFilter filter =
-                    filters[j];
+                filters[j];
 
                 if (!filter)
-                    continue;
+                continue;
 
                 Mesh mesh =
-                    filter.sharedMesh;
+                filter.sharedMesh;
 
                 filter.sharedMesh =
-                    null;
+                null;
 
                 if (mesh)
                 {
                     Destroy(
-                        mesh);
+                    mesh);
                 }
             }
 
-
             root.gameObject.SetActive(
-                false);
+            false);
 
             Destroy(
-                root.gameObject);
+            root.gameObject);
         }
-
 
         generatedEnvelopeRoots.Clear();
 
         generatedRoot =
-            null;
+        null;
 
         generatedMesh =
-            null;
+        null;
 
         generatedMeshTransform =
-            null;
+        null;
 
         generatedMeshFilter =
-            null;
+        null;
 
         generatedMeshCollider =
-            null;
+        null;
 
         generatedMeshSensorCollider =
-            null;
+        null;
 
         upperEnvelopeSolidRequested = false;
         upperEnvelopeSolidEnabled = false;
@@ -3475,8 +4070,6 @@ private bool TryEvaluateSplineSurfacePhysics(
 
     }
 
-
-
     // ================================================================
     // References / radius
     // ================================================================
@@ -3486,116 +4079,112 @@ private bool TryEvaluateSplineSurfacePhysics(
         if (!slopeCore)
         {
             slopeCore =
-                FindFirstObjectByType<SlopeStickCore>();
+            FindFirstObjectByType<SlopeStickCore>();
         }
 
         if (!correspondSubject)
         {
             correspondSubject =
-                FindFirstObjectByType<CorrespondSubject>();
+            FindFirstObjectByType<CorrespondSubject>();
         }
 
         if (!inSubjectCollider &&
-            slopeCore)
+        slopeCore)
         {
             inSubjectCollider =
-                slopeCore.GetComponent<
-                    Collider>();
+            slopeCore.GetComponent<
+            Collider>();
         }
 
         if (!ballVisualEqualizer &&
-            ballVisualEqualizerCollider)
+        ballVisualEqualizerCollider)
         {
             ballVisualEqualizer =
-                ballVisualEqualizerCollider.attachedRigidbody;
+            ballVisualEqualizerCollider.attachedRigidbody;
         }
 
         if (!ballVisualEqualizer)
         {
             GameObject equalizerObject =
-                GameObject.Find(
-                    "/VisualPlayerRoot/BallVisualEqualizer");
+            GameObject.Find(
+            "/VisualPlayerRoot/BallVisualEqualizer");
 
             if (!equalizerObject)
             {
                 equalizerObject =
-                    GameObject.Find(
-                        "BallVisualEqualizer");
+                GameObject.Find(
+                "BallVisualEqualizer");
             }
 
             if (equalizerObject)
             {
                 ballVisualEqualizer =
-                    equalizerObject.GetComponent<
-                        Rigidbody>();
+                equalizerObject.GetComponent<
+                Rigidbody>();
             }
         }
 
         if (!ballVisualEqualizerCollider &&
-            ballVisualEqualizer)
+        ballVisualEqualizer)
         {
             ballVisualEqualizerCollider =
-                ballVisualEqualizer.GetComponent<
-                    SphereCollider>();
+            ballVisualEqualizer.GetComponent<
+            SphereCollider>();
         }
     }
-
 
     private bool ReferencesValid()
     {
         return
-            slopeCore &&
-            correspondSubject &&
-            ballVisualEqualizer &&
-            ballVisualEqualizerCollider;
+        slopeCore &&
+        correspondSubject &&
+        ballVisualEqualizer &&
+        ballVisualEqualizerCollider;
     }
-
 
     private float ResolveEqualizerWorldRadius()
     {
         if (!ballVisualEqualizerCollider)
-            return 0.5f;
+        return 0.5f;
 
         Vector3 scale =
-            ballVisualEqualizerCollider.transform.lossyScale;
+        ballVisualEqualizerCollider.transform.lossyScale;
 
         float maximumScale =
-            Mathf.Max(
-                Mathf.Abs(scale.x),
-                Mathf.Abs(scale.y),
-                Mathf.Abs(scale.z));
+        Mathf.Max(
+        Mathf.Abs(scale.x),
+        Mathf.Abs(scale.y),
+        Mathf.Abs(scale.z));
 
         return
-            ballVisualEqualizerCollider.radius *
-            maximumScale;
+        ballVisualEqualizerCollider.radius *
+        maximumScale;
     }
-
 
     private float ResolveSlopeCoreWorldRadius()
     {
         if (!slopeCore)
-            return 0.5f;
+        return 0.5f;
 
         SphereCollider sphere =
-            slopeCore.GetComponent<SphereCollider>();
+        slopeCore.GetComponent<SphereCollider>();
 
         if (!sphere)
-            return 0.5f;
+        return 0.5f;
 
         Vector3 scale =
-            sphere.transform.lossyScale;
+        sphere.transform.lossyScale;
 
         float maximumScale =
-            Mathf.Max(
-                Mathf.Abs(scale.x),
-                Mathf.Abs(scale.y),
-                Mathf.Abs(scale.z));
+        Mathf.Max(
+        Mathf.Abs(scale.x),
+        Mathf.Abs(scale.y),
+        Mathf.Abs(scale.z));
 
         return
-            sphere.radius *
-            maximumScale;
+        sphere.radius *
+        maximumScale;
     }
-
 
     // ================================================================
     // Stable oscillation frame for BallVisualEqualizerSync
@@ -3609,38 +4198,38 @@ private bool TryEvaluateSplineSurfacePhysics(
     /// Stable-Nは実際のSpline surface normalを権威として使います。
     /// </summary>
     public bool TryGetReleaseSurfaceFrameVisual(
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual)
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual)
     {
         ResolveReferences();
 
         tangentVisual =
-            Vector3.zero;
+        Vector3.zero;
 
         normalVisual =
-            Vector3.zero;
+        Vector3.zero;
 
         if (!slopeCore ||
-            !correspondSubject)
+        !correspondSubject)
         {
             return false;
         }
 
         float releaseProgress01 =
-            Mathf.Clamp01(
-                slopeCore.BallVisualSlopeProgress01);
+        Mathf.Clamp01(
+        slopeCore.BallVisualSlopeProgress01);
 
         if (!slopeCore.TryEvaluateBallVisualSectionFramePhysics(
-                releaseProgress01,
-                out _,
-                out Vector3 tangentPhysics,
-                out Vector3 normalPhysics))
+        releaseProgress01,
+        out _,
+        out Vector3 tangentPhysics,
+        out Vector3 normalPhysics))
         {
             return false;
         }
 
         if (tangentPhysics.sqrMagnitude <= 0.000001f ||
-            normalPhysics.sqrMagnitude <= 0.000001f)
+        normalPhysics.sqrMagnitude <= 0.000001f)
         {
             return false;
         }
@@ -3648,36 +4237,36 @@ private bool TryEvaluateSplineSurfacePhysics(
         tangentPhysics.Normalize();
 
         normalPhysics =
-            Vector3.ProjectOnPlane(
-                normalPhysics,
-                tangentPhysics);
+        Vector3.ProjectOnPlane(
+        normalPhysics,
+        tangentPhysics);
 
         if (normalPhysics.sqrMagnitude <= 0.000001f)
-            return false;
+        return false;
 
         normalPhysics.Normalize();
 
         // Re-orthogonalize T against the native surface normal.
         tangentPhysics =
-            Vector3.ProjectOnPlane(
-                tangentPhysics,
-                normalPhysics);
+        Vector3.ProjectOnPlane(
+        tangentPhysics,
+        normalPhysics);
 
         if (tangentPhysics.sqrMagnitude <= 0.000001f)
-            return false;
+        return false;
 
         tangentPhysics.Normalize();
 
         tangentVisual =
-            correspondSubject.MapDirection(
-                tangentPhysics);
+        correspondSubject.MapDirection(
+        tangentPhysics);
 
         normalVisual =
-            correspondSubject.MapDirection(
-                normalPhysics);
+        correspondSubject.MapDirection(
+        normalPhysics);
 
         if (tangentVisual.sqrMagnitude <= 0.000001f ||
-            normalVisual.sqrMagnitude <= 0.000001f)
+        normalVisual.sqrMagnitude <= 0.000001f)
         {
             tangentVisual = Vector3.zero;
             normalVisual = Vector3.zero;
@@ -3687,9 +4276,9 @@ private bool TryEvaluateSplineSurfacePhysics(
         tangentVisual.Normalize();
 
         normalVisual =
-            Vector3.ProjectOnPlane(
-                normalVisual,
-                tangentVisual);
+        Vector3.ProjectOnPlane(
+        normalVisual,
+        tangentVisual);
 
         if (normalVisual.sqrMagnitude <= 0.000001f)
         {
@@ -3701,9 +4290,9 @@ private bool TryEvaluateSplineSurfacePhysics(
         normalVisual.Normalize();
 
         tangentVisual =
-            Vector3.ProjectOnPlane(
-                tangentVisual,
-                normalVisual);
+        Vector3.ProjectOnPlane(
+        tangentVisual,
+        normalVisual);
 
         if (tangentVisual.sqrMagnitude <= 0.000001f)
         {
@@ -3716,38 +4305,37 @@ private bool TryEvaluateSplineSurfacePhysics(
         return true;
     }
 
-
     /// <summary>
     /// 最新Envelopeを生成したSlope全体のTangent/NormalをVisual座標で返します。
     /// 局所Mesh三角形のNormalではなく、Build時にGram-Schmidtで確定した
     /// 連続なSlope frameです。Equalizerの減衰エネルギー基底に使用します。
     /// </summary>
     public bool TryGetLatestOscillationFrameVisual(
-        out Vector3 tangentVisual,
-        out Vector3 normalVisual)
+    out Vector3 tangentVisual,
+    out Vector3 normalVisual)
     {
         tangentVisual =
-            Vector3.zero;
+        Vector3.zero;
 
         normalVisual =
-            Vector3.zero;
+        Vector3.zero;
 
         if (!latestEnvelopeGeometryCached ||
-            !correspondSubject)
+        !correspondSubject)
         {
             return false;
         }
 
         tangentVisual =
-            correspondSubject.MapDirection(
-                cachedAxisPhysics);
+        correspondSubject.MapDirection(
+        cachedAxisPhysics);
 
         normalVisual =
-            correspondSubject.MapDirection(
-                cachedSlopeNormalPhysics);
+        correspondSubject.MapDirection(
+        cachedSlopeNormalPhysics);
 
         if (tangentVisual.sqrMagnitude <= 0.000001f ||
-            normalVisual.sqrMagnitude <= 0.000001f)
+        normalVisual.sqrMagnitude <= 0.000001f)
         {
             tangentVisual = Vector3.zero;
             normalVisual = Vector3.zero;
@@ -3757,9 +4345,9 @@ private bool TryEvaluateSplineSurfacePhysics(
         tangentVisual.Normalize();
 
         normalVisual =
-            Vector3.ProjectOnPlane(
-                normalVisual,
-                tangentVisual);
+        Vector3.ProjectOnPlane(
+        normalVisual,
+        tangentVisual);
 
         if (normalVisual.sqrMagnitude <= 0.000001f)
         {
@@ -3771,14 +4359,14 @@ private bool TryEvaluateSplineSurfacePhysics(
         normalVisual.Normalize();
 
         Vector3 orientationAxis =
-            sourceEnergyAxisVisual;
+        sourceEnergyAxisVisual;
 
         if (orientationAxis.sqrMagnitude <=
-            0.000001f)
+        0.000001f)
         {
             orientationAxis =
-                correspondSubject.MapDirection(
-                    Vector3.up);
+            correspondSubject.MapDirection(
+            Vector3.up);
         }
 
         if (orientationAxis.sqrMagnitude > 0.000001f)
@@ -3786,11 +4374,11 @@ private bool TryEvaluateSplineSurfacePhysics(
             orientationAxis.Normalize();
 
             if (Vector3.Dot(
-                    normalVisual,
-                    orientationAxis) < 0f)
+            normalVisual,
+            orientationAxis) < 0f)
             {
                 normalVisual =
-                    -normalVisual;
+                -normalVisual;
             }
         }
 
@@ -3803,124 +4391,123 @@ private bool TryEvaluateSplineSurfacePhysics(
     private void OnDrawGizmosSelected()
     {
         if (!envelopeBuilt)
-            return;
+        return;
 
         Gizmos.DrawSphere(
-            correspondSubject.MapPoint(
-                capturedEntryPhysics),
-            0.08f);
+        correspondSubject.MapPoint(
+        capturedEntryPhysics),
+        0.08f);
 
         Gizmos.DrawSphere(
-            correspondSubject.MapPoint(
-                capturedLimitPhysics),
-            0.08f);
+        correspondSubject.MapPoint(
+        capturedLimitPhysics),
+        0.08f);
     }
 
     // Legacy 3-argument overload.
     public bool ArmFromBallVisualEnergy(
-        float energyJoule,
-        float canonicalReferenceHeightValue,
-        Vector3 equalizerLaunchVelocityVisual)
+    float energyJoule,
+    float canonicalReferenceHeightValue,
+    Vector3 equalizerLaunchVelocityVisual)
     {
         Vector3 inferredAxis =
-            equalizerLaunchVelocityVisual;
+        equalizerLaunchVelocityVisual;
 
         if (inferredAxis.sqrMagnitude <=
-            0.000001f)
+        0.000001f)
         {
             inferredAxis =
-                Vector3.up;
+            Vector3.up;
         }
 
         return ArmFromBallVisualEnergy(
-            energyJoule,
-            canonicalReferenceHeightValue,
-            equalizerLaunchVelocityVisual,
-            inferredAxis);
+        energyJoule,
+        canonicalReferenceHeightValue,
+        equalizerLaunchVelocityVisual,
+        inferredAxis);
     }
-
 
     // Canonical BallVisualSlopeDrive / Equalizer handoff.
     public bool ArmFromBallVisualEnergy(
-        float energyJoule,
-        float canonicalReferenceHeightValue,
-        Vector3 equalizerLaunchVelocityVisual,
-        Vector3 sourceEnergyAxisVisualValue,
-        float initialCanonicalEnergyRatio = 1f)
+    float energyJoule,
+    float canonicalReferenceHeightValue,
+    Vector3 equalizerLaunchVelocityVisual,
+    Vector3 sourceEnergyAxisVisualValue,
+    float initialCanonicalEnergyRatio = 1f)
     {
         ResolveReferences();
 
         if (!ReferencesValid())
         {
             Debug.LogWarning(
-                "[ENVELOPE] Spline references are not valid.",
-                this);
+            "[ENVELOPE] Spline references are not valid.",
+            this);
 
             return false;
         }
 
         float safeEnergy =
-            Mathf.Max(
-                0f,
-                energyJoule);
+        Mathf.Max(
+        0f,
+        energyJoule);
 
         float safeReferenceHeight =
-            Mathf.Max(
-                0f,
-                canonicalReferenceHeightValue);
+        Mathf.Max(
+        0f,
+        canonicalReferenceHeightValue);
 
         if (safeEnergy <=
-            0.000001f)
+        0.000001f)
         {
             Debug.LogWarning(
-                "[ENVELOPE] Source Energy E0 is zero.",
-                this);
+            "[ENVELOPE] Source Energy E0 is zero.",
+            this);
 
             return false;
         }
 
         if (safeReferenceHeight <=
-            0.000001f)
+        0.000001f)
         {
             Debug.LogWarning(
-                "[ENVELOPE] Stable-N reference height H0 is zero.",
-                this);
+            "[ENVELOPE] Stable-N reference height H0 is zero.",
+            this);
 
             return false;
         }
 
         if (equalizerLaunchVelocityVisual.sqrMagnitude <=
-            0.000001f)
+        0.000001f)
         {
             Debug.LogWarning(
-                "[ENVELOPE] Equalizer launch velocity is zero.",
-                this);
+            "[ENVELOPE] Equalizer launch velocity is zero.",
+            this);
 
             return false;
         }
 
         Vector3 sourceAxis =
-            sourceEnergyAxisVisualValue;
+        sourceEnergyAxisVisualValue;
 
         if (sourceAxis.sqrMagnitude <=
-            0.000001f)
+        0.000001f)
         {
             sourceAxis =
-                Vector3.up;
+            Vector3.up;
         }
 
         sourceAxis.Normalize();
 
         if (Vector3.Dot(
-                sourceAxis,
-                Vector3.up) < 0f)
+        sourceAxis,
+        Vector3.up) < 0f)
         {
             sourceAxis =
-                -sourceAxis;
+            -sourceAxis;
         }
 
         capturedEqualizerLaunchVelocityVisual =
-            equalizerLaunchVelocityVisual;
+        equalizerLaunchVelocityVisual;
 
         PrepareForNextEnvelopeGeneration();
 
@@ -3936,64 +4523,67 @@ private bool TryEvaluateSplineSurfacePhysics(
         presentationCurrentAppliedRetention01 = 1f;
 
         sourceEnergyJoule =
-            safeEnergy;
+        safeEnergy;
 
         canonicalReferenceHeight =
-            safeReferenceHeight;
+        safeReferenceHeight;
 
         sourceEnergyAxisVisual =
-            sourceAxis;
+        sourceAxis;
 
         canonicalEnergyRatio =
-            Mathf.Clamp01(
-                initialCanonicalEnergyRatio);
+        Mathf.Clamp01(
+        initialCanonicalEnergyRatio);
+
+        physicalLowerImpactEnergySampleCount = 0;
+        lastPhysicalLowerRawRetention01 = 1f;
+        lastPhysicalLowerAppliedRetention01 = 1f;
+        lastPhysicalLowerEnergyReason = "None";
 
         float mass =
-            Mathf.Max(
-                0.0001f,
-                ballVisualEqualizer.mass);
+        Mathf.Max(
+        0.0001f,
+        ballVisualEqualizer.mass);
 
         canonicalNormalAcceleration =
-            safeEnergy /
-            Mathf.Max(
-                0.000001f,
-                mass *
-                safeReferenceHeight);
+        safeEnergy /
+        Mathf.Max(
+        0.000001f,
+        mass *
+        safeReferenceHeight);
 
         equalizerLaunchSpeed =
-            equalizerLaunchVelocityVisual.magnitude;
+        equalizerLaunchVelocityVisual.magnitude;
 
         // Kept as a diagnostic only.  Canonical geometry does not derive H0
         // from World-Y.
         equalizerVerticalLaunchSpeed =
-            Vector3.Dot(
-                equalizerLaunchVelocityVisual,
-                Vector3.up);
+        Vector3.Dot(
+        equalizerLaunchVelocityVisual,
+        Vector3.up);
 
         entryApexHeight =
-            safeReferenceHeight;
+        safeReferenceHeight;
 
         armed =
-            true;
+        true;
 
         envelopeBuilt =
-            false;
+        false;
 
         return TryBuildEnvelopeIfReady();
     }
     public void SetCanonicalDampingEnergyRatio(
-        float energyRatio)
+    float energyRatio)
     {
         SetCanonicalEnergyRatio(energyRatio);
     }
 
-
     public float CanonicalDampingEnergyRatio =>
-        canonicalEnergyRatio;
-
+    canonicalEnergyRatio;
 
     public void SetCanonicalEnergyRatio(
-        float energyRatio)
+    float energyRatio)
     {
         // One release may only lose canonical energy. Solver noise must never
         // re-expand the Upper Envelope.
@@ -4001,60 +4591,109 @@ private bool TryEvaluateSplineSurfacePhysics(
         float next = Mathf.Min(canonicalEnergyRatio, requested);
 
         if (Mathf.Abs(next - canonicalEnergyRatio) <= 0.0005f)
-            return;
+        return;
 
         canonicalEnergyRatio = next;
 
         UpdatePresentationRuntimeDiagnostics(
-            Mathf.Max(0f, Time.fixedTime - presentationReleaseFixedTime));
+        Mathf.Max(0f, Time.fixedTime - presentationReleaseFixedTime));
 
         pendingCanonicalGeometryRebuild = true;
     }
 
+    /// <summary>
+    /// Real StairWay Physical Lower impactから測定したEnergy retentionを次波へ反映します。
+    /// Logical exp(-gamma*t)減衰とは別の実測PhysX損失で、両者は乗算的に効きます。
+    /// </summary>
+    public void SubmitPhysicalLowerImpactEnergyRetention(
+    float measuredRetention01,
+    string reason = "DescendingAfterUpperStairPhysX")
+    {
+        float raw = Mathf.Clamp01(measuredRetention01);
+        raw = Mathf.Max(
+        Mathf.Clamp01(minimumPhysicalLowerImpactRetention01),
+        raw);
+
+        float applied = Mathf.Lerp(
+        1f,
+        raw,
+        Mathf.Clamp01(physicalLowerImpactEnergyInfluence));
+
+        lastPhysicalLowerRawRetention01 = raw;
+        lastPhysicalLowerAppliedRetention01 = applied;
+        lastPhysicalLowerEnergyReason =
+        string.IsNullOrEmpty(reason)
+        ? "DescendingAfterUpperStairPhysX"
+        : reason;
+        physicalLowerImpactEnergySampleCount++;
+
+        if (usePhysicalLowerImpactEnergyLoss)
+        {
+            SetCanonicalEnergyRatio(
+            canonicalEnergyRatio * applied);
+        }
+
+        Debug.Log(
+        $"[ENVELOPE PHYSICAL LOWER ENERGY] " +
+        $"sample={physicalLowerImpactEnergySampleCount} " +
+        $"rawRet={raw:F4} appliedRet={applied:F4} " +
+        $"influence={physicalLowerImpactEnergyInfluence:F3} " +
+        $"epsilon={canonicalEnergyRatio:F4} " +
+        $"reason={lastPhysicalLowerEnergyReason}",
+        this);
+    }
+
+    public float LastPhysicalLowerImpactRawRetention01 =>
+    lastPhysicalLowerRawRetention01;
+
+    public float LastPhysicalLowerImpactAppliedRetention01 =>
+    lastPhysicalLowerAppliedRetention01;
+
+    public int PhysicalLowerImpactEnergySampleCount =>
+    physicalLowerImpactEnergySampleCount;
 
     public void NotifyCanonicalUpperPeak()
     {
         if (spatialWaveAuthorityActive)
         {
             Debug.Log(
-                $"[ENVELOPE PHYSICAL UPPER OBSERVED] " +
-                $"authority=SpatialProgress " +
-                $"wave={presentationWaveIndex + 1}/{spatialWaveAuthorityCount} " +
-                $"domainP={spatialWaveAuthorityProgress01:F4}",
-                this);
+            $"[ENVELOPE PHYSICAL UPPER OBSERVED] " +
+            $"authority=SpatialProgress " +
+            $"wave={presentationWaveIndex + 1}/{spatialWaveAuthorityCount} " +
+            $"domainP={spatialWaveAuthorityProgress01:F4}",
+            this);
             return;
         }
 
         presentationWaveIndex =
-            Mathf.Max(
-                0,
-                presentationWaveIndex + 1);
+        Mathf.Max(
+        0,
+        presentationWaveIndex + 1);
 
         float elapsed =
-            Mathf.Max(
-                0f,
-                Time.fixedTime - presentationReleaseFixedTime);
+        Mathf.Max(
+        0f,
+        Time.fixedTime - presentationReleaseFixedTime);
 
         UpdatePresentationRuntimeDiagnostics(elapsed);
         pendingCanonicalGeometryRebuild = true;
 
         Debug.Log(
-            $"[ENVELOPE PRESENTATION PEAK] " +
-            $"nextWave={presentationWaveIndex + 1} " +
-            $"elapsed={elapsed:F4}s " +
-            $"ceiling={presentationCurrentCeilingR:F3}R " +
-            $"legacy={presentationCurrentLegacyTravelR:F3}R " +
-            $"resolved={presentationCurrentResolvedTravelR:F3}R " +
-            $"Hn={presentationCurrentLossHnR:F3}R " +
-            $"energyRet={presentationCurrentLegacyEnergyRetention01:F4} " +
-            $"timeRet={presentationCurrentLegacyTimeRetention01:F4} " +
-            $"rawRet={presentationCurrentRawLegacyRetention01:F4} " +
-            $"appliedRet={presentationCurrentAppliedRetention01:F4} " +
-            $"lossInfluence={waveTimeDecayInfluence:F3} " +
-            $"epsilon={canonicalEnergyRatio:F6}",
-            this);
+        $"[ENVELOPE PRESENTATION PEAK] " +
+        $"nextWave={presentationWaveIndex + 1} " +
+        $"elapsed={elapsed:F4}s " +
+        $"ceiling={presentationCurrentCeilingR:F3}R " +
+        $"legacy={presentationCurrentLegacyTravelR:F3}R " +
+        $"resolved={presentationCurrentResolvedTravelR:F3}R " +
+        $"Hn={presentationCurrentLossHnR:F3}R " +
+        $"energyRet={presentationCurrentLegacyEnergyRetention01:F4} " +
+        $"timeRet={presentationCurrentLegacyTimeRetention01:F4} " +
+        $"rawRet={presentationCurrentRawLegacyRetention01:F4} " +
+        $"appliedRet={presentationCurrentAppliedRetention01:F4} " +
+        $"lossInfluence={waveTimeDecayInfluence:F3} " +
+        $"epsilon={canonicalEnergyRatio:F6}",
+        this);
     }
-
 
     public void ResetPresentationWaveState()
     {
@@ -4065,36 +4704,34 @@ private bool TryEvaluateSplineSurfacePhysics(
         pendingCanonicalGeometryRebuild = true;
     }
 
-
     public int PresentationWaveIndex =>
-        presentationWaveIndex;
+    presentationWaveIndex;
 
     public float PresentationCurrentCeilingR =>
-        presentationCurrentCeilingR;
+    presentationCurrentCeilingR;
 
     public float PresentationCurrentLegacyTravelR =>
-        presentationCurrentLegacyTravelR;
+    presentationCurrentLegacyTravelR;
 
     public float PresentationCurrentResolvedTravelR =>
-        presentationCurrentResolvedTravelR;
+    presentationCurrentResolvedTravelR;
 
     public float PresentationCurrentLossHnR =>
-        presentationCurrentLossHnR;
+    presentationCurrentLossHnR;
 
     public float PresentationCurrentRawLegacyRetention01 =>
-        presentationCurrentRawLegacyRetention01;
+    presentationCurrentRawLegacyRetention01;
 
     public float PresentationCurrentAppliedRetention01 =>
-        presentationCurrentAppliedRetention01;
-
+    presentationCurrentAppliedRetention01;
 
     public void CommitDeferredCanonicalGeometryUpdate()
     {
         // Contact callbacks only request an update. FixedUpdate prepares the
         // standby mesh and swaps it during the next Upper-Solid OFF interval.
         if (!Application.isPlaying ||
-            !envelopeBuilt ||
-            !latestEnvelopeGeometryCached)
+        !envelopeBuilt ||
+        !latestEnvelopeGeometryCached)
         {
             return;
         }
@@ -4104,26 +4741,26 @@ private bool TryEvaluateSplineSurfacePhysics(
     private bool TryBuildEnvelopeIfReady()
     {
         if (!armed)
-            return false;
+        return false;
 
         if (envelopeBuilt)
-            return true;
+        return true;
 
         if (!ReferencesValid())
-            return false;
+        return false;
 
         if (!slopeCore.BallVisualHasActiveSlopeFrame)
-            return false;
+        return false;
 
         if (!slopeCore.BallVisualIncidentReady)
-            return false;
+        return false;
 
         // Exact Target must still be ahead of the current Spline progress.
         if (!(slopeCore.slopeProgressErrorPercent < 0f))
-            return false;
+        return false;
 
         if (!slopeCore.TryGetBallVisualTargetProgressCenterPhysics(
-                out _))
+        out _))
         {
             return false;
         }
@@ -4135,7 +4772,6 @@ private bool TryEvaluateSplineSurfacePhysics(
 
 }
 
-
 /// <summary>
 /// BallVisualEqualizer側のOnCollisionEnterで
 ///
@@ -4145,11 +4781,10 @@ private bool TryEvaluateSplineSurfacePhysics(
 ///
 /// 力は一切加えません。
 /// </summary>
-public sealed class BallVisualEnvelopeSurfaceMarker
-    : MonoBehaviour
+internal sealed class BallVisualEnvelopeSurfaceMarker
+: MonoBehaviour
 {
 
-   /* */
-
+    /* */
 
 }

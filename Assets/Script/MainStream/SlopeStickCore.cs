@@ -57,6 +57,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Tooltip("ボタン/API操作時の固定旋回角度です。")]
     [Range(0f, 180f)] [SerializeField] float turnAngle = 45f;
 
+
     [Header("Spline Support")]
     [Min(.01f)] [SerializeField] float probeDistance = .85f;
     [Range(1f, 89f)] [SerializeField] float maxSlopeAngle = 75f;
@@ -679,8 +680,17 @@ public sealed class SlopeStickCore : MonoBehaviour
             yield break;
         }
 
+        if (mainGameManager.initRotation == Vector3.zero)
+        {
+            mainGameManager.initRotation = rb.rotation.eulerAngles;
+        }
+        else
+        {
+            rb.rotation = Quaternion.Euler(mainGameManager.initRotation);
+        }
         Vector3 restart =
             startSlab.transform.position;
+        direction = NormalizeFlat(Vector3.forward, direction);
 
         rb.position =
             new Vector3(

@@ -17,7 +17,7 @@ public class GettingTraffic_Corn : MonoBehaviour
         PhysicsMul = GameObject.Find("__GeneratedPhysics");
         RendererMul = GameObject.Find("__GeneratedVisualPlayer");
        // GameObject.Find("StairwayUserbility/Bounus").transform.GetComponent<TextMeshUGUI>();
-        StartCoroutine(delayStart());
+        //StartCoroutine(delayStart());
     }
 
     // Update is called once per frame
@@ -26,13 +26,7 @@ public class GettingTraffic_Corn : MonoBehaviour
         
     }
 
-    IEnumerator delayStart()
-    {
-        yield return new WaitForSeconds(0.8f);
-      //  mainGameManger = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
-        Debug.Log("");
-
-    }
+    
     
     void OnTriggerEnter(Collider other)
     {

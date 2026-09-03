@@ -285,20 +285,48 @@ MonoBehaviour:
   ballVisualEqualizerCollider: {fileID: 64372317}
   negativeEnvelope: {fileID: 1206713372}
   waveTimingMode: 1
-  spatialWavesPerStair: 6
-  spatialCarrierHeightFractionOfEnvelope: 0.22
+  spatialWavesPerStair: 3
+  spatialCarrierHeightFractionOfEnvelope: 0.8
+  spatialMomentumBiasEnabled: 1
+  spatialMomentumBiasStartNormalSpeed: 0.75
+  spatialMomentumBiasFullNormalSpeed: 4
+  spatialMomentumMinimumCarrierGain: 0.35
   spatialWaveAccelerationBudget: 1800
   spatialWaveJerkBudget: 12000
   spatialWaveFeedForward: 1
+  spatialReferenceTangentSpeed: 16
+  maximumSpatialSpeedRatio: 1.5
+  maximumSpatialJerkScale: 2.5
+  includeSpatialProgressAccelerationFeedForward: 1
+  maximumSpatialDomainAccelerationRate: 80
   spatialCatchUpSpeedHeadroom01: 0.75
   spatialMaximumCatchUpAcceleration: 180
   spatialGoalVelocityAcceleration: 160
+  enableStrongInitialLogicalLaunch: 1
+  initialLogicalLaunchNormalSpeedMultiplier: 1.2
+  maximumSpeedAwareLaunchNormalSpeedMultiplier: 1.4
+  launchBoostReferenceTangentSpeed: 16
+  launchBoostFullTangentSpeed: 24
+  maximumSourceNormalSpeedForLaunchBoost: 8
+  maximumBoostedLogicalLaunchNormalSpeed: 8
+  suspendLogicalEqualizerDuringTurnHandoff: 1
+  resetRideSupportAfterTurnHandoff: 1
+  logTurnHandoffCoordination: 1
   rideSpringStrength: 420
   rideSpringDamper: 18
   gravityCompensation: 1
   maximumRideAcceleration: 450
   maximumRideJerk: 3000
   rideEquilibrium01: 0.5
+  enableLogicalPhysicalHandoff: 1
+  authorityHandoffBandR: 1
+  authorityHandoffMaxJerk: 900
+  physicalLowerMeasurementOutgoingSpeed: 0.05
+  physicalLowerMinimumDescendingSpeed: 0.25
+  hardReleaseNormalForceBelowVirtualLower: 1
+  supportKinematicsMaximumCenterJumpR: 2.5
+  supportKinematicsMaximumMeasuredSpeed: 80
+  supportKinematicsMaximumMeasuredAcceleration: 600
   goalVelocityAcceleration: 80
   catchUpPositionTime: 0.25
   maximumCatchUpAcceleration: 90
@@ -311,6 +339,12 @@ MonoBehaviour:
   minimumImpactEnergyRetention01: 0.05
   upperPeakRearmHeight01: 0.35
   impactMeasurementReleaseHeight01: 0.85
+  applyPhysicalLowerImpactEnergyLoss: 1
+  minimumPhysicalLowerEnergyRetention01: 0.05
+  physicalLowerEnergyResolveMaxFixedSteps: 6
+  enableTerminalSpatialTransportAssist: 1
+  terminalSpatialTransportAssistStartProgress01: 0.8
+  terminalSpatialTransportAssistMultiplier: 1.5
   synchronized: 1
   phase: 0
   waveCycleIndex: 0
@@ -321,6 +355,8 @@ MonoBehaviour:
   rideActualHeight: 0
   ridePositionError: 0
   rideRelativeNormalVelocity: 0
+  rideSupportNormalVelocity: 0
+  rideSupportNormalAcceleration: 0
   springAcceleration: 0
   damperAcceleration: 0
   gravityCompensationAcceleration: 0
@@ -330,15 +366,65 @@ MonoBehaviour:
   equalizerTangentSpeed: 0
   requiredCatchUpSpeed: 0
   catchUpAccelerationCommand: 0
+  spatialRawDomainProgress01: 0
   spatialDomainProgress01: 0
+  spatialDomainAdvanceRate01PerSecond: 0
+  spatialDomainAccelerationRate01PerSecond2: 0
+  spatialSpeedRatio: 1
+  spatialAccelerationBudgetScale: 1
+  spatialJerkBudgetScale: 1
+  spatialFeedForwardVelocity: 0
+  spatialFeedForwardAcceleration: 0
+  terminalSpatialTransportAssist01: 0
+  spatialMonotonicHoldActive: 0
+  spatialMonotonicTriggerPulseCount: 0
   spatialWavePhase01: 0
   spatialReferencePeriodSeconds: 0
   spatialCarrierHeightMeters: 0
   spatialCarrierFeasibility01: 1
+  spatialBallVisualRelativeNormalSpeed: 0
+  spatialMomentumBias01: 0
+  spatialMomentumCarrierGain: 1
+  spatialCarrierHeightBeforeMomentumBias: 0
   spatialSubjectTimeToGo: 0
   spatialRequiredArrivalSpeed: 0
   spatialArrivalFeasibility01: 1
   upperPeakArmed: 1
+  normalAuthorityZone: 0
+  normalLogicalAuthority01: 1
+  normalTargetAccelerationBeforeAuthority: 0
+  normalTargetAccelerationAfterAuthority: 0
+  normalActiveJerkLimit: 0
+  authorityHandoffBandMeters: 0
+  physicalUpperSeenSinceLastLower: 0
+  physicalLowerContactActive: 0
+  physicalLowerContactCount: 0
+  rejectedAscendingStairContactCount: 0
+  lastPhysicalLowerColliderName: None
+  rideSupportFrameContinuous: 1
+  rideSupportFrameResetCount: 0
+  rideSupportLastCenterJumpMeters: 0
+  rideSupportLastMeasuredCenterSpeed: 0
+  lastPhysicalLowerIncomingNormalSpeed: 0
+  lastPhysicalLowerOutgoingNormalSpeed: 0
+  lastPhysicalLowerEnergyRetention01: 1
+  physicalLowerEnergyResolveFrameCount: 0
+  physicalLowerBestObservedOutgoingNormalSpeed: 0
+  physicalLowerEnergyResolveReason: None
+  sourceCanonicalNormalSpeed: 0
+  logicalLaunchNormalSpeed: 0
+  logicalLaunchEnergyJoule: 0
+  logicalLaunchAppliedMultiplier: 1
+  logicalLaunchReferenceTangentSpeed: 0
+  descendingLowerDecayActive: 0
+  descendingLowerBoundaryNear01: 0
+  descendingLowerHeightNear01: 0
+  descendingLowerTimeNear01: 0
+  descendingLowerTimeToBoundarySeconds: 0
+  descendingLowerDamperRatio01: 1
+  descendingLowerRestoringBrakeRatio01: 1
+  effectiveRideSpringDamper: 0
+  previousDescendingLowerDecayActive: 0
   positionErrorToBallVisual: 0
   velocityErrorToBallVisual: 0
   currentKineticEnergy: 0
@@ -373,7 +459,7 @@ SphereCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
   m_ProvidesContacts: 0
-  m_Enabled: 0
+  m_Enabled: 1
   serializedVersion: 3
   m_Radius: 0.5
   m_Center: {x: 0, y: 0, z: 0}
@@ -448,7 +534,7 @@ Rigidbody:
     serializedVersion: 2
     m_Bits: 0
   m_ImplicitCom: 1
-  m_ImplicitTensor: 1
+  m_ImplicitTensor: 0
   m_UseGravity: 1
   m_IsKinematic: 0
   m_Interpolate: 0
@@ -840,9 +926,7 @@ MonoBehaviour:
   PreviewIconRoot: {fileID: 0}
   CurrentPointToPlane: 0
   CurrentCoin: 0
-  lastTouch: 0
-  OpenChunkStage: 0
-  LimitTouchingphase: 8
+  initRotation: {x: 0, y: 0, z: 0}
 --- !u!114 &245788445
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4824,6 +4908,20 @@ MonoBehaviour:
     m_RotationOrder: 4
   minimumPresentationCeilingR: 0.05
   waveTimeDecayInfluence: 0.35
+  useDescendingLowerBoundaryDecayPreservation: 1
+  minimumDescendingLowerDamperRatio01: 0.12
+  minimumDescendingLowerRestoringBrakeRatio01: 0.2
+  useTimeToVirtualLowerDecayLead: 1
+  descendingLowerTimeLeadSeconds: 0.1
+  useEqualizerProjectionContinuity: 1
+  equalizerProjectionContinuityWindowMultiplier: 2.5
+  minimumEqualizerProjectionContinuityWindow01: 0.02
+  suspendProjectionDuringTurnHandoff: 1
+  resetProjectionContinuityAfterTurnHandoff: 1
+  logTurnHandoffCoordination: 1
+  usePhysicalLowerImpactEnergyLoss: 1
+  physicalLowerImpactEnergyInfluence: 1
+  minimumPhysicalLowerImpactRetention01: 0.05
   hybridUpperCaptureDistanceR: 0.75
   hybridLowerCandidateDistanceR: 0.3
   hybridUpperApproachSpeedRatio: 0.03
@@ -4836,6 +4934,10 @@ MonoBehaviour:
   canonicalReferenceHeight: 0
   sourceEnergyAxisVisual: {x: 0, y: 1, z: 0}
   canonicalEnergyRatio: 1
+  physicalLowerImpactEnergySampleCount: 0
+  lastPhysicalLowerRawRetention01: 1
+  lastPhysicalLowerAppliedRetention01: 1
+  lastPhysicalLowerEnergyReason: None
   canonicalNormalAcceleration: 0
   equalizerLaunchSpeed: 0
   equalizerVerticalLaunchSpeed: 0
@@ -4860,6 +4962,11 @@ MonoBehaviour:
   equalizerUnderNormalVisual: {x: 0, y: 1, z: 0}
   equalizerUnderClearanceMeters: 0
   equalizerUnderProjectionValid: 0
+  descendingLowerDecayProfileActive: 0
+  descendingLowerDecayBandMeters: 0
+  descendingLowerNear01: 0
+  descendingLowerDamperRatio01: 1
+  descendingLowerRestoringBrakeRatio01: 1
   arrivalTerminalActive: 0
   arrivalTerminalTimeToGo: 0
   arrivalTerminalBlend01: 0

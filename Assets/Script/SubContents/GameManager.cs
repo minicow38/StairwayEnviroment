@@ -21,6 +21,8 @@ public class MainGameManager : MonoBehaviour
     public static int Coin = 0;
     public static bool OnDead = false;
     public static bool OpenChunkStage = false;
+    public Vector3 initRotation = Vector3.zero;
+
 
     public static int LimitTouchingphase = 4;
     // Start is called once before the first execution of Update after the MonoBehaviour is created
