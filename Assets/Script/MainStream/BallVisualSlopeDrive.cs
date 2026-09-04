@@ -25,6 +25,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
         Settled
     }
 
+    public int regionTurn = 0;
+
     [Header("References")]
     [SerializeField] private SlopeStickCore slopeCore;
 
@@ -2234,6 +2236,10 @@ private static bool IsValidPositiveTime(float value)
 
     private void CompleteTerminalRejoin(bool forced)
     {
+        if (regionTurn == 1)
+        {
+            Debug.Log("");
+        }
         if (motionPhase != MotionPhase.TerminalRejoin)
             return;
 
@@ -2245,7 +2251,7 @@ private static bool IsValidPositiveTime(float value)
 
         // この一箇所だけがMissile後の完全同期点。
         ballBody.position = subjectPosition;
-        ballBody.velocity = subjectVelocity;
+       //ballBody.velocity = subjectVelocity;
         ballBody.rotation = respondSubject.MappedRotation;
         ballBody.angularVelocity = respondSubject.MapDirection(inSubjectBody.angularVelocity);
         ballBody.useGravity = false;
@@ -2256,8 +2262,8 @@ private static bool IsValidPositiveTime(float value)
         // Equalizerは次のStage Turnより前に必ずBallVisualへ戻す。
         // Turn中に独立したStable-N Hopperを持ち越さないことで、
         // CorrespondSubjectの座標写像とEqualizer物理を競合させない。
-        if (BallVisualEqualizer != null)
-            BallVisualEqualizer.ResumeSynchronization();
+       /* if (BallVisualEqualizer != null)
+            BallVisualEqualizer.ResumeSynchronization();*/
 
         terminalAccelerationState = Vector3.zero;
         previousTerminalAccelerationState = Vector3.zero;
@@ -2265,7 +2271,7 @@ private static bool IsValidPositiveTime(float value)
 
         motionPhase = MotionPhase.Settled;
         visualPhase = VisualPhase.SettledSync;
-
+        regionTurn++;
         if (enableDebugLog)
         {
             Debug.Log(

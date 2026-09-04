@@ -703,6 +703,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     private void Start()
     {
+        
         Debug.Log(
         "[EQUALIZER BUILD] Spatial24-TurnSafeCoordination-20260902-E",
         this);
@@ -726,7 +727,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private void FixedUpdate()
     {
         if (!ballVisual ||
-        !ballVisualEqualizer)
+            !ballVisualEqualizer)
         {
             return;
         }
@@ -740,20 +741,20 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             return;
         }
 
-        // Turn handoff中は、旋回前/途中のSpline frameを使った論理力を加えない。
-        // Rigidbody velocityは触らず、そのまま慣性・PhysXへ渡す。
+        // Turn handoff中は、
+        // 旋回前/途中のSpline frameを使った論理力を加えない。
         if (turnHandoffCoordinationActive &&
-        suspendLogicalEqualizerDuringTurnHandoff)
+            suspendLogicalEqualizerDuringTurnHandoff)
         {
             ResolvePendingUpperImpactEnergyLoss();
             ResolvePendingPhysicalLowerImpactEnergyLoss();
 
-            rideAccelerationState = Vector3.zero;
+           // rideAccelerationState = Vector3.zero;
             transportAccelerationState = Vector3.zero;
             goalPlanarVelocityState = Vector3.zero;
 
             if (resetRideSupportAfterTurnHandoff)
-            ResetRideSupportKinematics();
+                ResetRideSupportKinematics();
 
             UpdateObserver();
             return;
@@ -761,14 +762,25 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         UpdateWaveTimingAuthority();
 
-        // Upper impact remains a diagnostic in Hybrid Authority mode.
         ResolvePendingUpperImpactEnergyLoss();
-
-        // Real StairWay impact is the physical dissipation authority.
         ResolvePendingPhysicalLowerImpactEnergyLoss();
 
+        // ここで1回だけ
         UpdateFloatingRideSpring();
+
+        // ★ Support Frame Resetが起きたFixedUpdateを隔離
+        if (!rideSupportFrameContinuous)
+        {
+            rideAccelerationState = Vector3.zero;
+            transportAccelerationState = Vector3.zero;
+
+            UpdateObserver();
+            return;
+        }
+
+        // Supportが正常なときだけTransportを実行
         ApplyGoalVelocityCatchUp();
+
         UpdateObserver();
     }
 
@@ -1544,6 +1556,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         subjectVelocity,
         out Vector3 supportVelocity,
         out Vector3 supportAcceleration);
+        
+        if (!rideSupportFrameContinuous)
+        {
+            return;
+        }
 
         float supportNormalVelocity =
         Vector3.Dot(
@@ -1946,7 +1963,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         // Boundary LayerではLogical force自体は維持する。
         // 減衰/復元ブレーキの弱化はDescendingLowerDecayProfileが担当する。
-        if (signedHeightFromVirtualLower < authorityHandoffBandMeters)
+        /*if (signedHeightFromVirtualLower < authorityHandoffBandMeters)
         {
             logicalAuthority01 = 1f;
             activeJerkLimit = Mathf.Lerp(
@@ -1957,7 +1974,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             authorityHandoffBandMeters));
             zone = NormalAuthorityZone.HandoffToPhysics;
             return;
-        }
+        }*/
+        
 
         logicalAuthority01 = 1f;
         activeJerkLimit = Mathf.Max(1f, logicalJerkLimit);
@@ -2718,6 +2736,14 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         EqualizerMass,
         ballVisualEqualizer.worldCenterOfMass,
         ForceMode.Force);
+        
+        Debug.Log(
+            $"[EQ FORCE SPLIT] " +
+            $"hN={rideActualHeight:F4} " +
+            $"normal={normal:F4} " +
+            $"transportA={transportAccelerationState:F4} " +
+            $"transportY={transportAccelerationState.y:F4} " +
+            $"velocity={ballVisualEqualizer.velocity:F4}");
 
         catchUpAccelerationCommand =
         Vector3.Dot(
