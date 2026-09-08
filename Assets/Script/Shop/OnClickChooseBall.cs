@@ -8,10 +8,9 @@ public class OnClickChooseBall : MonoBehaviour
 {
     // Start is called before the first frame update
     public int CommodityNumber = 0;
-      
-  
     public static readonly string CallForCurrrentCoin = "CallForCurrrentCoin";
-    public static  bool[] itemList = new bool[30];
+    public static readonly string itemList = "itemList";
+    
     void Start()
     {
         
@@ -25,28 +24,53 @@ public class OnClickChooseBall : MonoBehaviour
 
     public void OnClick()
     {
-        if (!ScrollViewState.IsDragging)
+        if (ScrollViewState.IsDragging)
+            return;
+
+        if (AndroidOneOnly.pharseCoin < 100)
+            return;
+
+        Match match = Regex.Match(
+            transform.name,
+            @"^(BlockInBall)(?:\s*\((\d+)\))?$"
+        );
+
+        
+
+        if (match.Groups.Count==3)
         {
-            if (AndroidOneOnly.pharseCoin > 100)
+            // BlockInBall (数字)
+            int commodityNumber = int.Parse(match.Groups[2].Value);
+
+            AndroidOneOnly.LinenapItemList[commodityNumber] = 1;
+
+            AndroidOneOnly.pharseCoin -= 100;
+
+            string stringPlus = "";
+
+            for (int i = 0; i < AndroidOneOnly.LinenapItemList.Count; i++)
             {
-                Match match = Regex.Match(
-                    transform.name,
-                    @"BlockInBall\s*\((\d+)\)"
-                );
-                if (match.Success)
-                {
-                    int commodityNumber = int.Parse(match.Groups[1].Value);
-                    PlayerPrefs.SetInt(CallForCurrrentCoin,AndroidOneOnly.pharseCoin);
-                    //PlayerPrefs.SetInt(itemList[commodityNumber],true);
-
-                   // AndroidOneOnly.itemList[commodityNumber] = true;
-
-                }
-                AndroidOneOnly.pharseCoin = AndroidOneOnly.pharseCoin - 100;
-                SpherePreviewManager.ConvertedCoin = true;
-               // AndroidOneOnly.itemList[CommodityNumber] = true;
+                stringPlus += AndroidOneOnly.LinenapItemList[i].ToString();
             }
+
+            PlayerPrefs.SetInt(
+                CallForCurrrentCoin,
+                AndroidOneOnly.pharseCoin
+            );
+
+            PlayerPrefs.SetString(
+                itemList,
+                stringPlus
+            );
+
+            PlayerPrefs.Save();
+
+            SpherePreviewManager.ConvertedCoin = true;
         }
-      
+        else if(match.Groups.Count==1)
+        {
+            // 名前がちょうど "BlockInBall"
+            Debug.Log("BlockInBall 本体です");
+        }
     }
 }

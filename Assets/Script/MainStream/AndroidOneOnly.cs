@@ -17,24 +17,38 @@ public class AndroidOneOnly : MonoBehaviour
     public static int pharseCoin = 0;
     public static int currentScore = 0;
     public static int bestScore = 0;
-    public static string LinenapItemList;
+    public static string MiddleItemList;
+    public static List<int> LinenapItemList;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     static void InitOncePerLaunch()
     {
-      
-       
+
+        LinenapItemList = new List<int>();
         Debug.Log("[InitOncePerLaunch]");
         currentScore = PlayerPrefs.GetInt(CallForCurrrentScore);
         bestScore=PlayerPrefs.GetInt(CallForBestScore);
         pharseCoin = PlayerPrefs.GetInt(CallForCurrrentCoin);
-        LinenapItemList = PlayerPrefs.GetString(itemList);
-        if (LinenapItemList == "")
+        MiddleItemList = PlayerPrefs.GetString(itemList);
+        if (MiddleItemList == "")
         {
             for (int i = 0; i < 30; i++)
             {
-                LinenapItemList += 0;
+                int num = 0;
+                LinenapItemList.Add(0);
+                
             }
+
+            Debug.Log("");
+        }
+        else
+        {
+            for (int i = 0; i < MiddleItemList.Length; i++)
+            {
+                LinenapItemList.Add(MiddleItemList[i] - '0');
+            }
+
+            Debug.Log("");
         }
 
        
@@ -65,7 +79,12 @@ public class AndroidOneOnly : MonoBehaviour
             PlayerPrefs.SetInt(CallForBestScore, mainDrive.PointToPlane);
         }
 
-       // PlayerPrefs.SetString(itemList, LinenapItemList);
+        string stringPlus = "";
+        for (int i = 0; i < LinenapItemList.Count; i++)
+        {
+            stringPlus += LinenapItemList[i].ToString();
+        }
+        PlayerPrefs.SetString(itemList,"");
 
         PlayerPrefs.Save();
 
