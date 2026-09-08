@@ -21,7 +21,6 @@ public class OnClickChooseBall : MonoBehaviour
     {
         
     }
-
     public void OnClick()
     {
         if (ScrollViewState.IsDragging)
@@ -35,9 +34,10 @@ public class OnClickChooseBall : MonoBehaviour
             @"^(BlockInBall)(?:\s*\((\d+)\))?$"
         );
 
-        
+        if (!match.Success)
+            return;
 
-        if (match.Groups.Count==3)
+        if (match.Groups[2].Success)
         {
             // BlockInBall (数字)
             int commodityNumber = int.Parse(match.Groups[2].Value);
@@ -67,10 +67,33 @@ public class OnClickChooseBall : MonoBehaviour
 
             SpherePreviewManager.ConvertedCoin = true;
         }
-        else if(match.Groups.Count==1)
+        else
         {
             // 名前がちょうど "BlockInBall"
-            Debug.Log("BlockInBall 本体です");
+            AndroidOneOnly.LinenapItemList[0] = 1;
+
+            AndroidOneOnly.pharseCoin -= 100;
+
+            string stringPlus = "";
+
+            for (int i = 0; i < AndroidOneOnly.LinenapItemList.Count; i++)
+            {
+                stringPlus += AndroidOneOnly.LinenapItemList[i].ToString();
+            }
+
+            PlayerPrefs.SetInt(
+                CallForCurrrentCoin,
+                AndroidOneOnly.pharseCoin
+            );
+
+            PlayerPrefs.SetString(
+                itemList,
+                stringPlus
+            );
+
+            PlayerPrefs.Save();
+            SpherePreviewManager.ConvertedCoin = true;
         }
     }
+   
 }

@@ -84,7 +84,7 @@ public class AndroidOneOnly : MonoBehaviour
         {
             stringPlus += LinenapItemList[i].ToString();
         }
-        PlayerPrefs.SetString(itemList,"");
+        PlayerPrefs.SetString(itemList,stringPlus);
 
         PlayerPrefs.Save();
 
