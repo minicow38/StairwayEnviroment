@@ -831,6 +831,7 @@ public sealed class SlopeStick3D4 : MonoBehaviour
 
     IEnumerator DelayStart()
     {
+
         yield return new WaitForSeconds(.8f);
         Time.timeScale = 0.75f;
 

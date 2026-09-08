@@ -21,7 +21,8 @@ public class MainGameManager : MonoBehaviour
     public static int Coin = 0;
     public static bool OnDead = false;
     public static bool OpenChunkStage = false;
-    public Vector3 initRotation = Vector3.zero;
+    public bool initRotation = false;
+    public Vector3 VisualRoatationPlayer;
 
 
     public static int LimitTouchingphase = 4;

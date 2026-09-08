@@ -7,6 +7,7 @@ public class AndroidOneOnly : MonoBehaviour
     public static readonly string isFreshInstallLaunch = "isFreshInstallLaunch";
     public static readonly string CallForCurrrentScore = "CallForCurrrentScore";
     public static readonly string CallForCurrrentCoin = "CallForCurrrentCoin";
+    public static readonly string itemList = "itemList";
 
     public static readonly string CallForBestScore = "CallForBestScore";
 
@@ -16,20 +17,27 @@ public class AndroidOneOnly : MonoBehaviour
     public static int pharseCoin = 0;
     public static int currentScore = 0;
     public static int bestScore = 0;
+    public static string LinenapItemList;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     static void InitOncePerLaunch()
     {
+      
+       
         Debug.Log("[InitOncePerLaunch]");
-
         currentScore = PlayerPrefs.GetInt(CallForCurrrentScore);
         bestScore=PlayerPrefs.GetInt(CallForBestScore);
         pharseCoin = PlayerPrefs.GetInt(CallForCurrrentCoin);
-        
-
-        if (PlayerPrefs.GetInt(isFreshInstallLaunch) == 0)
+        LinenapItemList = PlayerPrefs.GetString(itemList);
+        if (LinenapItemList == "")
         {
+            for (int i = 0; i < 30; i++)
+            {
+                LinenapItemList += 0;
+            }
         }
+
+       
     }
 
     void Start()
@@ -56,6 +64,8 @@ public class AndroidOneOnly : MonoBehaviour
         {
             PlayerPrefs.SetInt(CallForBestScore, mainDrive.PointToPlane);
         }
+
+       // PlayerPrefs.SetString(itemList, LinenapItemList);
 
         PlayerPrefs.Save();
 

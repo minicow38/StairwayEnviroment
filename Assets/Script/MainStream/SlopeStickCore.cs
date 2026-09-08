@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections;
+using System.Text.RegularExpressions;
 using UnityEditor.Rendering;
 
 [DisallowMultipleComponent]
@@ -34,6 +35,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     [SerializeField] Vector3 travelDirection = Vector3.forward;
     
     [Range(0f, 100f)] [SerializeField] public float targetSlopeProgressPercent = 60f;
+
+    public GameObject RecoverRotateVisualInPivot;
 
     [Header("Coordinate Mapping")]
     [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")]
@@ -640,6 +643,7 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     void Start()
     {
+        RecoverRotateVisualInPivot = GameObject.Find("VisualPlayerRoot");
         mainGameManager = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
         if (!sub)
             sub = GameObject.Find("InSubject");
@@ -680,14 +684,13 @@ public sealed class SlopeStickCore : MonoBehaviour
             yield break;
         }
 
-        if (mainGameManager.initRotation == Vector3.zero)
+        if (mainGameManager.initRotation)
         {
-            mainGameManager.initRotation = rb.rotation.eulerAngles;
+            visualRotationPivot.transform.rotation = Quaternion.Euler(new Vector3(0,0,0));
+            travelDirection = new Vector3(0, 0, 1);
+            mainGameManager.initRotation = true;
         }
-        else
-        {
-            rb.rotation = Quaternion.Euler(mainGameManager.initRotation);
-        }
+        
         Vector3 restart =
             startSlab.transform.position;
         direction = NormalizeFlat(Vector3.forward, direction);
@@ -734,7 +737,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         currentGuide = guide;
         currentGuideValid = true;
 
-        bool grounded = HasGroundSupport();
+        (bool grounded,RaycastHit hit)= HasGroundSupport();
 
         if (grounded)
             graceTimer = supportGraceSeconds;
@@ -758,7 +761,41 @@ public sealed class SlopeStickCore : MonoBehaviour
         // Slopeへの切替そのものもSpline判定。
         if (guide.isSlope && !wasSlope)
         {
+            
            // mainGameManager.lastTouch=
+           
+           
+           Match matched = Regex.Match(hit.transform.name, @"StairWay(.*)_Physics");
+           
+           if (matched.Success && visualRotationPivot.transform.rotation != Quaternion.identity)
+           {
+               var array=matched.Groups[1].Value.Split("_");
+               int shiftNum = int.Parse(array[0]);
+               string topStairway=
+                   "StairWay" + (shiftNum -1) + "_"+array[1]+ "_Render";
+               string middleStairway=
+                   "ArcSlab" + (shiftNum) + "_"+array[1]+ "_Render";
+               string SlipOffStairway=
+                   "StairWay" + (shiftNum) + "_"+array[1]+ "_Render";
+               string SlipOffPlane=
+                   "ArcSlab" + (shiftNum + 1) + "_"+array[1]+ "_Render";
+
+               
+               var foldInBefore=GameObject.Find(topStairway);
+               var foldInAfter=GameObject.Find(middleStairway);
+               var stiarwayEntrance=GameObject.Find(middleStairway);
+               var GoDownStairway = GameObject.Find(SlipOffStairway);
+               var GoDownPlane = GameObject.Find(SlipOffPlane);
+
+               foldInBefore.transform.GetComponent<MeshCollider>().enabled = false;
+               foldInAfter.transform.GetComponent<MeshCollider>().enabled = false;
+               
+               GoDownStairway.transform.GetComponent<MeshCollider>().enabled = true;
+               GoDownPlane.transform.GetComponent<MeshCollider>().enabled = true;
+               
+               Debug.Log("");
+               // Destroy(transform.gameObject);
+           }
             driveState = 0f;
             TransportToSpline(guide);
         }
@@ -1069,7 +1106,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     // Collider = Support existence only
     // ================================================================
 
-    bool HasGroundSupport()
+    (bool ,RaycastHit)HasGroundSupport()
     {
         Vector3 origin = rb.worldCenterOfMass + Vector3.up * .05f;
 
@@ -1081,9 +1118,9 @@ public sealed class SlopeStickCore : MonoBehaviour
                 probeDistance,
                 groundMask,
                 QueryTriggerInteraction.Ignore))
-            return false;
+            return (false,hit);
 
-        return Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle;
+        return (Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle,hit);
     }
 
     // ================================================================

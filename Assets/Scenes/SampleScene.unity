@@ -309,9 +309,15 @@ MonoBehaviour:
   launchBoostFullTangentSpeed: 24
   maximumSourceNormalSpeedForLaunchBoost: 8
   maximumBoostedLogicalLaunchNormalSpeed: 8
-  suspendLogicalEqualizerDuringTurnHandoff: 1
-  resetRideSupportAfterTurnHandoff: 1
-  logTurnHandoffCoordination: 1
+  useDampedFirstAscent: 1
+  firstAscentInitialVelocityRatio: 0.7
+  firstAscentRampLambda: 32
+  firstAscentMaximumDuration: 0.35
+  firstAscentExtraDamperRatio: 0.5
+  firstAscentMaximumAcceleration: 120
+  firstAscentMaximumJerk: 700
+  firstAscentSolidRecoveryStart01: 0.65
+  firstAscentSolidRecoveryFull01: 0.85
   rideSpringStrength: 420
   rideSpringDamper: 18
   gravityCompensation: 1
@@ -345,8 +351,17 @@ MonoBehaviour:
   enableTerminalSpatialTransportAssist: 1
   terminalSpatialTransportAssistStartProgress01: 0.8
   terminalSpatialTransportAssistMultiplier: 1.5
+  useEmergencyHermiteReacquire: 1
+  resumeSynchronizationSnapDistance: 0.05
+  emergencyReacquireMinimumDuration: 0.18
+  emergencyReacquireMaximumDuration: 0.75
+  emergencyReacquirePreferredRelativeSpeed: 24
   synchronized: 1
   phase: 0
+  emergencyVisualRecoveryActive: 0
+  emergencyVisualRecoveryDuration: 0
+  emergencyVisualRecoveryProgress01: 0
+  emergencyVisualRecoveryInitialDistance: 0
   waveCycleIndex: 0
   current4RHnMeters: 0
   current4RHnR: 0
@@ -416,6 +431,13 @@ MonoBehaviour:
   logicalLaunchEnergyJoule: 0
   logicalLaunchAppliedMultiplier: 1
   logicalLaunchReferenceTangentSpeed: 0
+  firstAscentDampingActive: 0
+  firstAscentAuthority01: 0
+  firstAscentDamperMultiplier: 1
+  firstAscentUpperProgress01: 0
+  firstAscentSolidRecovery01: 0
+  firstAscentActualInitialNormalSpeed: 0
+  firstAscentStoredEnergyJoule: 0
   descendingLowerDecayActive: 0
   descendingLowerBoundaryNear01: 0
   descendingLowerHeightNear01: 0
@@ -483,7 +505,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: dc09b2a2f6d5d4eb9bf22a08817fc96e, type: 2}
+  - {fileID: -876546973899608171, guid: b0405292dfe0661409b548a8d04a5f55, type: 3}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -926,7 +948,8 @@ MonoBehaviour:
   PreviewIconRoot: {fileID: 0}
   CurrentPointToPlane: 0
   CurrentCoin: 0
-  initRotation: {x: 0, y: 0, z: 0}
+  initRotation: 0
+  VisualRoatationPlayer: {x: 0, y: 0, z: 0}
 --- !u!114 &245788445
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1892,7 +1915,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 423131469}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -1974,11 +1997,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d99a3c00274420c4c9f57fc2708a4a3d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  regionTurn: 0
   slopeCore: {fileID: 1083418876}
   BallVisualEqualizer: {fileID: 64372316}
   respondSubject: {fileID: 572935013}
   preLimitTargetHeightRelativeToSubject: 0.45
+  limitFirstPopAfterTurn: 1
+  postTurnMaximumIncidentNormalSpeed: 2.4
+  postTurnMaximumRelativeUpSpeed: 0.5
+  normalizeEqualizerEnergyAfterTurn: 1
+  postTurnEqualizerNormalSpeedRatioToMaxGround: 0.33333334
+  postTurnFallbackMaxGroundSpeed: 24
+  postTurnDetectionMinimumAccumulatedAngleDeg: 20
   oscillationReferenceHeight: 0.45
   firstPopVelocitySquaredRatio: 0.01533
   minimumEnergyScaledPopHeight: 0.08
@@ -2008,6 +2037,17 @@ MonoBehaviour:
   terminalPositionTolerance: 0.05
   terminalVelocityTolerance: 0.2
   terminalStableFramesRequired: 2
+  enableTerminalFeasibilityRecovery: 1
+  maximumExtendedTerminalSeconds: 0.6
+  terminalRecoveryProbeStepSeconds: 0.04
+  terminalRecoveryAccelerationSafety01: 0.92
+  terminalRecoveryJerkTimeSafety01: 0.85
+  enableEmergencyVisualRejoin: 1
+  emergencyVisualMinimumDuration: 0.18
+  emergencyVisualMaximumDuration: 0.75
+  emergencyVisualPreferredCatchUpSpeed: 28
+  emergencyVisualPositionTolerance: 0.03
+  emergencyVisualVelocityTolerance: 0.3
   enableDebugLog: 1
   logEveryFixedFrames: 10
 --- !u!1 &434412093
@@ -2438,7 +2478,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 572935008}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -4173,7 +4213,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1083418861}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -4506,7 +4546,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 264172cbfccfe4aad9703e8ceefb4592, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
-  maxGroundSpeed: 16
+  maxGroundSpeed: 32
   GroundAcceleration: 35
   activeTimeScale: 0
   TargetAccelerationLimit: 120
@@ -4517,6 +4557,7 @@ MonoBehaviour:
     m_Bits: 1023
   travelDirection: {x: 0, y: 0, z: 1}
   targetSlopeProgressPercent: 30
+  RecoverRotateVisualInPivot: {fileID: 0}
   correspondSubject: {fileID: 572935013}
   physicsRoot: {fileID: 350604442}
   visualPlayerRoot: {fileID: 0}
@@ -4530,7 +4571,7 @@ MonoBehaviour:
   - 90
   - 90
   turnAngle: 45
-  probeDistance: 1.16
+  probeDistance: 20
   maxSlopeAngle: 75
   supportGraceSeconds: 0.16
   supportGraceMaxGuideDistance: 8
@@ -4820,7 +4861,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &1206713371
 Transform:
   m_ObjectHideFlags: 0
@@ -4843,7 +4884,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1206713370}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3dacad82e384b465ca80dc757af55f78, type: 3}
   m_Name: 
@@ -4917,9 +4958,6 @@ MonoBehaviour:
   useEqualizerProjectionContinuity: 1
   equalizerProjectionContinuityWindowMultiplier: 2.5
   minimumEqualizerProjectionContinuityWindow01: 0.02
-  suspendProjectionDuringTurnHandoff: 1
-  resetProjectionContinuityAfterTurnHandoff: 1
-  logTurnHandoffCoordination: 1
   usePhysicalLowerImpactEnergyLoss: 1
   physicalLowerImpactEnergyInfluence: 1
   minimumPhysicalLowerImpactRetention01: 0.05
@@ -5558,7 +5596,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1488933853}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1

@@ -8,15 +8,16 @@ public class GettingTraffic_Corn : MonoBehaviour
 {
     public GameObject PhysicsMul;
     public GameObject RendererMul;
+
+    public MainGameManager mainGameManager;
    // public TextMeshUGUI textMesh
     
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
-        PhysicsMul = GameObject.Find("__GeneratedPhysics");
-        RendererMul = GameObject.Find("__GeneratedVisualPlayer");
-       // GameObject.Find("StairwayUserbility/Bounus").transform.GetComponent<TextMeshUGUI>();
+        StartCoroutine(delayStart());
+        // GameObject.Find("StairwayUserbility/Bounus").transform.GetComponent<TextMeshUGUI>();
         //StartCoroutine(delayStart());
     }
 
@@ -24,6 +25,14 @@ public class GettingTraffic_Corn : MonoBehaviour
     void Update()
     {
         
+    }
+
+    IEnumerator delayStart()
+    {
+        yield return new WaitForSeconds(0.1f);
+        PhysicsMul = GameObject.Find("__GeneratedPhysics");
+        RendererMul = GameObject.Find("__GeneratedVisualPlayer");
+        mainGameManager = GameObject.Find("GameManager").GetComponent<MainGameManager>();
     }
 
     
@@ -55,6 +64,9 @@ public class GettingTraffic_Corn : MonoBehaviour
         {
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
+                mainGameManager.VisualRoatationPlayer = PhysicsMul.transform.rotation.eulerAngles;
+               // MainGameManager.VisualRoatationPlayer = PhysicsMul.transform.rotation.eulerAngles;
+
                 StartCoroutine(delayResume());
               
             }

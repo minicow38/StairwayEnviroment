@@ -11,6 +11,7 @@ using DG.Tweening;
 [RequireComponent(typeof(Rigidbody))]
 public sealed class CorrespondSubject : MonoBehaviour
 {
+    private bool initialChainLogged;
     const float Epsilon = 0.000001f;
   // public int CurrentPointToPlane = 0;
   public int PointToPlane;
@@ -179,7 +180,43 @@ public sealed class CorrespondSubject : MonoBehaviour
             return Vector3.zero;
         }
     }
+    private void DebugChainCheckpoint(string reason)
+    {
+        if (!inSubjectBody || !subjectBody)
+            return;
 
+        Vector3 mappedPos = MappedPosition;
+
+        Vector3 mappedVelocityDirect =
+            MapDirection(inSubjectBody.velocity);
+
+        float subjectPositionError =
+            Vector3.Distance(
+                subjectBody.position,
+                mappedPos);
+
+        Vector3 backToPhysics =
+            InverseMapPoint(mappedPos);
+
+        float roundTripError =
+            Vector3.Distance(
+                inSubjectBody.position,
+                backToPhysics);
+
+        Debug.Log(
+            $"[CHAIN MAP] " +
+            $"reason={reason} " +
+            $"time={Time.fixedTime:F3} " +
+            $"turn={PointToPlane} " +
+            $"inPos={inSubjectBody.position:F3} " +
+            $"mappedPos={mappedPos:F3} " +
+            $"subjectPos={subjectBody.position:F3} " +
+            $"subjectErr={subjectPositionError:F6} " +
+            $"roundTripErr={roundTripError:F6} " +
+            $"inVel={inSubjectBody.velocity:F3} " +
+            $"mappedVel={mappedVelocityDirect:F3}"
+        );
+    }
     public Vector3 MappedAngularVelocity =>
         hasVelocitySample
             ? mappedAngularVelocity
@@ -535,6 +572,12 @@ public sealed class CorrespondSubject : MonoBehaviour
 
         Vector3 mappedPosition = MappedPosition;
         Quaternion mappedRotation = MappedRotation;
+        
+        if (!initialChainLogged)
+        {
+            initialChainLogged = true;
+            DebugChainCheckpoint("Initial");
+        }
 
         UpdateMappedVelocities(
             mappedPosition,

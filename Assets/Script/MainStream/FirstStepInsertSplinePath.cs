@@ -104,7 +104,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     static readonly int[] InitialStartPattern =
     {
         -1, 0, -1, 0, -1, 0, -1, 0, -1, 0,
-        0, -1, 0, -1, 0, -1, 0
+        -1, 0, -1, 0, -1, 0, -1
     };
 
     List<int> startPattern =

@@ -12,6 +12,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         Incident,
         Missile,
         TerminalRejoin,
+        EmergencyRejoin,
         SettledSync
     }
 
@@ -22,10 +23,9 @@ public class BallVisualSlopeDrive : MonoBehaviour
         MissileAscent,
         MissileChase,
         TerminalRejoin,
+        EmergencyRejoin,
         Settled
     }
-
-    public int regionTurn = 0;
 
     [Header("References")]
     [SerializeField] private SlopeStickCore slopeCore;
@@ -38,6 +38,49 @@ public class BallVisualSlopeDrive : MonoBehaviour
     [Tooltip("1st POPのSubject相対Apex高さ[m]")]
     [Min(0f)]
     [SerializeField] private float preLimitTargetHeightRelativeToSubject = 0.45f;
+
+    [Header("Post Turn 1st POP Guard")]
+    [Tooltip(
+        "VisualPlayerRootの回転が完了した直後、最初のIncidentだけ" +
+        "POP計算用のv0 sin(theta)を制限する。通常階段には適用しない。")]
+    [SerializeField] private bool limitFirstPopAfterTurn = true;
+
+    [Tooltip(
+        "回転後1回だけ使用するPOP計算用Incident Normal Speed上限[m/s]。" +
+        "異常なv0 sin(theta)だけを安全Clampする。通常階段には適用しない。")]
+    [Min(0f)]
+    [SerializeField] private float postTurnMaximumIncidentNormalSpeed = 2.40f;
+
+    [Tooltip(
+        "回転後1回だけ使用するBallVisualのSubject相対Up速度上限[m/s]。" +
+        "回転後は通常の1.70m/s最低可視POPとDecorationを無効化し、" +
+        "この値を直接の上限として小さな自然な浮きだけ残す。")]
+    [Min(0f)]
+    [SerializeField] private float postTurnMaximumRelativeUpSpeed = 0.50f;
+
+    [Tooltip(
+        "回転後最初のIncidentだけ、Equalizerへ渡すIncident Normal Energyも" +
+        "現在のmaxGroundSpeedに比例した上限へ正規化する。通常Incidentには適用しない。")]
+    [SerializeField] private bool normalizeEqualizerEnergyAfterTurn = true;
+
+    [Tooltip(
+        "回転後Equalizer Normal速度上限 = maxGroundSpeed × この比率。" +
+        "既定値8/24=0.333333なので、maxGroundSpeed 24→8m/s、32→10.667m/s、64→21.333m/s。")]
+    [Range(0.01f, 1f)]
+    [SerializeField] private float postTurnEqualizerNormalSpeedRatioToMaxGround =
+        8f / 24f;
+
+    [Tooltip(
+        "maxGroundSpeedのREAD ONLY取得に失敗した場合だけ使用するFallback[m/s]。" +
+        "通常はBallVisualEqualizerSync経由で現在値を取得する。")]
+    [Min(1f)]
+    [SerializeField] private float postTurnFallbackMaxGroundSpeed = 24f;
+
+    [Tooltip(
+        "回転と判定するVisual Frameの累積角度[deg]。" +
+        "微小なMapDirection揺れではGuardをArmしない。")]
+    [Min(1f)]
+    [SerializeField] private float postTurnDetectionMinimumAccumulatedAngleDeg = 20f;
 
     [Header("BallVisual -> Equalizer Canonical Coupling")]
     [Tooltip(
@@ -160,6 +203,50 @@ public class BallVisualSlopeDrive : MonoBehaviour
     [Min(1)]
     [SerializeField] private int terminalStableFramesRequired = 2;
 
+    [Header("Terminal Recovery / Emergency Visual Rejoin")]
+
+    [Tooltip("Terminalの初期時間切れ後も、Acceleration/Jerk budget内で回収可能なら物理Terminalを延長します。")]
+    [SerializeField] private bool enableTerminalFeasibilityRecovery = true;
+
+    [Tooltip("通常terminalTimeBudgetに追加して許す物理Recovery時間[s]。ここまでで回収不能ならVisual Emergencyへ移行します。")]
+    [Min(0f)]
+    [SerializeField] private float maximumExtendedTerminalSeconds = 0.60f;
+
+    [Tooltip("回収可能性を評価する候補Time-To-Go刻み[s]。")]
+    [Range(0.01f, 0.10f)]
+    [SerializeField] private float terminalRecoveryProbeStepSeconds = 0.04f;
+
+    [Tooltip("maximumTerminalAccelerationの何割までをRecovery feasibleとして許すか。")]
+    [Range(0.5f, 1f)]
+    [SerializeField] private float terminalRecoveryAccelerationSafety01 = 0.92f;
+
+    [Tooltip("候補時間の何割以内にJerk制約で必要加速度へ到達できることを要求するか。")]
+    [Range(0.3f, 1f)]
+    [SerializeField] private float terminalRecoveryJerkTimeSafety01 = 0.85f;
+
+    [Tooltip("物理的に回収不能な場合、衝突を一時停止してHermite Visual Recoveryへ移行します。")]
+    [SerializeField] private bool enableEmergencyVisualRejoin = true;
+
+    [Tooltip("Emergency Hermiteの最短時間[s]。")]
+    [Min(0.05f)]
+    [SerializeField] private float emergencyVisualMinimumDuration = 0.18f;
+
+    [Tooltip("1 Hermite segmentの最長時間[s]。終点誤差が残れば新しいsegmentを再計画します。")]
+    [Min(0.10f)]
+    [SerializeField] private float emergencyVisualMaximumDuration = 0.75f;
+
+    [Tooltip("Emergency時の見かけ上の回収速度目安[m/s]。距離からHermite時間を自動決定します。")]
+    [Min(1f)]
+    [SerializeField] private float emergencyVisualPreferredCatchUpSpeed = 28f;
+
+    [Tooltip("Emergency終了を許すSubjectとの位置誤差[m]。")]
+    [Min(0.001f)]
+    [SerializeField] private float emergencyVisualPositionTolerance = 0.03f;
+
+    [Tooltip("Emergency終了を許すSubjectとの速度誤差[m/s]。")]
+    [Min(0.001f)]
+    [SerializeField] private float emergencyVisualVelocityTolerance = 0.30f;
+
     [Header("Debug")]
     [SerializeField] private bool enableDebugLog = true;
     [Min(1)]
@@ -181,6 +268,11 @@ public class BallVisualSlopeDrive : MonoBehaviour
     private bool hasPreviousVisualFrameForward;
     private int visualFrameStableFrames;
     private bool visualFrameStable;
+
+    // 回転TweenをVisual frameの累積角で検出し、
+    // 回転完了後の「次の正常Incident 1回だけ」を規制対象にする。
+    private float visualFrameTurnAccumulatedDegrees;
+    private bool postTurnPopGuardPending;
 
     private Vector3 currentSurfaceNormal = Vector3.up;
     private Vector3 currentSlopeTangent = Vector3.forward;
@@ -258,6 +350,22 @@ public class BallVisualSlopeDrive : MonoBehaviour
     private Vector3 previousTerminalAccelerationState;
     private int terminalStableFrames;
 
+    private float terminalActiveTimeBudget;
+    private bool terminalExtendedRecoveryActive;
+    private int terminalRecoveryExtensionCount;
+
+    // ---------- Emergency Visual Rejoin runtime ----------
+    private float emergencyRejoinStartTime = -1f;
+    private float emergencyRejoinDuration;
+    private int emergencyRejoinSegmentIndex;
+    private Vector3 emergencyRejoinStartPosition;
+    private Vector3 emergencyRejoinStartVelocity;
+    private Vector3 emergencyRejoinEndPosition;
+    private Vector3 emergencyRejoinEndVelocity;
+    private Quaternion emergencyRejoinStartRotation = Quaternion.identity;
+    private Quaternion emergencyRejoinEndRotation = Quaternion.identity;
+    private Vector3 emergencyRejoinCurrentVelocity;
+
     // =====================================================================
     // BallVisual global trajectory ownership
     // =====================================================================
@@ -330,6 +438,15 @@ public class BallVisualSlopeDrive : MonoBehaviour
         bool isFlat = slopeCore.BallVisualIsOnFlat;
         bool isOnSlope = slopeCore.BallVisualIsOnSlope;
         bool canBeginIncident = CanBeginIncident(isOnSlope);
+
+        // Emergency中はBallVisualの位置権威をHermite Visual Recoveryへ完全移譲する。
+        // PhysX contact / Gravity / Slope Driveとは競合させない。
+        /*if (motionPhase == MotionPhase.EmergencyRejoin)
+        {
+            ProcessEmergencyRejoin();
+            WriteDebugLog();
+            return;
+        }*/
 
         // Settledは「次の有効Incident入口」まで完全同期区間。
         // 単にisOnSlopeになっただけでは抜けない。
@@ -421,6 +538,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
             visualFrameStable = false;
             visualFrameStableFrames = 0;
             hasPreviousVisualFrameForward = false;
+            visualFrameTurnAccumulatedDegrees = 0f;
             return;
         }
 
@@ -436,6 +554,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
             visualFrameStable = false;
             visualFrameStableFrames = 0;
             hasPreviousVisualFrameForward = false;
+            visualFrameTurnAccumulatedDegrees = 0f;
             return;
         }
 
@@ -447,8 +566,11 @@ public class BallVisualSlopeDrive : MonoBehaviour
             hasPreviousVisualFrameForward = true;
             visualFrameStableFrames = 0;
             visualFrameStable = false;
+            visualFrameTurnAccumulatedDegrees = 0f;
             return;
         }
+
+        bool wasStable = visualFrameStable;
 
         float angleChange =
             Vector3.Angle(
@@ -458,13 +580,49 @@ public class BallVisualSlopeDrive : MonoBehaviour
         previousVisualFrameForward = mappedForward;
 
         if (angleChange <= VisualFrameStableAngleEpsilonDeg)
+        {
             visualFrameStableFrames++;
+        }
         else
+        {
+            // Tween中の1 FixedUpdateごとの角度を積算する。
+            // 0.05deg以下の微小揺れは回転量として数えない。
+            visualFrameTurnAccumulatedDegrees += angleChange;
             visualFrameStableFrames = 0;
+        }
 
         visualFrameStable =
             visualFrameStableFrames >=
             VisualFrameStableFixedFramesRequired;
+
+        // 回転中(false) -> 再安定(true)へ戻った瞬間だけArm。
+        // Guardは次にBeginIncidentMethodが正常成立した1回だけ消費する。
+        if (!wasStable &&
+            visualFrameStable &&
+            visualFrameTurnAccumulatedDegrees >=
+                Mathf.Max(1f, postTurnDetectionMinimumAccumulatedAngleDeg))
+        {
+            postTurnPopGuardPending = true;
+
+            if (enableDebugLog)
+            {
+                Debug.Log(
+                    $"[POST TURN POP GUARD ARMED] " +
+                    $"turnAccum={visualFrameTurnAccumulatedDegrees:F3}deg " +
+                    $"normalSpeedCap={postTurnMaximumIncidentNormalSpeed:F3}m/s",
+                    this);
+            }
+
+            visualFrameTurnAccumulatedDegrees = 0f;
+        }
+        else if (visualFrameStable &&
+                 visualFrameTurnAccumulatedDegrees > 0f &&
+                 visualFrameTurnAccumulatedDegrees <
+                    Mathf.Max(1f, postTurnDetectionMinimumAccumulatedAngleDeg))
+        {
+            // 回転閾値未満の微小な座標系変化は持ち越さない。
+            visualFrameTurnAccumulatedDegrees = 0f;
+        }
     }
 
     private bool CanBeginIncident(bool isOnSlope)
@@ -703,6 +861,26 @@ public class BallVisualSlopeDrive : MonoBehaviour
             out Vector3 incidentTangentVelocity,
             out Vector3 incidentInwardNormalVelocity);
 
+        // ================================================================
+        // Post-turn 1st POP guard
+        //
+        // 回転後の最初のIncidentだけ、BallVisual POP計算に使う
+        // Normal成分を上限規制する。
+        // Equalizer Energy側は後段でmaxGroundSpeed正規化した別の速度を使う。
+        // subjectVelocity / incidentNormalSpeed本体は変更しないため、
+        // InSubjectや斜面物理の運動量は一切書き換えない。
+        // ================================================================
+        bool usePostTurnPopGuard =
+            limitFirstPopAfterTurn &&
+            postTurnPopGuardPending;
+
+        float incidentNormalSpeedForPop =
+            usePostTurnPopGuard
+                ? Mathf.Min(
+                    incidentNormalSpeed,
+                    Mathf.Max(0f, postTurnMaximumIncidentNormalSpeed))
+                : incidentNormalSpeed;
+
         Vector3 planarDisplacement = Vector3.ProjectOnPlane(
             exactTarget - subjectPosition,
             Vector3.up);
@@ -715,7 +893,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         // これを1st Popの第一候補とする。
         Vector3 reflectedNormalVelocity =
             currentSurfaceNormal.normalized *
-            incidentNormalSpeed;
+            incidentNormalSpeedForPop;
 
         float incidenceDerivedRelativeUp =
             Mathf.Max(
@@ -727,11 +905,19 @@ public class BallVisualSlopeDrive : MonoBehaviour
         // 入射法線成分が成立しないケース
         // （下り斜面・すでに斜面接線へ整列済み等）では、
         // 既存の v^2 同期則へFallbackしてIncidentを失わない。
-        float preferredRelativeUp =
+        float rawPreferredRelativeUp =
             incidenceDerivedRelativeUp > 0.0001f
                 ? incidenceDerivedRelativeUp
                 : ResolveIncidentPreferredRelativeUpSpeed(
                     referenceSpeed);
+
+        // 回転直後だけ、通常のPOP装飾へ入る前にSubject相対Upを直接規制する。
+        float preferredRelativeUp =
+            usePostTurnPopGuard
+                ? Mathf.Min(
+                    rawPreferredRelativeUp,
+                    Mathf.Max(0f, postTurnMaximumRelativeUpSpeed))
+                : rawPreferredRelativeUp;
 
         float preferredHeight = RelativeUpToHeight(preferredRelativeUp);
 
@@ -747,12 +933,16 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 $"v0={incidentV0:F4}m/s " +
                 $"v0cos={incidentTangentSpeed:F4}m/s " +
                 $"v0sin={incidentNormalSpeed:F4}m/s " +
+                $"popV0sin={incidentNormalSpeedForPop:F4}m/s " +
+                $"postTurnGuard={usePostTurnPopGuard} " +
                 $"angle={incidentAngleDeg:F3}deg " +
                 $"reconstructed={reconstructedSpeed:F4}m/s " +
                 $"tangentVelocity={incidentTangentVelocity:F4} " +
                 $"inwardNormalVelocity={incidentInwardNormalVelocity:F4} " +
                 $"reflectedNormalVelocity={reflectedNormalVelocity:F4} " +
                 $"incidenceDerivedUp={incidenceDerivedRelativeUp:F4}m/s " +
+                $"rawPreferredUp={rawPreferredRelativeUp:F4}m/s " +
+                $"preferredUp={preferredRelativeUp:F4}m/s " +
                 $"surfaceNormal={currentSurfaceNormal:F4} " +
                 $"slopeTangent={currentSlopeTangent:F4}",
                 this);
@@ -783,35 +973,53 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         // Time-Costを詰め切らず、30〜75msの範囲だけ
         // POPとして読めるAir余白を戻す。
-        float decoratedFlight = ResolveIncidentDecoratedFlightSeconds(
-            subjectPosition,
-            exactTarget,
-            subjectVelocity,
-            preferredRelativeUp,
-            timeCostFlight,
-            naturalFlight);
+        // 回転直後は「POPとして読ませるためのAir余白」を追加しない。
+        float decoratedFlight =
+            usePostTurnPopGuard
+                ? naturalFlight
+                : ResolveIncidentDecoratedFlightSeconds(
+                    subjectPosition,
+                    exactTarget,
+                    subjectVelocity,
+                    preferredRelativeUp,
+                    timeCostFlight,
+                    naturalFlight);
 
         // 1〜2 FixedUpdateしかない極端な近距離Limitは
         // 視認用Energyを追加しない。
         bool extremelyShortIncident =
             naturalFlight <= Mathf.Max(0.05f, Time.fixedDeltaTime * 2f);
 
-        float visibleRelativeUp = extremelyShortIncident
-            ? 0f
-            : IncidentVisibilityMinimumRelativeUpSpeed;
+        // 回転後Guardでは通常の「最低可視POP=1.70m/s」を無効化する。
+        float visibleRelativeUp =
+            (extremelyShortIncident || usePostTurnPopGuard)
+                ? 0f
+                : IncidentVisibilityMinimumRelativeUpSpeed;
 
-        // Preferred POP高さの86%以上は維持する。
-        float minimumRelativeUp = Mathf.Max(
-            visibleRelativeUp,
-            preferredRelativeUp * Mathf.Sqrt(IncidentEnergyMinimumHeightRetention));
+        float minimumRelativeUp;
+        float maximumRelativeUp;
 
-        // 成功版のDecorationは最大2.6m/sまでの相対Upを許可していた。
-        // preferredRelativeUpがそれ以上なら当然そちらを上限として尊重する。
-        float maximumRelativeUp = extremelyShortIncident
-            ? preferredRelativeUp
-            : Mathf.Max(
-                preferredRelativeUp,
-                IncidentPopDecorationMaximumRelativeUpSpeed);
+        if (usePostTurnPopGuard)
+        {
+            // 回転後だけEnergy許容幅を一点に固定し、
+            // Separation/Decorationが1.70〜2.60m/sへ再膨張させることを禁止する。
+            minimumRelativeUp = preferredRelativeUp;
+            maximumRelativeUp = preferredRelativeUp;
+        }
+        else
+        {
+            // 通常階段は従来どおり。
+            minimumRelativeUp = Mathf.Max(
+                visibleRelativeUp,
+                preferredRelativeUp *
+                Mathf.Sqrt(IncidentEnergyMinimumHeightRetention));
+
+            maximumRelativeUp = extremelyShortIncident
+                ? preferredRelativeUp
+                : Mathf.Max(
+                    preferredRelativeUp,
+                    IncidentPopDecorationMaximumRelativeUpSpeed);
+        }
 
         float energyTimeA = SolveIncidentTimeFromRelativeUp(
             subjectPosition.y,
@@ -963,6 +1171,26 @@ public class BallVisualSlopeDrive : MonoBehaviour
             incidentPlanarTravelDirection = Vector3.forward;
 
         incidentPlanValid = true;
+
+        if (usePostTurnPopGuard)
+        {
+            // 成功したIncident 1回でのみ消費する。
+            // 途中で数値安全returnした場合はPendingを残し、次回へ持ち越す。
+            postTurnPopGuardPending = false;
+
+            if (enableDebugLog)
+            {
+                Debug.Log(
+                    $"[POST TURN POP GUARD CONSUMED] " +
+                    $"rawV0sin={incidentNormalSpeed:F4}m/s " +
+                    $"limitedV0sin={incidentNormalSpeedForPop:F4}m/s " +
+                    $"rawPreferredUp={rawPreferredRelativeUp:F4}m/s " +
+                    $"limitedPreferredUp={preferredRelativeUp:F4}m/s " +
+                    $"effectivePopHeight={effectivePopHeight:F4}m",
+                    this);
+            }
+        }
+
         incidentStartTime = Time.fixedTime;
         incidentElapsed = 0f;
         incidentFlightSeconds = flightSeconds;
@@ -1001,11 +1229,66 @@ public class BallVisualSlopeDrive : MonoBehaviour
         // Equalizer / Negative Envelopeの第一Energy源にする。
         // ================================================================
 
+        // ================================================================
+        // Post-turn Equalizer Normal normalization
+        //
+        // 通常Incident:
+        //     equalizerIncidentNormalSpeed = incidentNormalSpeed
+        //
+        // 回転後最初のIncidentだけ:
+        //     vN,max = maxGroundSpeed * ratio
+        //     vN,E   = min(raw vN, vN,max)
+        //
+        // maxGroundSpeed自体はREAD ONLY。
+        // BallVisualの0.50m/s見た目POP Guardとは独立させるため、
+        // Equalizerには高速域に応じた適切なNormal Energyを残す。
+        // ================================================================
+        float resolvedPostTurnMaxGroundSpeed = 0f;
+        bool resolvedPostTurnMaxGroundSpeedFromSource = false;
+
+        if (usePostTurnPopGuard &&
+            normalizeEqualizerEnergyAfterTurn &&
+            BallVisualEqualizer)
+        {
+            resolvedPostTurnMaxGroundSpeedFromSource =
+                BallVisualEqualizer.TryGetSourceMaxGroundSpeedReadOnly(
+                    out resolvedPostTurnMaxGroundSpeed);
+        }
+
+        if (usePostTurnPopGuard &&
+            normalizeEqualizerEnergyAfterTurn &&
+            (!resolvedPostTurnMaxGroundSpeedFromSource ||
+             resolvedPostTurnMaxGroundSpeed <= 0.0001f))
+        {
+            resolvedPostTurnMaxGroundSpeed =
+                Mathf.Max(
+                    1f,
+                    postTurnFallbackMaxGroundSpeed);
+        }
+
+        float postTurnEqualizerNormalSpeedLimit =
+            usePostTurnPopGuard && normalizeEqualizerEnergyAfterTurn
+                ? Mathf.Max(
+                    0.01f,
+                    resolvedPostTurnMaxGroundSpeed *
+                    Mathf.Clamp(
+                        postTurnEqualizerNormalSpeedRatioToMaxGround,
+                        0.01f,
+                        1f))
+                : float.PositiveInfinity;
+
+        float equalizerIncidentNormalSpeed =
+            usePostTurnPopGuard && normalizeEqualizerEnergyAfterTurn
+                ? Mathf.Min(
+                    incidentNormalSpeed,
+                    postTurnEqualizerNormalSpeedLimit)
+                : incidentNormalSpeed;
+
         float incidentNormalEnergy =
             0.5f *
             ballBody.mass *
-            incidentNormalSpeed *
-            incidentNormalSpeed;
+            equalizerIncidentNormalSpeed *
+            equalizerIncidentNormalSpeed;
 
         float legacyRelativePopEnergy =
             0.5f *
@@ -1022,6 +1305,24 @@ public class BallVisualSlopeDrive : MonoBehaviour
             usingIncidentNormalEnergy
                 ? incidentNormalEnergy
                 : legacyRelativePopEnergy;
+
+        // v0sin≈0でLegacyRelativePopへFallbackした場合も、
+        // 回転後1回だけは同じmaxGroundSpeed正規化上限を越えないようにする。
+        if (usePostTurnPopGuard &&
+            normalizeEqualizerEnergyAfterTurn &&
+            !float.IsInfinity(postTurnEqualizerNormalSpeedLimit))
+        {
+            float postTurnMaximumEqualizerEnergy =
+                0.5f *
+                ballBody.mass *
+                postTurnEqualizerNormalSpeedLimit *
+                postTurnEqualizerNormalSpeedLimit;
+
+            ballVisualEnergy =
+                Mathf.Min(
+                    ballVisualEnergy,
+                    postTurnMaximumEqualizerEnergy);
+        }
 
 
 // BallVisual source EnergyをCanonical unit (=1) として、
@@ -1083,6 +1384,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 $"legacyRelativePopEnergy={legacyRelativePopEnergy:F4}J " +
                 $"v0cos={incidentTangentSpeed:F4}m/s " +
                 $"v0sin={incidentNormalSpeed:F4}m/s " +
+                $"energyV0sin={equalizerIncidentNormalSpeed:F4}m/s " +
+                $"postTurnMaxGround={(usePostTurnPopGuard && normalizeEqualizerEnergyAfterTurn ? resolvedPostTurnMaxGroundSpeed : 0f):F4}m/s " +
+                $"postTurnEqualizerCap={(usePostTurnPopGuard && normalizeEqualizerEnergyAfterTurn ? postTurnEqualizerNormalSpeedLimit : 0f):F4}m/s " +
+                $"postTurnMaxGroundSource={resolvedPostTurnMaxGroundSpeedFromSource} " +
+                $"postTurnBallVisualV0sin={incidentNormalSpeedForPop:F4}m/s " +
+                $"postTurnGuard={usePostTurnPopGuard} " +
                 $"incidentAngle={incidentAngleDeg:F3}deg " +
                 $"sourcePopHeight={effectivePopHeight:F4}m " +
                 $"canonicalReferenceHeight={equalizerReferenceHeight:F4}m " +
@@ -2118,10 +2425,13 @@ private static bool IsValidPositiveTime(float value)
 
         terminalStartTime = Time.fixedTime;
         terminalElapsed = 0f;
-        terminalTimeToGo = Mathf.Max(terminalTimeBudget, terminalMinimumTimeToGo);
+        terminalActiveTimeBudget = Mathf.Max(terminalTimeBudget, terminalMinimumTimeToGo);
+        terminalTimeToGo = terminalActiveTimeBudget;
         terminalAccelerationState = missileChaseAccelerationState;
         previousTerminalAccelerationState = terminalAccelerationState;
         terminalStableFrames = 0;
+        terminalExtendedRecoveryActive = false;
+        terminalRecoveryExtensionCount = 0;
 
         motionPhase = MotionPhase.TerminalRejoin;
         visualPhase = VisualPhase.TerminalRejoin;
@@ -2135,7 +2445,7 @@ private static bool IsValidPositiveTime(float value)
         float dt = Mathf.Max(Time.fixedDeltaTime, 0.000001f);
         terminalElapsed = Mathf.Max(0f, Time.fixedTime - terminalStartTime);
 
-        float rawTimeToGo = terminalTimeBudget - terminalElapsed;
+        float rawTimeToGo = terminalActiveTimeBudget - terminalElapsed;
         terminalTimeToGo = Mathf.Max(terminalMinimumTimeToGo, rawTimeToGo);
 
         Vector3 subjectPosition = respondSubject.MappedPosition;
@@ -2214,7 +2524,10 @@ private static bool IsValidPositiveTime(float value)
             return;
         }
 
-        // 決められたTerminal時間の最後でだけ完全同期を許可。
+        // Emergency/Hermiteを使わない旧互換仕様では、
+        // Terminalの時間予算を使い切った時点で必ず完全同期する。
+        // ここでreturnだけするとTerminalRejoinに永久滞留し、
+        // Stage Turn中もBallVisual / Equalizerが独立物理を持ち越してしまう。
         if (rawTimeToGo <= 0f)
         {
             CompleteTerminalRejoin(true);
@@ -2234,12 +2547,421 @@ private static bool IsValidPositiveTime(float value)
         }
     }
 
+    private bool TryExtendTerminalRecovery(
+        Vector3 subjectPosition,
+        Vector3 subjectVelocity,
+        out float recoveryHorizon)
+    {
+        recoveryHorizon = 0f;
+
+        if (!enableTerminalFeasibilityRecovery)
+            return false;
+
+        float maximumTotalTerminalTime =
+            Mathf.Max(
+                terminalTimeBudget,
+                terminalTimeBudget +
+                Mathf.Max(0f, maximumExtendedTerminalSeconds));
+
+        float remainingRecoveryBudget =
+            maximumTotalTerminalTime - terminalElapsed;
+
+        if (remainingRecoveryBudget < terminalMinimumTimeToGo)
+            return false;
+
+        float step =
+            Mathf.Max(
+                0.01f,
+                terminalRecoveryProbeStepSeconds);
+
+        float firstCandidate =
+            Mathf.Max(
+                terminalMinimumTimeToGo,
+                step);
+
+        float maximumAccelerationForRecovery =
+            Mathf.Max(0f, maximumTerminalAcceleration) *
+            Mathf.Clamp01(terminalRecoveryAccelerationSafety01);
+
+        float maximumJerk =
+            Mathf.Max(0f, maximumTerminalJerk);
+
+        for (float candidateT = firstCandidate;
+             candidateT <= remainingRecoveryBudget + 0.0001f;
+             candidateT += step)
+        {
+            Vector3 futureSubjectPosition =
+                subjectPosition +
+                subjectVelocity * candidateT;
+
+            Vector3 positionToDeadline =
+                futureSubjectPosition -
+                ballBody.position;
+
+            Vector3 requiredTotalAcceleration =
+                6f * positionToDeadline /
+                (candidateT * candidateT) -
+                (4f * ballBody.velocity +
+                 2f * subjectVelocity) /
+                candidateT;
+
+            Vector3 desiredArtificialAcceleration =
+                requiredTotalAcceleration -
+                Physics.gravity;
+
+            // Flat捕捉後はYを物理接触へ返しているので、
+            // Recovery feasibilityも同じ制御自由度だけを評価する。
+            if (ballFlatCaptured)
+            {
+                desiredArtificialAcceleration =
+                    Vector3.ProjectOnPlane(
+                        desiredArtificialAcceleration,
+                        Vector3.up);
+            }
+
+            bool accelerationFeasible =
+                desiredArtificialAcceleration.magnitude <=
+                maximumAccelerationForRecovery + 0.0001f;
+
+            float jerkArrivalTime = 0f;
+
+            if (maximumJerk > 0.0001f)
+            {
+                jerkArrivalTime =
+                    (desiredArtificialAcceleration -
+                     terminalAccelerationState).magnitude /
+                    maximumJerk;
+            }
+            else if ((desiredArtificialAcceleration -
+                      terminalAccelerationState).sqrMagnitude >
+                     0.000001f)
+            {
+                jerkArrivalTime = float.PositiveInfinity;
+            }
+
+            bool jerkFeasible =
+                jerkArrivalTime <=
+                candidateT *
+                Mathf.Clamp01(terminalRecoveryJerkTimeSafety01);
+
+            if (accelerationFeasible && jerkFeasible)
+            {
+                recoveryHorizon = candidateT;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+    private void BeginEmergencyRejoin(string reason)
+    {
+        if (motionPhase != MotionPhase.TerminalRejoin)
+            return;
+
+        if (!enableEmergencyVisualRejoin)
+        {
+            // Compatibility fallback。OFFを明示した場合だけ旧hard syncを許可する。
+            CompleteTerminalRejoin(true);
+            return;
+        }
+
+        Vector3 subjectPosition =
+            respondSubject.MappedPosition;
+
+        Vector3 subjectVelocity =
+            ReadMappedInSubjectVelocity();
+
+        emergencyRejoinSegmentIndex = 0;
+
+        StartEmergencyHermiteSegment(
+            ballBody.position,
+            ballBody.velocity,
+            ballBody.rotation,
+            subjectPosition,
+            subjectVelocity,
+            respondSubject.MappedRotation);
+
+        // Emergency中はHermiteだけをBallVisualの位置権威にする。
+        // Collider/Gravity/PhysX solverと同時に位置を所有させない。
+        // EqualizerにはBallVisualをKinematic化する前の実速度を見せて、
+        // relative Hermiteの入口速度を連続にする。
+        if (BallVisualEqualizer != null)
+        {
+            BallVisualEqualizer.BeginEmergencyVisualRecovery(
+                emergencyRejoinDuration);
+        }
+
+        ballBody.useGravity = false;
+        ballBody.detectCollisions = false;
+
+        if (ballCollider != null)
+            ballCollider.isTrigger = true;
+
+        ballBody.isKinematic = true;
+
+        terminalAccelerationState = Vector3.zero;
+        previousTerminalAccelerationState = Vector3.zero;
+        terminalStableFrames = 0;
+
+        motionPhase = MotionPhase.EmergencyRejoin;
+        visualPhase = VisualPhase.EmergencyRejoin;
+
+        if (enableDebugLog)
+        {
+            Debug.Log(
+                $"[EMERGENCY REJOIN BEGIN] " +
+                $"reason={reason} " +
+                $"time={Time.fixedTime:F4} " +
+                $"duration={emergencyRejoinDuration:F4}s " +
+                $"distance={Vector3.Distance(emergencyRejoinStartPosition, subjectPosition):F4}",
+                this);
+        }
+    }
+
+
+    private void StartEmergencyHermiteSegment(
+        Vector3 startPosition,
+        Vector3 startVelocity,
+        Quaternion startRotation,
+        Vector3 subjectPosition,
+        Vector3 subjectVelocity,
+        Quaternion subjectRotation)
+    {
+        float distance =
+            Vector3.Distance(
+                startPosition,
+                subjectPosition);
+
+        float preferredSpeed =
+            Mathf.Max(
+                1f,
+                emergencyVisualPreferredCatchUpSpeed);
+
+        float durationFromDistance =
+            distance / preferredSpeed;
+
+        emergencyRejoinDuration =
+            Mathf.Clamp(
+                Mathf.Max(
+                    emergencyVisualMinimumDuration,
+                    durationFromDistance),
+                Mathf.Max(0.05f, emergencyVisualMinimumDuration),
+                Mathf.Max(
+                    emergencyVisualMinimumDuration,
+                    emergencyVisualMaximumDuration));
+
+        emergencyRejoinStartTime = Time.fixedTime;
+        emergencyRejoinStartPosition = startPosition;
+        emergencyRejoinStartVelocity = startVelocity;
+        emergencyRejoinStartRotation = startRotation;
+
+        // 終点はsegment終了時点のSubject予測位置。
+        emergencyRejoinEndPosition =
+            subjectPosition +
+            subjectVelocity * emergencyRejoinDuration;
+
+        emergencyRejoinEndVelocity = subjectVelocity;
+        emergencyRejoinEndRotation = subjectRotation;
+        emergencyRejoinCurrentVelocity = startVelocity;
+    }
+
+
+    private void ProcessEmergencyRejoin()
+    {
+        if (motionPhase != MotionPhase.EmergencyRejoin)
+            return;
+
+        float duration =
+            Mathf.Max(
+                0.0001f,
+                emergencyRejoinDuration);
+
+        float elapsed =
+            Mathf.Max(
+                0f,
+                Time.fixedTime -
+                emergencyRejoinStartTime);
+
+        float t = Mathf.Clamp01(elapsed / duration);
+
+        Vector3 position = EvaluateHermitePosition(
+            emergencyRejoinStartPosition,
+            emergencyRejoinStartVelocity,
+            emergencyRejoinEndPosition,
+            emergencyRejoinEndVelocity,
+            duration,
+            t);
+
+        emergencyRejoinCurrentVelocity =
+            EvaluateHermiteVelocity(
+                emergencyRejoinStartPosition,
+                emergencyRejoinStartVelocity,
+                emergencyRejoinEndPosition,
+                emergencyRejoinEndVelocity,
+                duration,
+                t);
+
+        float rotationT =
+            t * t * (3f - 2f * t);
+
+        Quaternion rotation =
+            Quaternion.Slerp(
+                emergencyRejoinStartRotation,
+                emergencyRejoinEndRotation,
+                rotationT);
+
+        ballBody.MovePosition(position);
+        ballBody.MoveRotation(rotation);
+
+        if (t < 1f)
+            return;
+
+        Vector3 subjectPosition =
+            respondSubject.MappedPosition;
+
+        Vector3 subjectVelocity =
+            ReadMappedInSubjectVelocity();
+
+        float positionError =
+            Vector3.Distance(
+                position,
+                subjectPosition);
+
+        float velocityError =
+            Vector3.Distance(
+                emergencyRejoinCurrentVelocity,
+                subjectVelocity);
+
+        if (positionError <= emergencyVisualPositionTolerance &&
+            velocityError <= emergencyVisualVelocityTolerance)
+        {
+            FinishEmergencyRejoin(
+                subjectPosition,
+                subjectVelocity);
+            return;
+        }
+
+        // SubjectはRecovery中も動き続ける。
+        // 1本目の予測終点から外れた場合は、現在の位置/速度を連続条件として
+        // 新しいHermite segmentを張り直す。瞬間位置代入はしない。
+        emergencyRejoinSegmentIndex++;
+
+        StartEmergencyHermiteSegment(
+            position,
+            emergencyRejoinCurrentVelocity,
+            rotation,
+            subjectPosition,
+            subjectVelocity,
+            respondSubject.MappedRotation);
+
+        if (enableDebugLog)
+        {
+            Debug.Log(
+                $"[EMERGENCY REJOIN RETARGET] " +
+                $"segment={emergencyRejoinSegmentIndex} " +
+                $"time={Time.fixedTime:F4} " +
+                $"posError={positionError:F4} " +
+                $"velError={velocityError:F4} " +
+                $"nextDuration={emergencyRejoinDuration:F4}s",
+                this);
+        }
+    }
+
+
+    private void FinishEmergencyRejoin(
+        Vector3 subjectPosition,
+        Vector3 subjectVelocity)
+    {
+        // ここで残っている誤差はEmergency tolerance以下。
+        // 最終の微小一致だけを許し、大距離hard snapは発生させない。
+        ballBody.isKinematic = false;
+        ballBody.detectCollisions = true;
+        ballBody.useGravity = false;
+
+        ballBody.position = subjectPosition;
+        ballBody.velocity = subjectVelocity;
+        ballBody.rotation = respondSubject.MappedRotation;
+        ballBody.angularVelocity =
+            respondSubject.MapDirection(
+                inSubjectBody.angularVelocity);
+
+        if (ballCollider != null)
+            ballCollider.isTrigger = true;
+
+        terminalAccelerationState = Vector3.zero;
+        previousTerminalAccelerationState = Vector3.zero;
+        terminalStableFrames = 0;
+        terminalExtendedRecoveryActive = false;
+
+        motionPhase = MotionPhase.Settled;
+        visualPhase = VisualPhase.SettledSync;
+
+        if (enableDebugLog)
+        {
+            Debug.Log(
+                $"[EMERGENCY REJOIN COMPLETE] " +
+                $"time={Time.fixedTime:F4} " +
+                $"segments={emergencyRejoinSegmentIndex + 1} " +
+                $"position={ballBody.position:F4} " +
+                $"velocity={ballBody.velocity:F4}",
+                this);
+        }
+    }
+
+
+    private static Vector3 EvaluateHermitePosition(
+        Vector3 p0,
+        Vector3 v0,
+        Vector3 p1,
+        Vector3 v1,
+        float duration,
+        float t)
+    {
+        float t2 = t * t;
+        float t3 = t2 * t;
+
+        float h00 = 2f * t3 - 3f * t2 + 1f;
+        float h10 = t3 - 2f * t2 + t;
+        float h01 = -2f * t3 + 3f * t2;
+        float h11 = t3 - t2;
+
+        return
+            h00 * p0 +
+            h10 * (v0 * duration) +
+            h01 * p1 +
+            h11 * (v1 * duration);
+    }
+
+
+    private static Vector3 EvaluateHermiteVelocity(
+        Vector3 p0,
+        Vector3 v0,
+        Vector3 p1,
+        Vector3 v1,
+        float duration,
+        float t)
+    {
+        float safeDuration = Mathf.Max(0.0001f, duration);
+        float t2 = t * t;
+
+        float dh00 = 6f * t2 - 6f * t;
+        float dh10 = 3f * t2 - 4f * t + 1f;
+        float dh01 = -6f * t2 + 6f * t;
+        float dh11 = 3f * t2 - 2f * t;
+
+        return
+            (dh00 * p0 +
+             dh10 * (v0 * safeDuration) +
+             dh01 * p1 +
+             dh11 * (v1 * safeDuration)) /
+            safeDuration;
+    }
+
+
     private void CompleteTerminalRejoin(bool forced)
     {
-        if (regionTurn == 1)
-        {
-            Debug.Log("");
-        }
         if (motionPhase != MotionPhase.TerminalRejoin)
             return;
 
@@ -2251,7 +2973,7 @@ private static bool IsValidPositiveTime(float value)
 
         // この一箇所だけがMissile後の完全同期点。
         ballBody.position = subjectPosition;
-       //ballBody.velocity = subjectVelocity;
+        ballBody.velocity = subjectVelocity;
         ballBody.rotation = respondSubject.MappedRotation;
         ballBody.angularVelocity = respondSubject.MapDirection(inSubjectBody.angularVelocity);
         ballBody.useGravity = false;
@@ -2262,16 +2984,17 @@ private static bool IsValidPositiveTime(float value)
         // Equalizerは次のStage Turnより前に必ずBallVisualへ戻す。
         // Turn中に独立したStable-N Hopperを持ち越さないことで、
         // CorrespondSubjectの座標写像とEqualizer物理を競合させない。
-       /* if (BallVisualEqualizer != null)
-            BallVisualEqualizer.ResumeSynchronization();*/
+        if (BallVisualEqualizer != null)
+            BallVisualEqualizer.ResumeSynchronization();
 
         terminalAccelerationState = Vector3.zero;
         previousTerminalAccelerationState = Vector3.zero;
         terminalStableFrames = 0;
+        terminalExtendedRecoveryActive = false;
 
         motionPhase = MotionPhase.Settled;
         visualPhase = VisualPhase.SettledSync;
-        regionTurn++;
+
         if (enableDebugLog)
         {
             Debug.Log(

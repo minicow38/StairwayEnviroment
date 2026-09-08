@@ -56,6 +56,7 @@ public class GettingItem : MonoBehaviour
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
                 MainGameManager.Coin++;
+                
                 Destroy(PhysicsMul.transform.gameObject);
             }
             /*if (Regex.Match(PhysicsMul.name,pattern).Success)
