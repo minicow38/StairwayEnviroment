@@ -1,7 +1,6 @@
 using UnityEngine;
 using System.Collections;
 using System.Text.RegularExpressions;
-using UnityEditor.Rendering;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Rigidbody), typeof(SphereCollider), typeof(NearestKnotDetector))]
@@ -35,8 +34,6 @@ public sealed class SlopeStickCore : MonoBehaviour
     [SerializeField] Vector3 travelDirection = Vector3.forward;
     
     [Range(0f, 100f)] [SerializeField] public float targetSlopeProgressPercent = 60f;
-
-    public GameObject RecoverRotateVisualInPivot;
 
     [Header("Coordinate Mapping")]
     [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")]
@@ -84,6 +81,19 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     Rigidbody rb;
     Vector3 direction;
+
+    // ================================================================
+    // Initial Visual Frame Pose
+    // ================================================================
+    // VisualPlayerRoot は旋回時に position と rotation の両方が変化するため、
+    // Scene初期状態のワールドPoseをセットで保存して復元する。
+    Vector3 initialVisualPlayerRootPosition;
+    Quaternion initialVisualPlayerRootRotation = Quaternion.identity;
+    bool hasInitialVisualPlayerRootPose;
+
+    // FirstStepInsertSplinePath側が「死亡復帰の再構築」を開始した時だけtrue。
+    // 通常のStart() -> delayStart()には復帰専用処理を侵入させない。
+    bool restartFramePrepared;
 
     Vector2 flickStart;
     bool trackingFlick;
@@ -635,6 +645,11 @@ public sealed class SlopeStickCore : MonoBehaviour
             knotDetector = GetComponent<NearestKnotDetector>();
 
         direction = NormalizeFlat(travelDirection, transform.forward);
+
+        // Start() より前、通常旋回が始まる前のPoseを保存する。
+        FindMapFrameReferences();
+        BindCoordinateFrames();
+        CaptureInitialVisualFramePose();
     }
 
     // ================================================================
@@ -643,13 +658,13 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     void Start()
     {
-        RecoverRotateVisualInPivot = GameObject.Find("VisualPlayerRoot");
         mainGameManager = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
         if (!sub)
             sub = GameObject.Find("InSubject");
                activeTimeScale =Time.timeScale;
 
         FindMapFrameReferences();
+        CaptureInitialVisualFramePose();
         BindCoordinateFrames();
         StartCoroutine(delayStart());
     }
@@ -684,16 +699,39 @@ public sealed class SlopeStickCore : MonoBehaviour
             yield break;
         }
 
-        if (mainGameManager.initRotation)
-        {
-            visualRotationPivot.transform.rotation = Quaternion.Euler(new Vector3(0,0,0));
-            travelDirection = new Vector3(0, 0, 1);
-            mainGameManager.initRotation = true;
-        }
-        
+        // ------------------------------------------------------------
+        // Soft restart gate
+        // ------------------------------------------------------------
+        // Start()からもdelayStart()は呼ばれるため、復帰専用処理を
+        // 無条件にここへ入れると通常起動のdirection/Controller状態まで変えてしまう。
+        // FirstStepInsertSplinePathが死亡復帰時にPrepareForStageRebuild()を
+        // 呼んだ場合だけ、下のrestartPreparedがtrueになる。
+        bool restartPrepared = restartFramePrepared;
+        restartFramePrepared = false;
+        MainGameManager.LimitTouchingphase = 9;
         Vector3 restart =
             startSlab.transform.position;
-        direction = NormalizeFlat(Vector3.forward, direction);
+
+        if (restartPrepared)
+        {
+            // Root PoseはStage/Spline再生成前に既に復元済み。
+            // ここでは「遅れて残ったTween」だけを念のため止める。
+            // Rootをもう一度復元しないので、再生成後の座標基準を再び動かさない。
+            correspondSubject?.CancelVisualFrameTurn(false);
+
+            // KnotDetector.Evaluate()は使わない。
+            // 再生成直後のGuide選択差がdirectionへ流れ込むのを避け、
+            // 実際の開始Physics板のforwardだけを使う。
+            direction = ResolveRestartDirectionSoft(
+                startSlab.transform);
+        }
+        else
+        {
+            // 通常起動は従来の挙動を維持。
+            direction = Vector3.forward;
+        }
+
+        turnTargetDirection = direction;
 
         rb.position =
             new Vector3(
@@ -701,8 +739,24 @@ public sealed class SlopeStickCore : MonoBehaviour
                 restart.y + 2f,
                 restart.z);
 
+        // 位置を飛ばすのと同じ瞬間に物理速度を0へ戻す。
         rb.velocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
+
+        if (restartPrepared)
+        {
+            // 復帰専用の状態破棄はこの瞬間だけ。
+            // Stage再生成の0.3秒前にdrive/stickを先に0へする処理はやめる。
+            ResetRestartTransientStateSoft();
+
+            if (logCore)
+            {
+                Debug.Log(
+                    $"[CORE SOFT RESTART APPLIED] " +
+                    $"restart={restart:F4} direction={direction:F4}",
+                    this);
+            }
+        }
 
         Physics.SyncTransforms();
         correspondSubject?.SynchronizeNow(true);
@@ -869,11 +923,11 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (Input.GetMouseButtonDown(0))
         {
           Debug.Log("");
-            mainGameManager.TopTitle.SetActive(false);
-            mainGameManager.PreviewIconRoot.SetActive(false);
-            mainGameManager.TopLiteral.SetActive(false);
-            mainGameManager.PlayButton.SetActive(false);
-            mainGameManager.Userbility.SetActive(true);
+            MainGameManager.TopTitle.SetActive(false);
+            MainGameManager.PreviewIconRoot.SetActive(false);
+            MainGameManager.TopLiteral.SetActive(false);
+            MainGameManager.PlayButton.SetActive(false);
+            MainGameManager.Userbility.SetActive(true);
 
           BeginCommandOnTouch = true;
         }
@@ -1355,6 +1409,184 @@ public sealed class SlopeStickCore : MonoBehaviour
         currentSurfaceValid = false;
 
         ResetBallVisualSplineSession();
+    }
+
+    // ================================================================
+    // Initial Visual Frame Restore
+    // ================================================================
+
+    /// <summary>
+    /// まだ旋回していないScene初期状態のVisualPlayerRoot / Pivot Poseを保存します。
+    /// Awake() と Start() から呼び、未取得の参照だけを補完します。
+    /// </summary>
+    void CaptureInitialVisualFramePose()
+    {
+        FindMapFrameReferences();
+
+        // CorrespondSubjectがVisualPlayerRoot/StageRootの正式な所有者。
+        // Bind済みならここで初期Poseを保存させる。
+        correspondSubject?.CaptureInitialFramePose();
+
+        // CorrespondSubjectが無いSceneでもDirect fallbackを戻せるように、
+        // VisualPlayerRootだけはCore側にも初期world Poseを保存する。
+        if (!hasInitialVisualPlayerRootPose && visualPlayerRoot)
+        {
+            initialVisualPlayerRootPosition =
+                visualPlayerRoot.position;
+
+            initialVisualPlayerRootRotation =
+                visualPlayerRoot.rotation;
+
+            hasInitialVisualPlayerRootPose = true;
+        }
+
+        if (logCore && hasInitialVisualPlayerRootPose)
+        {
+            Debug.Log(
+                $"[CORE INITIAL VISUAL FRAME CAPTURED] " +
+                $"rootPos={initialVisualPlayerRootPosition:F4} " +
+                $"rootRot={initialVisualPlayerRootRotation.eulerAngles:F2}",
+                this);
+        }
+    }
+
+    /// <summary>
+    /// VisualPlayerRoot と Pivot をScene初期Poseへ復元します。
+    /// rotationだけでなくpositionも戻すことで、PhysicsRootとの座標対応を復旧します。
+    /// </summary>
+    public bool RestoreInitialVisualFrame(
+        bool synchronizeImmediately = true)
+    {
+        FindMapFrameReferences();
+        BindCoordinateFrames();
+        CaptureInitialVisualFramePose();
+
+        bool restored = false;
+
+        // 正式経路。Tween停止 + VisualPlayerRoot + StageRootをまとめて復元。
+        if (correspondSubject)
+        {
+            restored =
+                correspondSubject.RestoreInitialFramePose(false);
+        }
+
+        // CorrespondSubjectが無い場合の互換Fallback。
+        if (!restored &&
+            hasInitialVisualPlayerRootPose &&
+            visualPlayerRoot)
+        {
+            visualPlayerRoot.SetPositionAndRotation(
+                initialVisualPlayerRootPosition,
+                initialVisualPlayerRootRotation);
+
+            restored = true;
+        }
+
+        Physics.SyncTransforms();
+
+        if (synchronizeImmediately)
+            correspondSubject?.SynchronizeNow(true);
+
+        if (logCore && visualPlayerRoot)
+        {
+            Debug.Log(
+                $"[CORE INITIAL VISUAL FRAME RESTORED] " +
+                $"rootPos={visualPlayerRoot.position:F4} " +
+                $"rootRot={visualPlayerRoot.rotation.eulerAngles:F2} " +
+                $"restored={restored}",
+                this);
+        }
+
+        return restored;
+    }
+
+    /// <summary>
+    /// Stage/Spline再生成の直前に呼ぶリセットです。
+    /// 古い旋回TweenとCore内部の旋回待ち状態を破棄し、
+    /// Visual/Stage座標系をScene初期Poseへ戻します。Rigidbody位置は変更しません。
+    /// </summary>
+    public bool PrepareForStageRebuild()
+    {
+        FindMapFrameReferences();
+        BindCoordinateFrames();
+        CaptureInitialVisualFramePose();
+
+        // Root復元はStage/Spline生成「前」に1回だけ行う。
+        // RestoreInitialVisualFrame -> CorrespondSubject.RestoreInitialFramePose
+        // の中で古いTweenも停止されるため、ここで二重Killはしない。
+        bool restored =
+            RestoreInitialVisualFrame(false);
+
+        // delayStart()へ「これは死亡復帰である」とだけ渡す。
+        // 通常のStart()から来たdelayStart()はこのフラグが立たない。
+        restartFramePrepared = true;
+
+        Physics.SyncTransforms();
+
+        if (logCore)
+        {
+            Debug.Log(
+                $"[CORE SOFT RESTART PREPARED] restored={restored}",
+                this);
+        }
+
+        return restored;
+    }
+
+    /// <summary>
+    /// 復帰時に物理位置/velocityを確定した瞬間だけ行う最小リセット。
+    /// 古いSpline/旋回状態は捨てるが、通常起動には一切適用しない。
+    /// </summary>
+    void ResetRestartTransientStateSoft()
+    {
+        pendingFlickTurnDegrees = 0f;
+        trackingFlick = false;
+
+        waitingForTurnGuide = false;
+        postTurnFiveLinePending = false;
+
+        // rb.velocityを0へした同じタイミングでController蓄積も0へ揃える。
+        // これにより「Stage再生成時点で先にdrive/stickだけ0になる」時間差を作らない。
+        driveState = 0f;
+        stickState = 0f;
+        graceTimer = 0f;
+        wasSlope = false;
+
+        // 再生成前のGuide/Surfaceは新Splineでは無効なので破棄する。
+        currentSupported = false;
+        currentGuideValid = false;
+        currentSurfaceValid = false;
+        currentGuide = default;
+        currentSurface = default;
+
+        // FiveLineGroup自体は強制Centerへ書き換えない。
+        // 復帰以外の後続旋回挙動へ余計なバイアスを残さない。
+
+        // BallVisualに旧Spline sessionを持ち越させない。
+        ResetBallVisualSplineSession();
+    }
+
+    /// <summary>
+    /// 復帰開始方向の応急処置版。
+    /// KnotDetector.Evaluate()には依存せず、実体Physics板のforwardだけを見る。
+    /// </summary>
+    Vector3 ResolveRestartDirectionSoft(Transform startSlab)
+    {
+        if (startSlab)
+        {
+            Vector3 slabForward =
+                Vector3.ProjectOnPlane(
+                    startSlab.forward,
+                    Vector3.up);
+
+            if (slabForward.sqrMagnitude > Eps)
+                return slabForward.normalized;
+        }
+
+        // 板forwardが取れない時だけ既存のtravelDirectionへフォールバック。
+        return NormalizeFlat(
+            travelDirection,
+            direction);
     }
 
     public void SetTravelDirection(Vector3 worldDirection)

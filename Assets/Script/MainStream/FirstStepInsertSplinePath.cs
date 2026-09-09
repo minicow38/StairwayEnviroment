@@ -103,8 +103,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     static readonly int[] InitialStartPattern =
     {
-        -1, 0, -1, 0, -1, 0, -1, 0, -1, 0,
-        -1, 0, -1, 0, -1, 0, -1
+        -1, 0, 0, -1, 0, -1, 0, -1, 0,
+        -1, 0, -1, 0, 0, -1, 0,-1
     };
 
     List<int> startPattern =
@@ -180,12 +180,15 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     [ContextMenu("RebuildSpline")]
     void Start()
     {
-        if (MainGameManager.OnDead)
+        bool restartingFromDeath =
+            MainGameManager.OnDead;
+
+        if (restartingFromDeath)
         {
             Debug.Log("");
         }
        
-        if (RogicalEntity == null || RogicalEntity.Count == 0 || MainGameManager.OnDead)
+        if (RogicalEntity == null || RogicalEntity.Count == 0 || restartingFromDeath)
         {
             
            // ActiveSlopeReciver = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
@@ -209,11 +212,33 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             startPattern.AddRange(InitialStartPattern);
             //MainGameManager.LimitTouchingphase = 8;
             ContinuousPattern = 0;
-            resumeOnly = GameObject.Find("InSubject").transform.GetComponent<SlopeStickCore>();
-            FirstShift = 0;
-            
 
-           
+            GameObject inSubjectObject =
+                GameObject.Find("InSubject");
+
+            if (inSubjectObject)
+                resumeOnly =
+                    inSubjectObject.GetComponent<SlopeStickCore>();
+
+            FirstShift = 0;
+        }
+
+        // 死亡後の再構築では、VisualPlayerRoot/StageRootを先に初期Poseへ戻す。
+        // この後にSpline/Physics/Visual Stageを生成することで、生成時の座標基準を揃える。
+        if (restartingFromDeath)
+        {
+            if (resumeOnly)
+            {
+                // Soft版: Root Pose復元 + restartFramePreparedを立てるだけ。
+                // drive/stick/Guideの破棄は、0.3秒後にRigidbodyを開始点へ戻す瞬間まで遅延する。
+                resumeOnly.PrepareForStageRebuild();
+            }
+            else
+            {
+                Debug.LogError(
+                    "[STAGE REBUILD] InSubjectのSlopeStickCoreを取得できないため、Visual座標系を復元できません。",
+                    this);
+            }
         }
 
         // Time.timeScale = 0.5f;
@@ -277,16 +302,22 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         for (int i = 0; i < finalCount; i++)
             PrevInclined.Add(points[finalOffset + i]);
        
-        if (MainGameManager.OnDead == true)
-        {
-            StartCoroutine(resumeOnly.delayStart());
-            MainGameManager.OnDead = false;
-        }
-        StartCoroutine(DelayStandOnObject());
-        
         accumulatedSpline = lanes[Center];
+
+        // 再生成したSplineを先にキャッシュへ確定する。
+        // delayStart()は最初に0.3秒yieldするため、ここではRigidbody.velocityには触れない。
         if (knotDetector)
             knotDetector.RebuildCache();
+
+        if (restartingFromDeath)
+        {
+            if (resumeOnly)
+                StartCoroutine(resumeOnly.delayStart());
+
+            MainGameManager.OnDead = false;
+        }
+
+        StartCoroutine(DelayStandOnObject());
     }
 
     void EnsureWorkingBuffers()
@@ -1347,7 +1378,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         int value =
             UnityEngine.Random.Range(0, 10);
 
-        if (value < 1)
+        if (value < 10)
         {
             OnPylon = true;
         }

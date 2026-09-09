@@ -10,11 +10,15 @@ public class MainGameManager : MonoBehaviour
     public TextMeshProUGUI displayScore;
     public TextMeshProUGUI displayCoin;
 
-    public GameObject Userbility;
-    public GameObject TopLiteral;
-    public GameObject PlayButton;
-    public GameObject TopTitle;
-    public GameObject PreviewIconRoot;
+    public static GameObject Userbility;
+    public static GameObject TopLiteral;
+    public static GameObject PlayButton;
+    public static GameObject TopTitle;
+    
+    
+    public static int PointToPlane;
+    
+    public static GameObject PreviewIconRoot;
     public int CurrentPointToPlane = 0;
     public int CurrentCoin = 0;
     public static int lastTouch = 0;
@@ -68,9 +72,9 @@ public class MainGameManager : MonoBehaviour
             LimitTouchingphase = LimitTouchingphase + 8 + del;
             PiercingSpiral.ModifyOverrap = del;
         }
-        if (CurrentPointToPlane != mainDrive.PointToPlane)
+        if (CurrentPointToPlane != PointToPlane)
         {
-            displayScore.text = mainDrive.PointToPlane.ToString("");
+            displayScore.text = PointToPlane.ToString("");
         }
     }
 }

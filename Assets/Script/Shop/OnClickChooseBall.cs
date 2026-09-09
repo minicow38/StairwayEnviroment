@@ -36,13 +36,20 @@ public class OnClickChooseBall : MonoBehaviour
 
         if (!match.Success)
             return;
-
-        if (match.Groups[2].Success)
+        var obj=transform.Find("OnLock");
+        if (obj.transform.gameObject.activeSelf)
         {
-            // BlockInBall (数字)
-            int commodityNumber = int.Parse(match.Groups[2].Value);
+            if (match.Groups[2].Success)
+            {
+                int commodityNumber = int.Parse(match.Groups[2].Value);
+                AndroidOneOnly.LinenapItemList[commodityNumber] = 1;
+            }
+            else
+            {
+                // 名前がちょうど "BlockInBall"
+                AndroidOneOnly.LinenapItemList[0] = 1;
 
-            AndroidOneOnly.LinenapItemList[commodityNumber] = 1;
+            }
 
             AndroidOneOnly.pharseCoin -= 100;
 
@@ -62,35 +69,7 @@ public class OnClickChooseBall : MonoBehaviour
                 itemList,
                 stringPlus
             );
-
-            PlayerPrefs.Save();
-
-            SpherePreviewManager.ConvertedCoin = true;
-        }
-        else
-        {
-            // 名前がちょうど "BlockInBall"
-            AndroidOneOnly.LinenapItemList[0] = 1;
-
-            AndroidOneOnly.pharseCoin -= 100;
-
-            string stringPlus = "";
-
-            for (int i = 0; i < AndroidOneOnly.LinenapItemList.Count; i++)
-            {
-                stringPlus += AndroidOneOnly.LinenapItemList[i].ToString();
-            }
-
-            PlayerPrefs.SetInt(
-                CallForCurrrentCoin,
-                AndroidOneOnly.pharseCoin
-            );
-
-            PlayerPrefs.SetString(
-                itemList,
-                stringPlus
-            );
-
+            obj.transform.gameObject.SetActive(false);
             PlayerPrefs.Save();
             SpherePreviewManager.ConvertedCoin = true;
         }

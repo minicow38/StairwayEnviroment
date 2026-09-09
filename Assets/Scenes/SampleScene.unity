@@ -248,7 +248,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &64372315
 Transform:
   m_ObjectHideFlags: 0
@@ -941,11 +941,6 @@ MonoBehaviour:
   mainDrive: {fileID: 0}
   displayScore: {fileID: 0}
   displayCoin: {fileID: 0}
-  Userbility: {fileID: 0}
-  TopLiteral: {fileID: 0}
-  PlayButton: {fileID: 0}
-  TopTitle: {fileID: 0}
-  PreviewIconRoot: {fileID: 0}
   CurrentPointToPlane: 0
   CurrentCoin: 0
   initRotation: 0
@@ -1682,7 +1677,7 @@ GameObject:
   m_Component:
   - component: {fileID: 350604442}
   m_Layer: 0
-  m_Name: PhsicsRoot
+  m_Name: PhysicsRoot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2478,7 +2473,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 572935008}
-  m_Enabled: 0
+  m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -2533,7 +2528,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e811236a0f754464d9eaa607ed97e5bc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  PointToPlane: 0
   inSubjectBody: {fileID: 1083418863}
   physicsRoot: {fileID: 350604442}
   visualPlayerRoot: {fileID: 1492337658}
@@ -4557,7 +4551,6 @@ MonoBehaviour:
     m_Bits: 1023
   travelDirection: {x: 0, y: 0, z: 1}
   targetSlopeProgressPercent: 30
-  RecoverRotateVisualInPivot: {fileID: 0}
   correspondSubject: {fileID: 572935013}
   physicsRoot: {fileID: 350604442}
   visualPlayerRoot: {fileID: 0}
@@ -4571,7 +4564,7 @@ MonoBehaviour:
   - 90
   - 90
   turnAngle: 45
-  probeDistance: 20
+  probeDistance: 28
   maxSlopeAngle: 75
   supportGraceSeconds: 0.16
   supportGraceMaxGuideDistance: 8

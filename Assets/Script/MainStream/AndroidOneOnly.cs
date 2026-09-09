@@ -51,32 +51,35 @@ public class AndroidOneOnly : MonoBehaviour
             Debug.Log("");
         }
 
-       
+        Debug.Log("");
+
     }
 
     void Start()
     {
-        StartCoroutine(GameManagerStandBySystem());
+       // StartCoroutine(GameManagerStandBySystem());
     }
 
-    IEnumerator GameManagerStandBySystem()
+   /* IEnumerator GameManagerStandBySystem()
     {
         yield return new WaitForSeconds(1f);
+        if(GameObject.Find("subject")!=null)
         mainDrive = GameObject.Find("subject").transform.GetComponent<CorrespondSubject>();
+        if(GameObject.Find("GameManager")!=null)
         mainGameManager= GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
 
-    }
+    }*/
     
     void OnApplicationQuit()
     {
        
-        PlayerPrefs.SetInt(CallForCurrrentScore, mainDrive.PointToPlane);
+        PlayerPrefs.SetInt(CallForCurrrentScore, MainGameManager.PointToPlane);
         PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
 
 
-        if (mainDrive.PointToPlane >bestScore)
+        if (MainGameManager.PointToPlane >bestScore)
         {
-            PlayerPrefs.SetInt(CallForBestScore, mainDrive.PointToPlane);
+            PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
         }
 
         string stringPlus = "";
@@ -85,11 +88,12 @@ public class AndroidOneOnly : MonoBehaviour
             stringPlus += LinenapItemList[i].ToString();
         }
         PlayerPrefs.SetString(itemList,stringPlus);
+        PlayerPrefs.SetInt(CallForCurrrentCoin, 1000);
 
         PlayerPrefs.Save();
 
         Debug.Log(
-            $"Pause時に保存: PointToPlane={mainDrive.PointToPlane}"
+            $"Pause時に保存: PointToPlane={MainGameManager.PointToPlane}"
         );
     }
 }

@@ -614,7 +614,7 @@ public class CoreStepInsertSplinePathNatural1 : MonoBehaviour
         if (!collisionStageRoot)
             collisionStageRoot = FindTransformByPath(collisionStageRootPath);
         if (!collisionStageRoot)
-            collisionStageRoot = FindTransformByPath("/PhsicsRoot/CollisionStageRoot");
+            collisionStageRoot = FindTransformByPath("/PhysicsRoot/CollisionStageRoot");
         if (!renderStageRoot)
             renderStageRoot = FindTransformByPath(renderStageRootPath);
 

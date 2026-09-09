@@ -18,6 +18,7 @@ public class SpherePreviewManager : MonoBehaviour
 
     public static bool ConvertedCoin = false;
     public int commodityNumber = 0;
+    public int lockNumber = 0;
     
     private IEnumerator Start()
     {
@@ -69,6 +70,10 @@ public class SpherePreviewManager : MonoBehaviour
 
         PersonalMaterial[] items =
             content.GetComponentsInChildren<PersonalMaterial>(true);
+        RelieveLockIcon[]viewLocks=
+        content.GetComponentsInChildren<RelieveLockIcon>(true);
+
+        
 
         RenderTexture previousActive = RenderTexture.active;
 
@@ -115,6 +120,17 @@ public class SpherePreviewManager : MonoBehaviour
 
             commodityNumber++;
 
+        }
+        
+        foreach (var OneLock in viewLocks)
+        {
+
+            var jurge = AndroidOneOnly.LinenapItemList[lockNumber];
+            if (jurge == 1)
+            {
+                OneLock.gameObject.SetActive(false);
+            }
+            lockNumber++;
         }
 
         RenderTexture.active = previousActive;

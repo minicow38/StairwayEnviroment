@@ -14,7 +14,6 @@ public sealed class CorrespondSubject : MonoBehaviour
     private bool initialChainLogged;
     const float Epsilon = 0.000001f;
   // public int CurrentPointToPlane = 0;
-  public int PointToPlane;
 
     [Header("Inertial Physics Frame")] [Tooltip("PhysicsRoot上で物理計算を行うInSubjectのRigidbodyです。")] [SerializeField]
     Rigidbody inSubjectBody;
@@ -46,6 +45,16 @@ public sealed class CorrespondSubject : MonoBehaviour
     [SerializeField] Ease turnEase = Ease.InOutCubic;
 
     Tween turnTween;
+
+    // Scene初期状態のVisual/Stage座標系を保存します。
+    // VisualPlayerRootはworld Pose、StageRootは親との関係を保つためlocal Poseで保持します。
+    bool hasInitialVisualPlayerRootPose;
+    Vector3 initialVisualPlayerRootPosition;
+    Quaternion initialVisualPlayerRootRotation = Quaternion.identity;
+
+    bool hasInitialStageRootPose;
+    Vector3 initialStageRootLocalPosition;
+    Quaternion initialStageRootLocalRotation = Quaternion.identity;
 
     [Header("Synchronization")] [SerializeField]
     bool synchronizeInFixedUpdate = true;
@@ -207,7 +216,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             $"[CHAIN MAP] " +
             $"reason={reason} " +
             $"time={Time.fixedTime:F3} " +
-            $"turn={PointToPlane} " +
+            $"turn={MainGameManager.PointToPlane} " +
             $"inPos={inSubjectBody.position:F3} " +
             $"mappedPos={mappedPos:F3} " +
             $"subjectPos={subjectBody.position:F3} " +
@@ -239,6 +248,7 @@ public sealed class CorrespondSubject : MonoBehaviour
         }
 
         FindStageTurnReferences();
+        CaptureInitialFramePose();
         ConfigureSubjectBody();
         ValidateSetup();
     }
@@ -266,6 +276,8 @@ public sealed class CorrespondSubject : MonoBehaviour
         if (rotatingVisualPlayerRoot)
             visualPlayerRoot = rotatingVisualPlayerRoot;
 
+        FindStageTurnReferences();
+        CaptureInitialFramePose();
         ConfigureSubjectBody();
         ValidateSetup();
     }
@@ -300,6 +312,112 @@ public sealed class CorrespondSubject : MonoBehaviour
             stageRoot = stagePivot;
     }
 
+    /// <summary>
+    /// まだ一度も旋回していないScene初期状態を保存します。
+    /// 未取得の参照だけ保存するため、Bind後に呼び直しても初期値を上書きしません。
+    /// </summary>
+    public void CaptureInitialFramePose()
+    {
+        FindStageTurnReferences();
+
+        if (!hasInitialVisualPlayerRootPose && visualPlayerRoot)
+        {
+            initialVisualPlayerRootPosition =
+                visualPlayerRoot.position;
+
+            initialVisualPlayerRootRotation =
+                visualPlayerRoot.rotation;
+
+            hasInitialVisualPlayerRootPose = true;
+        }
+
+        if (!hasInitialStageRootPose &&
+            stageRoot &&
+            stageRoot != visualPlayerRoot)
+        {
+            initialStageRootLocalPosition =
+                stageRoot.localPosition;
+
+            initialStageRootLocalRotation =
+                stageRoot.localRotation;
+
+            hasInitialStageRootPose = true;
+        }
+    }
+
+    /// <summary>
+    /// 現在動いているStage/Visual旋回Tweenだけを停止します。
+    /// 今後のRotateVisualFrameAround()/BeginStageTurn()は通常どおり再作成できます。
+    /// </summary>
+    public bool CancelVisualFrameTurn(
+        bool synchronizeImmediately = false)
+    {
+        bool cancelled = false;
+
+        if (turnTween != null)
+        {
+            if (turnTween.IsActive())
+            {
+                turnTween.Kill();
+                cancelled = true;
+            }
+
+            turnTween = null;
+        }
+
+        if (synchronizeImmediately)
+            SynchronizeNow(true);
+
+        return cancelled;
+    }
+
+    /// <summary>
+    /// VisualPlayerRootと、別Transformとして回転したStageRootをScene初期Poseへ戻します。
+    /// 先にTweenを停止するため、復元直後に古いTweenから再上書きされません。
+    /// </summary>
+    public bool RestoreInitialFramePose(
+        bool synchronizeImmediately = true)
+    {
+        FindStageTurnReferences();
+        CaptureInitialFramePose();
+
+        // 古いTweenだけを停止してからPoseを戻す。
+        // Rigidbody.velocityやInSubjectのdirectionには触れない。
+        CancelVisualFrameTurn(false);
+
+        bool restored = false;
+
+        if (hasInitialVisualPlayerRootPose && visualPlayerRoot)
+        {
+            visualPlayerRoot.SetPositionAndRotation(
+                initialVisualPlayerRootPosition,
+                initialVisualPlayerRootRotation);
+
+            restored = true;
+        }
+
+        // StageRootはlocal Poseで戻すことで、VisualPlayerRootとの親子関係があっても破綻しません。
+        if (hasInitialStageRootPose &&
+            stageRoot &&
+            stageRoot != visualPlayerRoot)
+        {
+            stageRoot.localPosition =
+                initialStageRootLocalPosition;
+
+            stageRoot.localRotation =
+                initialStageRootLocalRotation;
+
+            restored = true;
+        }
+
+        Physics.SyncTransforms();
+
+        if (synchronizeImmediately)
+            SynchronizeNow(true);
+
+        return restored;
+    }
+
     public void TurnStageLeft()
     {
         BeginStageTurn(-Mathf.Abs(turnAngle));
@@ -317,6 +435,7 @@ public sealed class CorrespondSubject : MonoBehaviour
     public void BeginStageTurn(float playerAngle)
     {
         FindStageTurnReferences();
+        CaptureInitialFramePose();
 
         if (!stageRoot || !stagePivot)
         {
@@ -338,7 +457,7 @@ public sealed class CorrespondSubject : MonoBehaviour
         float stageMultiplier =
             stageTurnsOppositeToPlayer ? -1f : 1f;
 
-        turnTween?.Kill();
+        CancelVisualFrameTurn(false);
 
         void Apply(float angle)
         {
@@ -408,7 +527,9 @@ public sealed class CorrespondSubject : MonoBehaviour
         if (!visualPlayerRoot)
             return false;
 
-        turnTween?.Kill();
+        FindStageTurnReferences();
+        CaptureInitialFramePose();
+        CancelVisualFrameTurn(false);
 
         Vector3 visualStartPosition =
             visualPlayerRoot.position;
@@ -514,7 +635,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             .OnComplete(() =>
             {
                 //Time.timeScale = 0.125f;
-                PointToPlane++;
+                MainGameManager.PointToPlane++;
                 Apply(1f);
                 turnTween = null;
             });
@@ -789,8 +910,7 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     void OnDestroy()
     {
-        turnTween?.Kill();
-        turnTween = null;
+        CancelVisualFrameTurn(false);
     }
 
     static Quaternion NormalizeSafe(Quaternion value)
@@ -815,4 +935,3 @@ public sealed class CorrespondSubject : MonoBehaviour
         );
     }
 }
-
