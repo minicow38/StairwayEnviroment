@@ -42,26 +42,9 @@ public class DirectionDall : MonoBehaviour
     // Update is called once per frame
     void OnCollisionEnter(Collision col)
     {
-        Match match = Regex.Match(col.transform.name, @"^(\w*)(\d*)_(\d*)_(Physics)");
-        var AroundStairway = Physics.OverlapSphere(col.transform.position, 5f);
-        for (int i = 0; i < AroundStairway.Length; i++)
-        {
-            if (AroundStairway[i].transform.name == col.transform.name)
-            {
-               var dir= AroundStairway[i].transform.position - AroundStairway[i - 1].transform.position;
-               var objName=match.Groups[1].Value + "_" + match.Groups[3].Value+"_"+ ("Render");
+        Match match = Regex.Match(AroundStairwayRenderer[1].transform.name, @"^(\w*)(\d*)_(\d*)_(Physics)");
+        var objName=match.Groups[1].Value + "_" + match.Groups[3].Value+"_"+ ("Render");
 
-               Debug.Log("");
-            }
-        }
-        Debug.Log("");
-        if (match.Success)
-        {
-            var objName=match.Groups[1].Value + "_" + match.Groups[3].Value+"_"+ ("Render");
-            
-           var ExCahngeObj=GameObject.Find(objName);
-            int step = 0;
-        }
         Debug.Log("");
     }
     
