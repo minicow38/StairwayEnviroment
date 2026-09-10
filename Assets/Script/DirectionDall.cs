@@ -72,7 +72,7 @@ public class DirectionDall : MonoBehaviour
 
         for (int arcHit = 0; arcHit<AroundStairwayPhysics.Count; arcHit++)
         {
-            if (Regex.Match(AroundStairwayPhysics[arcHit].name, @"ArchSlab.*").Success)
+            if (Regex.Match(AroundStairwayPhysics[arcHit].name, @"ArcSlab.*").Success)
             {
                 currrentArcHit = arcHit;
                 break;
@@ -91,19 +91,29 @@ public class DirectionDall : MonoBehaviour
 
         if (direction.x == 0)
         {
-            transform.rotation = Quaternion.Euler(0, -180, 0);
+            if (direction.z > 0)
+            {
+                transform.rotation = Quaternion.Euler(0, 180, 0);
+            }
+            else
+            {
+                transform.rotation = Quaternion.Euler(0, -180, 0);
+            }
+        }
+        else
+        {
+            Debug.Log("");
+            if(direction.z==0 && direction.x>0)
+            {
+                transform.rotation = Quaternion.Euler(0, 90, 0);
+
+            }else
+            {
+                transform.rotation = Quaternion.Euler(0, -90, 0);
+            }
         }
 
-        Debug.Log("");
-        if(direction.z==0 && direction.x>0)
-        {
-            transform.rotation = Quaternion.Euler(0, 90, 0);
-
-        }else
-        {
-            transform.rotation = Quaternion.Euler(0, -90, 0);
-
-        }
+       
       
 
 
