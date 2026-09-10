@@ -88,7 +88,7 @@ public class AndroidOneOnly : MonoBehaviour
             stringPlus += LinenapItemList[i].ToString();
         }
         PlayerPrefs.SetString(itemList,stringPlus);
-        PlayerPrefs.SetInt(CallForCurrrentCoin, 1000);
+        PlayerPrefs.SetInt(CallForCurrrentCoin, pharseCoin);
 
         PlayerPrefs.Save();
 

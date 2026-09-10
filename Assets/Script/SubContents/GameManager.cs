@@ -14,6 +14,7 @@ public class MainGameManager : MonoBehaviour
     public static GameObject TopLiteral;
     public static GameObject PlayButton;
     public static GameObject TopTitle;
+    public static Collider[] VisualPlayerChildCollider;
     
     
     public static int PointToPlane;
@@ -37,6 +38,9 @@ public class MainGameManager : MonoBehaviour
         var width = Screen.width;
         LimitTouchingphase = 0;
         CurrentPointToPlane = CurrentPointToPlane;
+        
+         VisualPlayerChildCollider=GameObject.Find("VisualPlayerRoot").transform.GetComponentsInChildren<SphereCollider>();
+
         mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();
         
