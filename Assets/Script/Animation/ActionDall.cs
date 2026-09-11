@@ -7,18 +7,31 @@ using Unity.VisualScripting;
 using UnityEditor.Rendering;
 
 
-public class DirectionDall : MonoBehaviour
+public class ActionDall : MonoBehaviour
 {
     public Rigidbody rb;
     public string ContactNum = "";
     public  Collider[] AroundStairway;
     public float[] resouceY;
     public List<GameObject> AroundStairwayPhysics;
+    
+    [Header("KnockBack")]
+    public float knockBackPower = 60f;
+    public float knockUpPower = 25f;
+    public float knockTorque = 3f;
+
+    private bool knockedBack = false;
+    
+    
+    public Animator anime;
    
     // Start is called before the first frame update
     void Start()
     {
         resouceY = new float[3];
+        anime = transform.GetComponent<Animator>();
+        rb = GetComponent<Rigidbody>();
+       
     }
 
      void FixedUpdate()
@@ -35,6 +48,7 @@ public class DirectionDall : MonoBehaviour
                     
                 }
             }
+
 
            /* if (AroundStairwayRenderer.Count== 1)
             {
@@ -58,11 +72,56 @@ public class DirectionDall : MonoBehaviour
             rb.isKinematic = true;
             PhyOnMob.transform.SetParent(AroundStairwayPhysics[1].transform);*/
 
-            Debug.Log("");
+            Debug.Log(""); 
+            //transform.GetComponent<CapsuleCollider>().isTrigger = true;
         }
     }
 
-   
+    void OnTriggerEnter(Collider other)
+    {
+        if (other.transform.name == "InSubject")
+        {
+            if (knockedBack)
+                return;
+
+            knockedBack = true;
+
+            // KnockBackアニメーション
+            anime.SetBool("KnockSwitch", true);
+
+            Rigidbody ballRb = other.attachedRigidbody;
+
+            Vector3 knockDirection;
+
+            if (ballRb != null && ballRb.velocity.sqrMagnitude > 0.01f)
+            {
+                // ボールが飛んできた方向へ、そのまま押し出す
+                knockDirection = ballRb.velocity.normalized;
+            }
+            else
+            {
+                // velocityが取れない場合の保険
+                knockDirection =
+                    (transform.position - other.transform.position).normalized;
+            }
+
+            // 少し上方向にも吹き飛ばす
+            Vector3 impulse =
+                knockDirection * knockBackPower
+                + Vector3.up * knockUpPower;
+
+            rb.AddForce(
+                impulse,
+                ForceMode.Impulse
+            );
+
+            // 少し回転も加えると、吹き飛ばされた感じが出る
+            rb.AddTorque(
+                transform.right * knockTorque,
+                ForceMode.Impulse
+            );
+        }
+    }
     // Update is called once per frame
     void OnCollisionEnter(Collision col)
     {
@@ -85,12 +144,11 @@ public class DirectionDall : MonoBehaviour
 
             var localAngle = col.transform.localEulerAngles;
             transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y + 180, localAngle.z);
+            transform.GetComponent<CapsuleCollider>().isTrigger = true;
+            rb.constraints = RigidbodyConstraints.FreezePositionY;
+
 
             int fit = 0;
-        }
-        else
-        {
-            
         }
 
         Debug.Log("");
