@@ -29,7 +29,11 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     [SerializeField] NearestKnotDetector knotDetector;
     [SerializeField] LayerMask groundMask = ~0;
-
+    
+    [SerializeField] LayerMask EnemyMask = ~0;
+    
+    
+    public Transform overlapBoxVisual;
     [Header("Travel")]
     [SerializeField] Vector3 travelDirection = Vector3.forward;
     
@@ -708,7 +712,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         // 呼んだ場合だけ、下のrestartPreparedがtrueになる。
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
-        MainGameManager.LimitTouchingphase = 9;
+
         Vector3 restart =
             startSlab.transform.position;
 
@@ -731,6 +735,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             direction = Vector3.forward;
         }
 
+        MainGameManager.LimitTouchingphase = 9;
         turnTargetDirection = direction;
 
         rb.position =
@@ -811,10 +816,21 @@ public sealed class SlopeStickCore : MonoBehaviour
         }
         
         currentSupported = true;
+        
+        Surface surface = BuildSplineSurface(guide);
 
+        if (!surface.Valid)
+        {
+            currentSurfaceValid = false;
+            return;
+        }
+
+        currentSurface = surface;
+        currentSurfaceValid = true;
         // Slopeへの切替そのものもSpline判定。
         if (guide.isSlope && !wasSlope)
         {
+           
             
            // mainGameManager.lastTouch=
            
@@ -823,6 +839,9 @@ public sealed class SlopeStickCore : MonoBehaviour
            
            if (matched.Success && visualRotationPivot.transform.rotation != Quaternion.identity)
            {
+               Vector3 slopeDirection = surface.tangent.normalized;
+               Vector3 slopeNormal = surface.normal.normalized;
+
                var array=matched.Groups[1].Value.Split("_");
                int shiftNum = int.Parse(array[0]);
                string topStairway=
@@ -840,7 +859,29 @@ public sealed class SlopeStickCore : MonoBehaviour
                var stiarwayEntrance=GameObject.Find(middleStairway);
                var GoDownStairway = GameObject.Find(SlipOffStairway);
                var GoDownPlane = GameObject.Find(SlipOffPlane);
+               
+               float length = 30f;
 
+
+               
+
+               Vector3 halfExtents =
+                   new Vector3(
+                       15f,
+                       15f,
+                       length * 0.5f
+                   );
+
+               Vector3 boxCenter =
+                   transform.position +
+                   slopeDirection * (length * 0.5f);
+
+               var RayHitEnemy = Physics.OverlapBox(
+                   boxCenter,
+                   halfExtents,
+                   GoDownStairway.transform.rotation
+               );
+             
                foldInBefore.transform.GetComponent<MeshCollider>().enabled = false;
                foldInAfter.transform.GetComponent<MeshCollider>().enabled = false;
                
@@ -853,10 +894,14 @@ public sealed class SlopeStickCore : MonoBehaviour
             driveState = 0f;
             TransportToSpline(guide);
         }
+        else
+        {
+            
+            int num = 0;
+        }
 
         // Collider法線は使わない。
         // tangent / normal は必ずSpline Guideから構築。
-        Surface surface = BuildSplineSurface(guide);
 
         if (!surface.Valid)
         {
@@ -1104,19 +1149,20 @@ public sealed class SlopeStickCore : MonoBehaviour
         Vector3 velocityBefore = rb.velocity;
 
         // 前後位置と接地高さは保持し、横成分だけ最寄り5ラインへ合わせる。
-        rb.position =
+        
+        /*rb.position =
             rb.position +
-            side * bestSignedError;
+            side * bestSignedError;*/
 
         // 残った横速度だけをゼロへする。
         // 法線方向の接地運動や、正方向の接線速度は保存する。
-        float lateralSpeed =
+        /*float lateralSpeed =
             Vector3.Dot(
                 rb.velocity,
                 surface.side);
 
         rb.velocity -=
-            surface.side * lateralSpeed;
+            surface.side * lateralSpeed;*/
 
         // 旋回後に新しいSplineと逆向きへ進む成分だけ除去する。
         float tangentSpeed =
@@ -1855,5 +1901,34 @@ public sealed class SlopeStickCore : MonoBehaviour
 
         float t = Mathf.Clamp01(Mathf.InverseLerp(start, end, value));
         return t * t * t * (t * (t * 6f - 15f) + 10f);
+    }
+    private void OnDrawGizmos()
+    {
+        Vector3 halfExtents = new Vector3(5f, 5f, 5f);
+
+        Quaternion rotation = Quaternion.Euler(
+            new Vector3(
+                transform.localEulerAngles.x,
+                transform.localEulerAngles.y - 180f,
+                transform.localEulerAngles.z
+            )
+        );
+
+        Gizmos.color = Color.red;
+
+        // OverlapBoxと同じ位置・回転にする
+        Gizmos.matrix = Matrix4x4.TRS(
+            transform.position,
+            rotation,
+            Vector3.one
+        );
+
+        // OverlapBoxはhalfExtentsなので、Gizmosでは2倍する
+        Gizmos.DrawWireCube(
+            Vector3.zero,
+            halfExtents * 2f
+        );
+
+        Gizmos.matrix = Matrix4x4.identity;
     }
 }

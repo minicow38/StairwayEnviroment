@@ -359,7 +359,6 @@ MonoBehaviour:
   synchronized: 1
   phase: 0
   emergencyVisualRecoveryActive: 0
-  postTurnHermiteBridgeActive: 0
   emergencyVisualRecoveryDuration: 0
   emergencyVisualRecoveryProgress01: 0
   emergencyVisualRecoveryInitialDistance: 0
@@ -2004,12 +2003,6 @@ MonoBehaviour:
   postTurnEqualizerNormalSpeedRatioToMaxGround: 0.33333334
   postTurnFallbackMaxGroundSpeed: 24
   postTurnDetectionMinimumAccumulatedAngleDeg: 20
-  enablePostTurnHermiteBridge: 1
-  postTurnHermiteDuration: 0.1
-  postTurnHermitePositionTolerance: 0.05
-  postTurnHermiteVelocityTolerance: 0.3
-  postTurnHermiteMaximumRetargetSegments: 1
-  postTurnIncidentHoldFixedFrames: 2
   oscillationReferenceHeight: 0.45
   firstPopVelocitySquaredRatio: 0.01533
   minimumEnergyScaledPopHeight: 0.08
@@ -2535,7 +2528,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e811236a0f754464d9eaa607ed97e5bc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  PointToPlane: 0
   inSubjectBody: {fileID: 1083418863}
   physicsRoot: {fileID: 350604442}
   visualPlayerRoot: {fileID: 1492337658}
@@ -4548,7 +4540,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 264172cbfccfe4aad9703e8ceefb4592, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
-  maxGroundSpeed: 16
+  maxGroundSpeed: 24
   GroundAcceleration: 35
   activeTimeScale: 0
   TargetAccelerationLimit: 120
@@ -4557,6 +4549,9 @@ MonoBehaviour:
   groundMask:
     serializedVersion: 2
     m_Bits: 1023
+  EnemyMask:
+    serializedVersion: 2
+    m_Bits: 8192
   travelDirection: {x: 0, y: 0, z: 1}
   targetSlopeProgressPercent: 30
   correspondSubject: {fileID: 572935013}

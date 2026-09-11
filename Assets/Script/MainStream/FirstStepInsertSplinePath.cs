@@ -110,7 +110,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     List<int> startPattern =
         new List<int>(InitialStartPattern);
 
-    private Vector3[] ShiftCoint =
+    private Vector3[] ShiftObj =
     {
         new Vector3(-3f, 0, 0),
         new Vector3(0, 0, 0),
@@ -1377,8 +1377,12 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // 10%で生成
         int value =
             UnityEngine.Random.Range(0, 10);
+        int widthObj =
+            UnityEngine.Random.Range(0, ShiftObj.Length);
+        float localX = ShiftObj[widthObj].x;
 
-        if (value < 10)
+
+        if (value < 3)
         {
             OnPylon = true;
         }
@@ -1386,29 +1390,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (!OnPylon)
             return false;
 
-        if (!PylonPrefab ||
-            !ActiveStairway1 ||
-            !ActiveStairway2)
+        if (!PylonPrefab || !ActiveStairway1 || !ActiveStairway2)
         {
             return false;
         }
-
-        // =====================================================
-        // 階段ローカル座標
-        // =====================================================
-        //
-        // X : 階段の左右
-        // Y : 階段面からの高さ
-        // Z : 階段の前後
-        //
-        // 階段中心を必ず (0, 0, 0) とする。
-        // =====================================================
+      
 
         Vector3 localPylonPosition =
-            new Vector3(
-                -3.3f,
-                0.5f,
-                0);
+            new Vector3(localX, 0.5f, 0);
 
 
         // =====================================================
@@ -1473,10 +1462,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         return true;
     }
 
-    bool GenerateCoin(
-        float angle,
-        GameObject ActiveStairway1,
-        GameObject ActiveStairway2)
+    bool GenerateCoin(float angle, GameObject ActiveStairway1, GameObject ActiveStairway2)
     {
         // 20%で生成
         bool onCoin =
@@ -1491,118 +1477,38 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         {
             return false;
         }
+        
+        int widthObj =
+            UnityEngine.Random.Range(0, ShiftObj.Length);
 
-        // =====================================================
-        // 横方向
-        // =====================================================
-
-        // ShiftCoint は
-        //
-        // -3
-        //  0
-        // +3
-        //
-        // の3レーンなので 0～2 を選ぶ。
-        int widthCoin =
-            UnityEngine.Random.Range(
-                0,
-                ShiftCoint.Length);
-
-        float localX =
-            ShiftCoint[widthCoin].x;
-
-
-        // =====================================================
-        // Coin数
-        // =====================================================
-
-        // 1～4個
+        float localX = ShiftObj[widthObj].x;
+        
         int coinCount =
             UnityEngine.Random.Range(1, 5);
 
-
-        // =====================================================
-        // Coin生成
-        // =====================================================
-
         for (int i = 0; i < coinCount; i++)
         {
-            // -------------------------------------------------
-            // Coin列全体を階段中心 z=0 の周囲に配置
-            // -------------------------------------------------
 
-            float totalLength =
-                (coinCount - 1) *
-                coinSpacing;
+            float totalLength = (coinCount - 1) * coinSpacing;
 
-            float startZ =
-                -totalLength * 0.5f;
+            float startZ = -totalLength * 0.5f;
 
-            float localZ =
-                startZ +
-                coinSpacing * i;
-
-
-            // =================================================
-            // 階段ローカル座標
-            // =================================================
-
-            Vector3 localCoinPosition =
-                new Vector3(
-                    localX,
-                    coinLocalHeight + 1.5f,
-                    localZ);
-
-
-            // =================================================
-            // Physics
-            // =================================================
-
+            float localZ = startZ + coinSpacing * i;
+            
+            Vector3 localCoinPosition = new Vector3(localX, coinLocalHeight + 1.5f, localZ);
+            
             GameObject physicsCoin =
-                Instantiate(
-                    CoinPrefab,
-                    ActiveStairway1.transform);
+                Instantiate(CoinPrefab,ActiveStairway1.transform);
 
-            physicsCoin.transform.localPosition =
-                localCoinPosition;
+            physicsCoin.transform.localPosition = localCoinPosition;
 
-            physicsCoin.transform.localRotation =
-                Quaternion.identity;
+            physicsCoin.transform.localRotation = Quaternion.identity;
 
+            GameObject visualCoin = Instantiate(CoinPrefab, ActiveStairway2.transform);
 
-            // =================================================
-            // Visual
-            // =================================================
+            visualCoin.transform.localPosition = localCoinPosition;
 
-            GameObject visualCoin =
-                Instantiate(
-                    CoinPrefab,
-                    ActiveStairway2.transform);
-
-            visualCoin.transform.localPosition =
-                localCoinPosition;
-
-            visualCoin.transform.localRotation =
-                Quaternion.identity;
-
-
-            // =================================================
-            // Debug
-            // =================================================
-
-            Debug.Log(
-                $"[COIN LOCAL] " +
-                $"stair={ActiveStairway1.name}, " +
-                $"angleY={angle:F2}, " +
-                $"coin={i}/{coinCount}, " +
-                $"local={localCoinPosition}, " +
-                $"physicsWorld={physicsCoin.transform.position}, " +
-                $"visualWorld={visualCoin.transform.position}");
-
-
-            // =================================================
-            // Name
-            // =================================================
+            visualCoin.transform.localRotation = Quaternion.identity;
 
             physicsCoin.name =
                 $"Coin_{i}_Physics_{physicsCoin.GetInstanceID()}";
@@ -1610,21 +1516,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             visualCoin.name =
                 $"Coin_{i}_Visual_{visualCoin.GetInstanceID()}";
 
-
-            // =================================================
-            // Physics側は非表示
-            // =================================================
-
             foreach (Renderer renderer in
                      physicsCoin.GetComponentsInChildren<Renderer>(true))
             {
                 renderer.enabled = false;
             }
-
-
-            // =================================================
-            // Visual側はCollider無効
-            // =================================================
 
             foreach (Collider collider in
                      visualCoin.GetComponentsInChildren<Collider>(true))
