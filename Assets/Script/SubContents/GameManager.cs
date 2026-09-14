@@ -14,6 +14,7 @@ public class MainGameManager : MonoBehaviour
     public static GameObject TopLiteral;
     public static GameObject PlayButton;
     public static GameObject TopTitle;
+    public static GameObject DropOut;
     public static Collider[] VisualPlayerChildCollider;
     
     
@@ -26,6 +27,7 @@ public class MainGameManager : MonoBehaviour
     public static int Coin = 0;
     public static bool OnDead = false;
     public static bool OpenChunkStage = false;
+    public static SlopeStickCore core;
     public bool initRotation = false;
     public Vector3 VisualRoatationPlayer;
 
@@ -48,8 +50,12 @@ public class MainGameManager : MonoBehaviour
        PreviewIconRoot= GameObject.Find("GameUI/PreviewIconRoot").transform.gameObject;
         TopLiteral = GameObject.Find("GameUI/TopLiteral").transform.gameObject;
         PlayButton= GameObject.Find("GameUI/PlayButton").transform.gameObject;
+        DropOut=GameObject.Find("GameUI/DropOut").transform.gameObject;
         PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = Coin.ToString();
         TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.currentScore.ToString("");
+
+        DropOut.SetActive(false);
+
 
         TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
             AndroidOneOnly.bestScore.ToString("");

@@ -66,7 +66,10 @@ public class GettingTraffic_Corn : MonoBehaviour
             {
                 mainGameManager.VisualRoatationPlayer = PhysicsMul.transform.rotation.eulerAngles;
                // MainGameManager.VisualRoatationPlayer = PhysicsMul.transform.rotation.eulerAngles;
-
+               MainGameManager.core.BeginCommandOnTouch = false;
+               if(!MainGameManager.OnDead)
+                   StartCoroutine(MainGameManager.core.Recover());
+               MainGameManager.OnDead = true;
                 StartCoroutine(delayResume());
               
             }
@@ -79,13 +82,12 @@ public class GettingTraffic_Corn : MonoBehaviour
 
     IEnumerator delayResume()
     {
-        yield return new WaitForSeconds(0.1f);
-        Debug.Log("Natto");
-        MainGameManager.OnDead = true;
+        yield return new WaitForSeconds(0.5f);
+        MainGameManager.DropOut.SetActive(true);
         MainGameManager.OpenChunkStage = true;
-       // MainGameManager.LimitTouchingphase = 0;
-
-        Destroy(PhysicsMul.transform.gameObject);
+        yield return new WaitForSeconds(1f);
+        MainGameManager.DropOut.SetActive(false);
+        MainGameManager.OnDead = false;
 
 
     }

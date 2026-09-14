@@ -15,6 +15,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float ResponseInverse = 8.333333f;
     const float AccelerationJerk = 600f;
 
+    public GameObject OnGround;
+
     const float TargetMinDistance = .27f;
     [SerializeField]public float TargetAccelerationLimit = 120f;
     const float PostTargetBlendWidth = .05f;
@@ -100,7 +102,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
 
     [Header("PlayerMotivation")] [SerializeField]
-    private bool BeginCommandOnTouch = false;
+    public bool BeginCommandOnTouch = false;
     [Header("Debug")]
     [SerializeField] bool logCore;
 
@@ -803,6 +805,21 @@ public sealed class SlopeStickCore : MonoBehaviour
         correspondSubject?.SynchronizeNow(true);
     }
 
+    public IEnumerator Recover()
+    {
+        
+        yield return new WaitForSeconds(0.5f);
+        MainGameManager.DropOut.SetActive(true);
+        MainGameManager.OpenChunkStage = true;
+        yield return new WaitForSeconds(1f);
+        MainGameManager.DropOut.SetActive(false);
+        MainGameManager.OnDead = false;
+
+
+
+        //rb.isKinematic = false;
+    }
+
     // ================================================================
     // Main
     // ================================================================
@@ -848,6 +865,30 @@ public sealed class SlopeStickCore : MonoBehaviour
         else
             graceTimer = Mathf.Max(0f, graceTimer - Time.fixedDeltaTime);
 
+        if (hit.transform != null)
+        {
+            OnGround = hit.transform.gameObject;
+        }
+        else
+        {
+            if (OnGround != null)
+            {
+                float distance = Vector3.Distance(OnGround.transform.position, transform.position);
+                if (distance > 12)
+                {
+                   
+                    
+                    BeginCommandOnTouch = false;
+                    if(!MainGameManager.OnDead)
+                    StartCoroutine(Recover());
+                    MainGameManager.OnDead = true;
+                }
+            }
+            else
+            {
+                BeginCommandOnTouch = false;
+            }
+        }
         float load = grounded ? 0f : SupportLoad(guide);
         bool grace = !grounded && graceTimer > 0f && load <= 1f && CanGrace(guide);
 
@@ -980,13 +1021,9 @@ public sealed class SlopeStickCore : MonoBehaviour
         // This runs only after turn-guide handoff has completed.
         if (BeginCommandOnTouch == true)
         {
-            UpdateBallVisualSplinePlan(
-                guide,
-                surface);
+            UpdateBallVisualSplinePlan(guide, surface);
 
-            float release = guide.isSlope
-                ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd)
-                : 1f;
+            float release = guide.isSlope ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd) : 1f;
 
             float desiredDrive = DesiredDrive(surface, guide, grace) * release;
             driveState = Move(driveState, desiredDrive, AccelerationJerk);
