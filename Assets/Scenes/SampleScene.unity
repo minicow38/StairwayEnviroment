@@ -291,8 +291,8 @@ MonoBehaviour:
   spatialMomentumBiasStartNormalSpeed: 0.75
   spatialMomentumBiasFullNormalSpeed: 4
   spatialMomentumMinimumCarrierGain: 0.35
-  spatialWaveAccelerationBudget: 1800
-  spatialWaveJerkBudget: 12000
+  spatialWaveAccelerationBudget: 450
+  spatialWaveJerkBudget: 2500
   spatialWaveFeedForward: 1
   spatialReferenceTangentSpeed: 16
   maximumSpatialSpeedRatio: 1.5
@@ -302,7 +302,7 @@ MonoBehaviour:
   spatialCatchUpSpeedHeadroom01: 0.75
   spatialMaximumCatchUpAcceleration: 180
   spatialGoalVelocityAcceleration: 160
-  enableStrongInitialLogicalLaunch: 1
+  enableStrongInitialLogicalLaunch: 0
   initialLogicalLaunchNormalSpeedMultiplier: 1.2
   maximumSpeedAwareLaunchNormalSpeedMultiplier: 1.4
   launchBoostReferenceTangentSpeed: 16
@@ -310,15 +310,15 @@ MonoBehaviour:
   maximumSourceNormalSpeedForLaunchBoost: 8
   maximumBoostedLogicalLaunchNormalSpeed: 8
   useDampedFirstAscent: 1
-  firstAscentInitialVelocityRatio: 0.7
-  firstAscentRampLambda: 32
+  firstAscentInitialVelocityRatio: 0.4
+  firstAscentRampLambda: 12
   firstAscentMaximumDuration: 0.35
   firstAscentExtraDamperRatio: 0.5
-  firstAscentMaximumAcceleration: 120
-  firstAscentMaximumJerk: 700
+  firstAscentMaximumAcceleration: 50
+  firstAscentMaximumJerk: 250
   firstAscentSolidRecoveryStart01: 0.65
   firstAscentSolidRecoveryFull01: 0.85
-  rideSpringStrength: 420
+  rideSpringStrength: 180
   rideSpringDamper: 18
   gravityCompensation: 1
   maximumRideAcceleration: 450
@@ -351,7 +351,6 @@ MonoBehaviour:
   enableTerminalSpatialTransportAssist: 1
   terminalSpatialTransportAssistStartProgress01: 0.8
   terminalSpatialTransportAssistMultiplier: 1.5
-  useEmergencyHermiteReacquire: 1
   resumeSynchronizationSnapDistance: 0.05
   emergencyReacquireMinimumDuration: 0.18
   emergencyReacquireMaximumDuration: 0.75
@@ -359,12 +358,19 @@ MonoBehaviour:
   synchronized: 1
   phase: 0
   emergencyVisualRecoveryActive: 0
+  postTurnHermiteBridgeActive: 0
   emergencyVisualRecoveryDuration: 0
   emergencyVisualRecoveryProgress01: 0
   emergencyVisualRecoveryInitialDistance: 0
   waveCycleIndex: 0
   current4RHnMeters: 0
   current4RHnR: 0
+  currentUpperNormalSpanMeters: 0
+  currentUpperNormalSpanR: 0
+  currentUpperTargetDirectionVisual: {x: 0, y: 1, z: 0}
+  upperPlacementEnergyRatio: 1
+  upperPlacementRequiredEnergyJoule: 0
+  upperPlacementInitialSpeedScale: 1
   observedNaturalPeriodSeconds: 0
   rideTargetHeight: 0
   rideActualHeight: 0
@@ -1992,9 +1998,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d99a3c00274420c4c9f57fc2708a4a3d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  guttnJurge: 0
   slopeCore: {fileID: 1083418876}
   BallVisualEqualizer: {fileID: 64372316}
   respondSubject: {fileID: 572935013}
+  turnLandingIntentRetentionSeconds: 3
   preLimitTargetHeightRelativeToSubject: 0.45
   limitFirstPopAfterTurn: 1
   postTurnMaximumIncidentNormalSpeed: 2.4
@@ -2045,6 +2053,7 @@ MonoBehaviour:
   emergencyVisualVelocityTolerance: 0.3
   enableDebugLog: 1
   logEveryFixedFrames: 10
+  RawTimeJurge: 0
 --- !u!1 &434412093
 GameObject:
   m_ObjectHideFlags: 0
@@ -2528,10 +2537,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e811236a0f754464d9eaa607ed97e5bc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  PointToPlane: 0
   inSubjectBody: {fileID: 1083418863}
   physicsRoot: {fileID: 350604442}
   visualPlayerRoot: {fileID: 1492337658}
   ballVisualBody: {fileID: 423131474}
+  ballVisualSlopeDrive: {fileID: 0}
   subjectBody: {fileID: 572935014}
   stageRoot: {fileID: 0}
   stagePivot: {fileID: 0}
@@ -4542,31 +4553,29 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
   maxGroundSpeed: 24
   GroundAcceleration: 35
-  activeTimeScale: 0
   TargetAccelerationLimit: 120
-  mainGameManager: {fileID: 0}
   knotDetector: {fileID: 156220176}
   groundMask:
     serializedVersion: 2
     m_Bits: 1023
-  EnemyMask:
-    serializedVersion: 2
-    m_Bits: 8192
   travelDirection: {x: 0, y: 0, z: 1}
   targetSlopeProgressPercent: 30
   correspondSubject: {fileID: 572935013}
+  ballVisualSlopeDrive: {fileID: 423131475}
   physicsRoot: {fileID: 350604442}
   visualPlayerRoot: {fileID: 0}
   visualRotationPivot: {fileID: 0}
   visualRootTurnsOppositeToInput: 1
   minimumFlickPixels: 10
-  flickStrengthBandRatio: 1.8
-  flickTurnAngleSteps:
-  - 90
-  - 90
-  - 90
-  - 90
-  turnAngle: 45
+  turnPathRadiusMeters: 1.2
+  turnPathMinimumFixedSteps: 4
+  turnPathMaximumDurationSeconds: 0.14
+  turnPathMinimumReferencePlanarSpeed: 1
+  logTurnPath: 0
+  energyTargetPassToleranceMeters: 0.08
+  fiveLineCorrectionDurationSeconds: 0.1
+  fiveLineMaximumCorrectionMeters: 0.75
+  logTurnPolicy: 1
   probeDistance: 28
   maxSlopeAngle: 75
   supportGraceSeconds: 0.16
@@ -4577,7 +4586,6 @@ MonoBehaviour:
   stickSafety: 1.08
   BeginCommandOnTouch: 0
   logCore: 0
-  sub: {fileID: 0}
 --- !u!114 &1083418877
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4892,6 +4900,7 @@ MonoBehaviour:
   inSubjectCollider: {fileID: 1083418864}
   segmentCount: 32
   envelopeWidth: 10
+  upperColliderCenterYOffsetY: 0
   preferredContactPeriodSeconds: 0.16
   presentationCeilingR:
     serializedVersion: 2
@@ -5029,6 +5038,10 @@ MonoBehaviour:
   presentationCurrentLegacyTimeRetention01: 1
   presentationCurrentRawLegacyRetention01: 1
   presentationCurrentAppliedRetention01: 1
+  appliedUpperColliderCenterYOffsetY: 0
+  resolvedUpperColliderNormalShiftMeters: 0
+  resolvedUpperColliderEffectiveSpanMeters: 0
+  resolvedUpperColliderTargetDirectionVisual: {x: 0, y: 1, z: 0}
   maxGroundSpeedExperimentCycleIndex: 0
   maxGroundSpeedReadAvailable: 0
   sourceMaxGroundSpeedReadOnly: 0

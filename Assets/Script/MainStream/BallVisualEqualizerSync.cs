@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Sirenix.OdinInspector;
 
 /// <summary>
 /// GuiltyStairway - Floating Rigidbody Equalizer.
@@ -29,6 +30,7 @@ using UnityEngine;
 /// There is NO Transform animation while released.
 /// SlopeStickCore.maxGroundSpeed is READ ONLY.
 /// </summary>
+[Searchable]
 [DisallowMultipleComponent]
 public sealed class BallVisualEqualizerSync : MonoBehaviour
 {
@@ -514,10 +516,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 // ================================================================
 
     [Header("Emergency Visual Reacquire")]
-    [Tooltip("ResumeSynchronization時にBallVisualとの距離が大きい場合、hard snapせず相対Hermiteで回収します。")]
-    [SerializeField]
-    private bool useEmergencyHermiteReacquire = true;
-
     [Tooltip("この距離[m]以下だけ通常のCopyBallVisualPoseによる最終一致を許可します。")] [Min(0.001f)] [SerializeField]
     private float resumeSynchronizationSnapDistance = 0.05f;
 
@@ -542,6 +540,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [Header("Emergency Reacquire Runtime - Read Only")] [SerializeField]
     private bool emergencyVisualRecoveryActive;
 
+    [Header("Post Turn Hermite Bridge Runtime - Read Only")] [SerializeField]
+    private bool postTurnHermiteBridgeActive;
+
     [SerializeField] private float emergencyVisualRecoveryDuration;
     [SerializeField] private float emergencyVisualRecoveryProgress01;
     [SerializeField] private float emergencyVisualRecoveryInitialDistance;
@@ -550,6 +551,26 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     [SerializeField] private float current4RHnMeters;
     [SerializeField] private float current4RHnR;
+
+    [Header("Upper Placement Runtime - Read Only")]
+    [Tooltip("World-Y配置補正後の実Upper接触面までのStable-N中心距離[m]。")]
+    [SerializeField] private float currentUpperNormalSpanMeters;
+
+    [Tooltip("World-Y配置補正後の実Upper接触面までのStable-N中心距離[R]。")]
+    [SerializeField] private float currentUpperNormalSpanR;
+
+    [Tooltip("現在のEqualizer位置から実Upper接触中心へ向かう方向。診断/追跡参照用。Stable-N面法線は別Authorityとして維持します。")]
+    [SerializeField] private Vector3 currentUpperTargetDirectionVisual = Vector3.up;
+
+    [Tooltip("実Upper span / 元の4R-Hn。1未満ならColliderを下げたぶん到達Energy基準も減ります。")]
+    [SerializeField] private float upperPlacementEnergyRatio = 1f;
+
+    [Tooltip("元のLogical Launch Energyへ実Upper span/4R-Hnを掛けた配置対応Energy基準[J]。厳密な外力仕事量ではなく、初速過剰を防ぐEnergy scaleです。")]
+    [SerializeField] private float upperPlacementRequiredEnergyJoule;
+
+    [Tooltip("配置対応Energy比から得る初回上昇の速度Scale。Colliderを下げた時だけ1未満になり、上げてもEnergyは新規生成しません。")]
+    [SerializeField] private float upperPlacementInitialSpeedScale = 1f;
+
     [SerializeField] private float observedNaturalPeriodSeconds;
 
     [SerializeField] private float rideTargetHeight;
@@ -777,6 +798,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     public bool IsSynchronized => synchronized;
     public bool IsEmergencyVisualRecoveryActive => emergencyVisualRecoveryActive;
+    public bool IsPostTurnHermiteBridgeActive => postTurnHermiteBridgeActive;
 
     public EqualizerPhase Phase => phase;
 
@@ -1004,7 +1026,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private Vector3 ReadSubjectVelocityVisual()
     {
         if (HasMappedSubject)
-            return correspondSubject.Mappedvelocity;
+            return correspondSubject.MappedVelocity;
 
         if (subjectBody &&
             subjectBody != ballVisual)
@@ -1208,6 +1230,16 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         Vector3 sourceEnergyAxisVisual)
     {
         ResolveReferences();
+
+        // PostTurn Hermite中はVisual Frameの座標変換を新しい衝突Energyへ変換しない。
+        // BallVisualSlopeDrive側でもIncidentをGateするが、Equalizer側にも二重Guardを置く。
+        if (postTurnHermiteBridgeActive)
+        {
+            Debug.Log(
+                "[EQUALIZER POST TURN RELEASE SUPPRESSED] Hermite bridge owns visual continuity.",
+                this);
+            return false;
+        }
 
         if (!ballVisual ||
             !ballVisualEqualizer ||
@@ -1467,6 +1499,65 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             return false;
         }
 
+        // ------------------------------------------------------------
+        // Upper Collider vertical placement -> first-ascent Energy scale
+        // ------------------------------------------------------------
+        // Envelope/4R-Hn is intentionally left untouched. After the actual
+        // Upper Mesh has been shifted in World-Y, read that SAME resolved frame
+        // and reduce only the physical first-ascent normal speed when the
+        // effective Stable-N distance became shorter.
+        if (negativeEnvelope.TryGetFloatingRideFrame(
+                out Vector3 placementLowerCenter,
+                out _,
+                out Vector3 placementUpperCenter,
+                out _,
+                out Vector3 placementNormal,
+                out float placementSpanMeters,
+                out _,
+                out _))
+        {
+            if (placementNormal.sqrMagnitude > Epsilon)
+                placementNormal.Normalize();
+            else
+                placementNormal = normal;
+
+            UpdateUpperPlacementDiagnostics(
+                placementLowerCenter,
+                placementUpperCenter,
+                placementNormal,
+                placementSpanMeters);
+
+            float placementSpeedScale =
+                Mathf.Clamp01(
+                    upperPlacementInitialSpeedScale);
+
+            if (placementSpeedScale < 0.999999f)
+            {
+                physicalInitialNormalSpeed *=
+                    placementSpeedScale;
+
+                canonicalLaunchVelocity =
+                    planarTransportVelocity +
+                    normal * physicalInitialNormalSpeed;
+
+                physicalInitialEnergyJoule =
+                    0.5f *
+                    EqualizerMass *
+                    physicalInitialNormalSpeed *
+                    physicalInitialNormalSpeed;
+
+                firstAscentActualInitialNormalSpeed =
+                    physicalInitialNormalSpeed;
+
+                firstAscentStoredEnergyJoule =
+                    useDampedFirstAscent
+                        ? Mathf.Max(
+                            0f,
+                            envelopeEnergyJoule - physicalInitialEnergyJoule)
+                        : 0f;
+            }
+        }
+
         if (negativeEnvelope.TryGetLatestOscillationFrameVisual(
                 out Vector3 envelopeTangent,
                 out Vector3 envelopeNormal))
@@ -1598,11 +1689,21 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         phase = EqualizerPhase.FreeFlight;
 
-        if (negativeEnvelope.TryGetCurrentPresentationCenterTravel(
-                out current4RHnMeters,
-                out current4RHnR))
+        if (negativeEnvelope.TryGetFloatingRideFrame(
+                out Vector3 releaseLowerCenter,
+                out _,
+                out Vector3 releaseUpperCenter,
+                out _,
+                out Vector3 releaseStableNormal,
+                out float releaseEffectiveSpanMeters,
+                out _,
+                out _))
         {
-            // diagnostics updated
+            UpdateUpperPlacementDiagnostics(
+                releaseLowerCenter,
+                releaseUpperCenter,
+                releaseStableNormal,
+                releaseEffectiveSpanMeters);
         }
 
         Debug.Log(
@@ -1617,8 +1718,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             $"launchVT={logicalLaunchReferenceTangentSpeed:F3}m/s " +
             $"firstAscent={firstAscentDampingActive} " +
             $"firstStoredE={firstAscentStoredEnergyJoule:F4}J " +
-            $"span={current4RHnMeters:F4}m " +
-            $"spanR={current4RHnR:F3}R " +
+            $"raw4RHn={current4RHnMeters:F4}m " +
+            $"upperSpan={currentUpperNormalSpanMeters:F4}m " +
+            $"upperEnergyRatio={upperPlacementEnergyRatio:F3} " +
+            $"upperRequiredE={upperPlacementRequiredEnergyJoule:F4}J " +
+            $"upperSpeedScale={upperPlacementInitialSpeedScale:F3} " +
             $"mode={waveTimingMode} " +
             $"waves={(waveTimingMode == WaveTimingMode.ThreeWavesPerStair ? spatialWavesPerStair : 0)} " +
             $"masterT=None",
@@ -1681,8 +1785,16 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 lateral = lateral
             };
 
-        current4RHnMeters = spanMeters;
-        current4RHnR = spanR;
+        UpdateUpperPlacementDiagnostics(
+            lowerCenter,
+            upperCenter,
+            normal,
+            spanMeters);
+
+        // spanR is the effective shifted Upper span returned by the Envelope.
+        // Keep it in the dedicated runtime field; current4RHnR remains the
+        // unshifted 4R-Hn diagnostic from TryGetCurrentPresentationCenterTravel.
+        currentUpperNormalSpanR = spanR;
 
         if (observedPeriod > 0f)
             observedNaturalPeriodSeconds = observedPeriod;
@@ -2299,6 +2411,68 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         return Mathf.Max(
             0.0001f,
             ballVisualEqualizerCollider.radius * maximumScale);
+    }
+
+
+    private void UpdateUpperPlacementDiagnostics(
+        Vector3 lowerCenter,
+        Vector3 upperCenter,
+        Vector3 stableNormal,
+        float effectiveSpanMeters)
+    {
+        // 4R-Hn is kept as the unshifted canonical geometry.
+        // The moved Collider supplies a separate effective Stable-N span.
+        if (negativeEnvelope &&
+            negativeEnvelope.TryGetCurrentPresentationCenterTravel(
+                out float raw4RHnMeters,
+                out float raw4RHnR))
+        {
+            current4RHnMeters = raw4RHnMeters;
+            current4RHnR = raw4RHnR;
+        }
+
+        currentUpperNormalSpanMeters =
+            Mathf.Max(0f, effectiveSpanMeters);
+
+        float radius =
+            ResolveEqualizerWorldRadius();
+
+        currentUpperNormalSpanR =
+            radius > Epsilon
+                ? currentUpperNormalSpanMeters / radius
+                : 0f;
+
+        Vector3 toUpper =
+            upperCenter - ballVisualEqualizer.position;
+
+        currentUpperTargetDirectionVisual =
+            toUpper.sqrMagnitude > Epsilon
+                ? toUpper.normalized
+                : stableNormal;
+
+        // Placement Energy law:
+        //     E_upper = E_launch * D_effective / D_(4R-Hn)
+        //
+        // This does NOT rewrite 4R-Hn or create extra Energy. It only removes
+        // the portion of the initial normal kinetic Energy that is no longer
+        // needed when the whole Upper plane is moved downward.
+        upperPlacementEnergyRatio =
+            current4RHnMeters > Epsilon
+                ? Mathf.Max(
+                    0f,
+                    currentUpperNormalSpanMeters / current4RHnMeters)
+                : 1f;
+
+        upperPlacementRequiredEnergyJoule =
+            Mathf.Max(0f, logicalLaunchEnergyJoule) *
+            upperPlacementEnergyRatio;
+
+        // Raising Upper may require more Energy, but this class must never
+        // manufacture it. Only downward placement can reduce first-ascent speed.
+        upperPlacementInitialSpeedScale =
+            Mathf.Sqrt(
+                Mathf.Clamp01(
+                    upperPlacementEnergyRatio));
     }
 
 
@@ -3376,11 +3550,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         // Do not sample while PhysX is still constraining the body at Upper.
         // Wait until the ball has clearly left Upper and is descending.
         float releaseHeight =
-            current4RHnMeters *
+            currentUpperNormalSpanMeters *
             Mathf.Clamp01(
                 impactMeasurementReleaseHeight01);
 
-        if (current4RHnMeters > Epsilon &&
+        if (currentUpperNormalSpanMeters > Epsilon &&
             (rideActualHeight > releaseHeight ||
              relativeNormalVelocity >= 0f))
         {
@@ -3925,15 +4099,73 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
-    public void ResumeSynchronization1()
+    [System.Obsolete("Use ResumeSynchronization().")]
+    public void ResumeSynchronization1() => ResumeSynchronization();
+
+    [System.Obsolete("Use ResumeSynchronization().")]
+    public void ResumeSynchronization2() => ResumeSynchronization();
+
+
+    // ================================================================
+    // Post Turn Hermite Bridge
+    // ================================================================
+    // BallVisualSlopeDriveが旋回直後の短いHermite区間を所有している間、
+    // Equalizerは新しいRelease Energyを作らない。
+    // すでにSynchronizedならBallVisual poseをそのまま追従し、
+    // 非同期状態なら既存の相対Hermite Reacquireを同じ時間予算で開始する。
+
+    public void BeginPostTurnHermiteBridge(float suggestedDuration = 0.10f)
     {
-        ResumeSynchronization();
+        ResolveReferences();
+
+        postTurnHermiteBridgeActive = true;
+
+        if (!ballVisual ||
+            !ballVisualEqualizer)
+        {
+            return;
+        }
+
+        if (synchronized)
+        {
+            // FixedUpdate / Equalizeの通常CopyBallVisualPoseを継続する。
+            // Energy / phase / Upper衝突イベントは新規生成しない。
+            CopyBallVisualPose();
+
+            Debug.Log(
+                $"[EQUALIZER POST TURN BRIDGE BEGIN] " +
+                $"mode=Synchronized duration={Mathf.Max(0f, suggestedDuration):F4}s",
+                this);
+            return;
+        }
+
+        // 旋回入力がActive Equalizer中に来た例外ケース。
+        // hard snapではなく、既存の相対HermiteでBallVisualへ回収する。
+        BeginEmergencyVisualRecovery(
+            Mathf.Max(0.05f, suggestedDuration));
+
+        Debug.Log(
+            $"[EQUALIZER POST TURN BRIDGE BEGIN] " +
+            $"mode=RelativeHermite duration={Mathf.Max(0f, suggestedDuration):F4}s",
+            this);
     }
 
 
-    public void ResumeSynchronization2()
+    public void EndPostTurnHermiteBridge()
     {
-        ResumeSynchronization();
+        postTurnHermiteBridgeActive = false;
+
+        // synchronized=trueなら何もしない。
+        // RelativeHermiteがちょうど完了していれば既にSynchronizedへ戻っている。
+        // まだRecovery中なら、その連続軌道を壊さず完了まで任せる。
+        if (synchronized)
+            CopyBallVisualPose();
+
+        Debug.Log(
+            $"[EQUALIZER POST TURN BRIDGE END] " +
+            $"synchronized={synchronized} " +
+            $"recoveryActive={emergencyVisualRecoveryActive}",
+            this);
     }
 
 

@@ -14,6 +14,7 @@ public sealed class CorrespondSubject : MonoBehaviour
     private bool initialChainLogged;
     const float Epsilon = 0.000001f;
   // public int CurrentPointToPlane = 0;
+  public int PointToPlane;
 
     [Header("Inertial Physics Frame")] [Tooltip("PhysicsRoot上で物理計算を行うInSubjectのRigidbodyです。")] [SerializeField]
     Rigidbody inSubjectBody;
@@ -27,6 +28,9 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     [Header("Turn Followers")] [SerializeField]
     Rigidbody ballVisualBody;
+
+    [Tooltip("BallVisualのPose ownership判定。PhysicalDrive/Rejoin中はこのクラスから書き込みません。")]
+    [SerializeField] BallVisualSlopeDrive ballVisualSlopeDrive;
 
     [Header("Mapped Subject")] [Tooltip("回転後座標を受け取るSubjectのRigidbodyです。Kinematicにしてください。")] [SerializeField]
     Rigidbody subjectBody;
@@ -71,7 +75,6 @@ public sealed class CorrespondSubject : MonoBehaviour
     public Vector3 mappedvelocity;
     public Vector3 mappedAngularVelocity;
     bool sameBodyErrorLogged;
-    bool frameErrorLogged;
     
     public bool IsVisualFrameTurning =>
         turnTween != null &&
@@ -87,12 +90,6 @@ public sealed class CorrespondSubject : MonoBehaviour
     /// <summary>
     /// PhysicsRootからVisualPlayerRootへの現在の回転写像です。
     /// </summary>
-    ///
-    void Start()
-    {
-       // PointToPlane=AndroidOneOnly.bestScore;
-    }
-    
     public Quaternion CoordinateRotation
     {
         get
@@ -157,11 +154,6 @@ public sealed class CorrespondSubject : MonoBehaviour
     /// InSubjectの姿勢をVisualPlayerRoot側の姿勢へ写した結果です。
     /// InSubject自身の物理回転と、座標系の回転はここで初めて合成されます。
     /// </summary>
-    void OnCollisionEnter(Collision collision)
-    {
-        // Debug.Log("");
-    }
-
     public Quaternion MappedRotation =>
         inSubjectBody
             ? CoordinateRotation * inSubjectBody.rotation
@@ -172,23 +164,22 @@ public sealed class CorrespondSubject : MonoBehaviour
     /// <summary>
     /// VisualPlayerRootの回転による公転成分も含むSubject側の見かけの速度です。
     /// </summary>
-    public Vector3 Mappedvelocity
+    public Vector3 MappedVelocity
     {
         get
         {
             if (hasVelocitySample)
-            {
                 return mappedvelocity;
-            }
 
-            if (inSubjectBody)
-            {
-                return MapDirection(inSubjectBody.velocity);
-            }
-
-            return Vector3.zero;
+            return inSubjectBody
+                ? MapDirection(inSubjectBody.velocity)
+                : Vector3.zero;
         }
     }
+
+    // 既存コード互換。新規コードでは MappedVelocity を使用する。
+    [System.Obsolete("Use MappedVelocity instead.")]
+    public Vector3 Mappedvelocity => MappedVelocity;
     private void DebugChainCheckpoint(string reason)
     {
         if (!inSubjectBody || !subjectBody)
@@ -216,7 +207,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             $"[CHAIN MAP] " +
             $"reason={reason} " +
             $"time={Time.fixedTime:F3} " +
-            $"turn={MainGameManager.PointToPlane} " +
+            $"turn={PointToPlane} " +
             $"inPos={inSubjectBody.position:F3} " +
             $"mappedPos={mappedPos:F3} " +
             $"subjectPos={subjectBody.position:F3} " +
@@ -485,7 +476,6 @@ public sealed class CorrespondSubject : MonoBehaviour
             .SetUpdate(UpdateType.Fixed)
             .OnComplete(() =>
             {
-                //PointToPlane++;
                 Apply(playerAngle);
                 turnTween = null;
             });
@@ -522,7 +512,8 @@ public sealed class CorrespondSubject : MonoBehaviour
     public bool RotateVisualFrameAround(
         Vector3 pivot,
         Quaternion worldTurn,
-        bool synchronizeImmediately = true)
+        bool synchronizeImmediately = true,
+        System.Action<float> turnProgress = null)
     {
         if (!visualPlayerRoot)
             return false;
@@ -584,20 +575,6 @@ public sealed class CorrespondSubject : MonoBehaviour
                 )
             );
 
-            if (logInvalidSetup)
-            {
-                Debug.Log(
-                    $"[TURN FRAME] " +
-                    $"pivot={pivot:F4} " +
-                    $"currentTurn={currentTurn.eulerAngles:F2} " +
-                    $"visualRelative={visualRelative:F4} " +
-                    $"stageRelative={stageRelative:F4} " +
-                    $"visualPlayerRoot={visualPlayerRoot.position:F4} " +
-                    $"stageRoot={(stageRoot ? stageRoot.position.ToString("F4") : "N/A")} " +
-                    $"mappedSubject={MappedPosition:F4}"
-                );
-            }
-
             // -------------------------
             // VisualStage
             // -------------------------
@@ -617,7 +594,10 @@ public sealed class CorrespondSubject : MonoBehaviour
                 );
             }
 
-            // ★ここが今回最重要
+            // SlopeStickCoreへ同じTween進行率を返す。
+            // 物理位置を飛ばさず、水平速度/directionだけを同じtで回すための通知。
+            turnProgress?.Invoke(t);
+
             // Stage/VisualRootを動かした「同じTween tick」で
             // SubjectとBallVisualも移動させる。
             if (synchronizeImmediately)
@@ -634,8 +614,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             .SetUpdate(UpdateType.Fixed)
             .OnComplete(() =>
             {
-                //Time.timeScale = 0.125f;
-                MainGameManager.PointToPlane++;
+                PointToPlane++;
                 Apply(1f);
                 turnTween = null;
             });
@@ -714,25 +693,30 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     void SynchronizeTurnFollowers()
     {
-        // まずSubjectを現在のVisualPlayerRootへ写す
+        // まずSubjectを現在のVisualPlayerRootへ写す。
         SynchronizeNow(true);
 
-        // BallVisualも「同じ瞬間」に写す
-        if (ballVisualBody)
-        {
-            ballVisualBody.transform.localPosition =
-                visualPlayerRoot.InverseTransformPoint(MappedPosition);
+        if (!ballVisualSlopeDrive && ballVisualBody)
+            ballVisualSlopeDrive = ballVisualBody.GetComponent<BallVisualSlopeDrive>();
 
-            ballVisualBody.transform.localRotation =
-                Quaternion.Inverse(visualPlayerRoot.rotation) *
-                MappedRotation;
+        // BallVisualSlopeDriveが軌道/再結合を所有している間は、
+        // CorrespondSubjectからBallVisual Poseへ二重書き込みしない。
+        bool mayWriteBallVisual =
+            ballVisualBody &&
+            (!ballVisualSlopeDrive || !ballVisualSlopeDrive.OwnsBallVisualPose);
 
-            if (ballVisualBody.isKinematic)
-            {
-                ballVisualBody.velocity = Vector3.zero;
-                ballVisualBody.angularVelocity = Vector3.zero;
-            }
-        }
+        if (!mayWriteBallVisual)
+            return;
+
+        ballVisualBody.transform.localPosition =
+            visualPlayerRoot.InverseTransformPoint(MappedPosition);
+
+        ballVisualBody.transform.localRotation =
+            Quaternion.Inverse(visualPlayerRoot.rotation) *
+            MappedRotation;
+
+        // Kinematic Rigidbodyへvelocity/angularVelocityを書かない。
+        // Transform同期だけで十分で、PhysX warningも防げる。
     }
 
     public void ResetDerivedVelocitySample()
