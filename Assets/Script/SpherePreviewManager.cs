@@ -19,7 +19,7 @@ public class SpherePreviewManager : MonoBehaviour
     public static bool ConvertedCoin = false;
     public int commodityNumber = 0;
     public int lockNumber = 0;
-    
+    public static GameObject[] BackGrounds;
     private IEnumerator Start()
     {
         commodityNumber = 0;
@@ -27,7 +27,18 @@ public class SpherePreviewManager : MonoBehaviour
         yield return null;
         GameObject.Find("Main Camera/UICamera/CoinLimit").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
             AndroidOneOnly.pharseCoin.ToString();
-
+        BackGrounds = GameObject.FindGameObjectsWithTag("BallCollection");
+        
+        
+        System.Array.Sort(BackGrounds, (a, b) =>
+            a.transform.parent.GetSiblingIndex()
+                .CompareTo(b.transform.parent.GetSiblingIndex())
+        );
+        foreach (var indivisualBack in BackGrounds)
+        {
+            indivisualBack.transform.gameObject.SetActive(false);
+        }
+        Debug.Log("");
         GenerateAllThumbnails();
     }
 

@@ -17,13 +17,15 @@ public class AndroidOneOnly : MonoBehaviour
     public MainGameManager mainGameManager;
 
     public CorrespondSubject mainDrive;
+    
+    public GameObject[] BackGrounds;
     public static int pharseCoin = 0;
     public static int currentScore = 0;
     public static int UsingBallNow=0;
     public static int bestScore = 0;
     public static string MiddleItemList;
     public static List<int> LinenapItemList;
-
+    
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     static void InitOncePerLaunch()
     {

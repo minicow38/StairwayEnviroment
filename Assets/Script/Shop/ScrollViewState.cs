@@ -8,6 +8,12 @@ public class ScrollViewState : MonoBehaviour,
 {
     public static bool IsDragging { get; private set; }
 
+    void Start()
+    {
+       
+    }
+
+    
     public  void OnBeginDrag(PointerEventData eventData)
     {
         IsDragging = true;

@@ -11,6 +11,7 @@ public class OnClickChooseBall : MonoBehaviour
     readonly string CallForCurrrentCoin = "CallForCurrrentCoin";
     readonly string itemList = "itemList";
     private readonly string UsingBallNow = "ActiveUselessBall";
+    public GameObject[] BakcGround;
     
     void Start()
     {
@@ -31,20 +32,20 @@ public class OnClickChooseBall : MonoBehaviour
             return;
 
         Match match = Regex.Match(
-            transform.name,
-            @"^(BlockInBall)(?:\s*\((\d+)\))?$"
+            transform.parent.name,
+            @"^(RappingBlock)(?:\s*\((\d+)\))?$"
         );
 
         if (!match.Success)
             return;
-        var obj=transform.Find("OnLock");
+        var IsExstict=transform.parent.Find("BlockInBall/OnLock");
         
             bool WBooking = false;
             int commodityNumber = 0;
 
             if (match.Groups[2].Success)
             {
-                commodityNumber = int.Parse(match.Groups[2].Value);
+                commodityNumber = int.Parse(match.Groups[2].Value) - 1;
                 
                 WBooking=AndroidOneOnly.LinenapItemList[commodityNumber] == 1 ? true : false;
                 
@@ -55,11 +56,12 @@ public class OnClickChooseBall : MonoBehaviour
             else
             {
                 // 名前がちょうど "BlockInBall"
+                commodityNumber = 0;
                 AndroidOneOnly.LinenapItemList[0] = 1;
 
             }
 
-            if (obj.transform.gameObject.activeSelf)
+            if (IsExstict.transform.gameObject.activeSelf)
             {
                 AndroidOneOnly.pharseCoin -= 100;
 
@@ -79,12 +81,18 @@ public class OnClickChooseBall : MonoBehaviour
                     itemList,
                     stringPlus
                 );
-                obj.transform.gameObject.SetActive(false);
+                IsExstict.transform.gameObject.SetActive(false);
                 SpherePreviewManager.ConvertedCoin = true;
 
             }
             else
             {
+                GameObject[] CollectionLinenap = SpherePreviewManager.BackGrounds;
+                for (int beginAllLinenap = 0; beginAllLinenap < CollectionLinenap.Length; beginAllLinenap++)
+                {
+                    CollectionLinenap[beginAllLinenap].transform.gameObject.SetActive(false);
+                }
+                CollectionLinenap[commodityNumber].transform.gameObject.SetActive(true);
                 AndroidOneOnly.UsingBallNow = commodityNumber;
                 PlayerPrefs.SetInt(UsingBallNow, commodityNumber);
 
