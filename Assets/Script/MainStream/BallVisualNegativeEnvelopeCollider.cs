@@ -13,7 +13,7 @@ using UnityEditor;
 /// BallVisualEqualizer専用のUpper Envelopeと4R-Hn/Spline基準を提供します。
 ///
 /// 有効な物理仕様は次の1系統だけです。
-///   Lower : SlopeStickCoreの連続Spline surface
+///   Lower : SlopeStickCoreの連続Spline surface (geometry only)
 ///   Hybrid decay signal:
 ///       q_time(t) = exp(-gamma * t)
 ///       q_energy(t) = min(epsilon, lerp(1, q_time, waveTimeDecayInfluence))
@@ -38,8 +38,8 @@ using UnityEditor;
 /// LowerはVirtual Turnpointです。物理Lower Collider/Trigger/Pressは生成しません。
 /// Equalizer自身の直下Spline射影をLower中心とし、現在Presentation center travelを
 /// Upper中心までのHybrid Wave振幅としてSyncへ公開します。
-/// Upper経験後の下降終盤だけは、Lower近傍のSmoothStep profileをSyncへ公開し、
-/// Spring/Damperの減衰比率を弱めて下降速度を人工的に殺さないようにします。
+/// Stable-N Hybrid制御はBallVisualEqualizerSyncが所有し、
+/// このComponentはVirtual Lowerの幾何/投影情報だけを公開します。
 ///
 /// S(T) は以前成功した300-400m/s^2帯の中心値を基準に [2R,4R] で保持します。
 /// gammaはReleaseからExact LimitまでのSpline移動時間から一度だけ求めます。
@@ -52,25 +52,12 @@ using UnityEditor;
 [DisallowMultipleComponent]
 public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 {
-[System.Serializable]
-public struct DescendingLowerDecayProfile
-{
-public bool active;
-public float bandMeters;
-public float nearLower01;
-public float heightNearLower01;
-public float timeNearLower01;
-public float timeToVirtualLowerSeconds;
-public float damperRatio01;
-public float restoringBrakeRatio01;
-}
-
 // ================================================================
-// FLOATING RIGIDBODY ENVELOPE 2026-08-31
-// Upper is a physical impact boundary. Virtual Lower is a live under-Spline
-// authority boundary, NOT a physical collider. Real StairWay contact is the
-// Physical Lower and may feed measured energy retention into the next wave.
-// Sync owns jerk-limited normal acceleration and velocity-deficit catch-up.
+// FLOATING RIGIDBODY ENVELOPE 2026-09-14
+// Upper is a physical impact boundary. Virtual Lower is geometry only here.
+// BallVisualEqualizerSync owns Stable-N Hybrid control; there is no independent
+// Lower-specific damping/rebound controller and no physical Lower Collider.
+// Sync also keeps transport/catch-up control.
 // No master phase clock is imposed on the Rigidbody.
 // ================================================================
 
@@ -153,33 +140,8 @@ private float minimumPresentationCeilingR = 0.05f;
 [SerializeField, HideInInspector]
 private float waveTimeDecayInfluence = 0.35f;
 
-[Header("Descending Lower Boundary Decay Preservation")]
-
-[Tooltip(
-    "ON: Accepted Upper後の下降中だけ、Virtual Lower近傍で減衰比率を弱めます。\n" +
-    "Upper高さ4R-HnやEnvelope Meshは廃止せず、SyncへSmoothStep profileだけを公開します。")]
-[SerializeField] private bool useDescendingLowerBoundaryDecayPreservation = true;
-
-[Tooltip(
-    "Virtual Lower直前でrideSpringDamperをここまで弱めます。\n" +
-    "0.12なら通常Damperの12%。0にはせず波形の連続性を残します。")]
-[Range(0.01f, 1f)]
-[SerializeField] private float minimumDescendingLowerDamperRatio01 = 0.12f;
-
-[Tooltip(
-    "下降速度を止める向き(+Stable-N)の復元AccelerationをLower直前でここまで残します。\n" +
-    "DamperだけでなくSpring/重力補償由来のブレーキも弱めるための比率です。")]
-[Range(0.01f, 1f)]
-[SerializeField] private float minimumDescendingLowerRestoringBrakeRatio01 = 0.20f;
-
-[Tooltip(
-    "24m/s対応。高さbandへ入る前でもVirtual Lower到達予測時間が短ければ弱減衰を先行開始します。")]
-[SerializeField] private bool useTimeToVirtualLowerDecayLead = true;
-
-[Tooltip(
-    "予測Virtual Lower到達がこの秒数以内なら時間側Boundary Blendを開始します。")]
-[Range(0.02f, 0.25f)]
-[SerializeField] private float descendingLowerTimeLeadSeconds = 0.10f;
+// Virtual Lower remains geometry/projection only; damping is owned by the Equalizer Stable-N hybrid controller.
+// This Envelope exports geometry only for the Lower boundary.
 
 [Header("Equalizer Projection Continuity - 24m/s")]
 
@@ -342,13 +304,6 @@ private bool armed;
 [SerializeField] private Vector3 equalizerUnderNormalVisual = Vector3.up;
 [SerializeField] private float equalizerUnderClearanceMeters;
 [SerializeField] private bool equalizerUnderProjectionValid;
-
-[Header("Descending Lower Decay Runtime - Read Only")]
-[SerializeField] private bool descendingLowerDecayProfileActive;
-[SerializeField] private float descendingLowerDecayBandMeters;
-[SerializeField, Range(0f, 1f)] private float descendingLowerNear01;
-[SerializeField, Range(0f, 1f)] private float descendingLowerDamperRatio01 = 1f;
-[SerializeField, Range(0f, 1f)] private float descendingLowerRestoringBrakeRatio01 = 1f;
 
 [Header("Arrival Terminal Gate - Read Only")]
 [SerializeField] private bool arrivalTerminalActive;
@@ -522,7 +477,7 @@ private bool pausedInspectorPreviewQueued;
 
 private void Awake()
 {
-    Debug.Log("[ENVELOPE BUILD] UpperYOffset-PausePreview-20260913", this);
+    Debug.Log("[ENVELOPE BUILD] NaturalConnect-GeometryOnly-20260915-E", this);
     ResolveReferences();
     CaptureLiveSettingsSnapshot();
 }
@@ -3017,159 +2972,8 @@ public bool TryGetFloatingRideFrame(
 }
 
 
-/// <summary>
-/// Accepted Upper後の下降終盤だけ有効になるVirtual Lower近傍の減衰Profile。
-/// 4R-Hn / Upper Mesh / exp(-gamma*t)そのものは壊さず、
-/// Rigidbody controllerへ「どの程度Damperと復元ブレーキを弱めるか」を返します。
-///
-/// nearLower01:
-///   0 = Boundary Layer外
-///   1 = Virtual Lower
-/// </summary>
-public bool TryResolveDescendingLowerDecayProfile(
-    float signedHeightFromVirtualLower,
-    float relativeNormalVelocity,
-    bool physicalUpperSeen,
-    float boundaryBandR,
-    out DescendingLowerDecayProfile profile)
-{
-    profile =
-        new DescendingLowerDecayProfile
-        {
-            active = false,
-            bandMeters = 0f,
-            nearLower01 = 0f,
-            heightNearLower01 = 0f,
-            timeNearLower01 = 0f,
-            timeToVirtualLowerSeconds = float.PositiveInfinity,
-            damperRatio01 = 1f,
-            restoringBrakeRatio01 = 1f
-        };
-
-    float radius =
-        Mathf.Max(
-            0.0001f,
-            ResolveEqualizerWorldRadius());
-
-    float bandMeters =
-        Mathf.Max(
-            0.001f,
-            radius * Mathf.Max(0.10f, boundaryBandR));
-
-    profile.bandMeters = bandMeters;
-
-    bool descendingAfterUpper =
-        useDescendingLowerBoundaryDecayPreservation &&
-        physicalUpperSeen &&
-        relativeNormalVelocity < 0f;
-
-    if (!descendingAfterUpper)
-    {
-        descendingLowerDecayProfileActive = false;
-        descendingLowerDecayBandMeters = bandMeters;
-        descendingLowerNear01 = 0f;
-        descendingLowerDamperRatio01 = 1f;
-        descendingLowerRestoringBrakeRatio01 = 1f;
-        return false;
-    }
-
-    float distance01 =
-        Mathf.Clamp01(
-            Mathf.Max(0f, signedHeightFromVirtualLower) /
-            bandMeters);
-
-    float heightNearLower01 =
-        signedHeightFromVirtualLower < bandMeters
-            ? 1f -
-              Mathf.SmoothStep(
-                  0f,
-                  1f,
-                  distance01)
-            : 0f;
-
-    float timeToVirtualLower =
-        relativeNormalVelocity < -0.0001f
-            ? Mathf.Max(
-                0f,
-                signedHeightFromVirtualLower) /
-              -relativeNormalVelocity
-            : float.PositiveInfinity;
-
-    float timeNearLower01 = 0f;
-
-    if (useTimeToVirtualLowerDecayLead &&
-        !float.IsInfinity(timeToVirtualLower))
-    {
-        float leadSeconds =
-            Mathf.Max(
-                0.02f,
-                descendingLowerTimeLeadSeconds);
-
-        timeNearLower01 =
-            1f -
-            Mathf.SmoothStep(
-                0f,
-                1f,
-                Mathf.Clamp01(
-                    timeToVirtualLower /
-                    leadSeconds));
-    }
-
-    float nearLower01 =
-        Mathf.Max(
-            heightNearLower01,
-            timeNearLower01);
-
-    if (nearLower01 <= 0f)
-    {
-        descendingLowerDecayProfileActive = false;
-        descendingLowerDecayBandMeters = bandMeters;
-        descendingLowerNear01 = 0f;
-        descendingLowerDamperRatio01 = 1f;
-        descendingLowerRestoringBrakeRatio01 = 1f;
-        return false;
-    }
-
-    float damperRatio01 =
-        Mathf.Lerp(
-            1f,
-            Mathf.Clamp(
-                minimumDescendingLowerDamperRatio01,
-                0.01f,
-                1f),
-            nearLower01);
-
-    float restoringBrakeRatio01 =
-        Mathf.Lerp(
-            1f,
-            Mathf.Clamp(
-                minimumDescendingLowerRestoringBrakeRatio01,
-                0.01f,
-                1f),
-            nearLower01);
-
-    profile =
-        new DescendingLowerDecayProfile
-        {
-            active = true,
-            bandMeters = bandMeters,
-            nearLower01 = nearLower01,
-            heightNearLower01 = heightNearLower01,
-            timeNearLower01 = timeNearLower01,
-            timeToVirtualLowerSeconds = timeToVirtualLower,
-            damperRatio01 = damperRatio01,
-            restoringBrakeRatio01 = restoringBrakeRatio01
-        };
-
-    descendingLowerDecayProfileActive = true;
-    descendingLowerDecayBandMeters = bandMeters;
-    descendingLowerNear01 = nearLower01;
-    descendingLowerDamperRatio01 = damperRatio01;
-    descendingLowerRestoringBrakeRatio01 = restoringBrakeRatio01;
-
-    return true;
-}
-
+// Virtual Lower remains geometry/projection only; no independent damping/rebound controller lives here.
+// No Lower-specific Spring/Damper decay profile is exported from Envelope.
 
 public bool TryGetHybridWaveState(
     out float centerTravelMeters,
@@ -5014,3 +4818,4 @@ internal sealed class BallVisualEnvelopeSurfaceMarker
 /* */
 
 }
+

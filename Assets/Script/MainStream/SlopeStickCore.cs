@@ -785,6 +785,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         // 位置を飛ばすのと同じ瞬間に物理速度を0へ戻す。
         rb.velocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
+        MainGameManager.OnDead = false;
 
         if (restartPrepared)
         {
@@ -810,11 +811,9 @@ public sealed class SlopeStickCore : MonoBehaviour
         
         yield return new WaitForSeconds(0.5f);
         MainGameManager.DropOut.SetActive(true);
-        MainGameManager.OpenChunkStage = true;
         yield return new WaitForSeconds(1f);
         MainGameManager.DropOut.SetActive(false);
-        MainGameManager.OnDead = false;
-
+        MainGameManager.OpenChunkStage = true;
 
 
         //rb.isKinematic = false;

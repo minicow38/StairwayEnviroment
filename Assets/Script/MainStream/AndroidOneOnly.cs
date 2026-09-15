@@ -9,13 +9,17 @@ public class AndroidOneOnly : MonoBehaviour
     public static readonly string CallForCurrrentCoin = "CallForCurrrentCoin";
     public static readonly string itemList = "itemList";
 
+    public static readonly string BallNumber = "ActiveUselessBall";
+
     public static readonly string CallForBestScore = "CallForBestScore";
+    
 
     public MainGameManager mainGameManager;
 
     public CorrespondSubject mainDrive;
     public static int pharseCoin = 0;
     public static int currentScore = 0;
+    public static int UsingBallNow=0;
     public static int bestScore = 0;
     public static string MiddleItemList;
     public static List<int> LinenapItemList;
@@ -26,10 +30,12 @@ public class AndroidOneOnly : MonoBehaviour
 
         LinenapItemList = new List<int>();
         Debug.Log("[InitOncePerLaunch]");
-        currentScore = PlayerPrefs.GetInt(CallForCurrrentScore);
-        bestScore=PlayerPrefs.GetInt(CallForBestScore);
-        pharseCoin = PlayerPrefs.GetInt(CallForCurrrentCoin);
-        MiddleItemList = PlayerPrefs.GetString(itemList);
+        currentScore = PlayerPrefs.GetInt(CallForCurrrentScore,0);
+        bestScore=PlayerPrefs.GetInt(CallForBestScore,0);
+        pharseCoin = PlayerPrefs.GetInt(CallForCurrrentCoin,0);
+        UsingBallNow = PlayerPrefs.GetInt(BallNumber,0);
+        MiddleItemList = PlayerPrefs.GetString(itemList,"");
+        
         if (MiddleItemList == "")
         {
             for (int i = 0; i < 30; i++)
@@ -89,6 +95,8 @@ public class AndroidOneOnly : MonoBehaviour
         }
         PlayerPrefs.SetString(itemList,stringPlus);
         PlayerPrefs.SetInt(CallForCurrrentCoin, pharseCoin);
+        PlayerPrefs.SetInt(BallNumber,UsingBallNow);
+
 
         PlayerPrefs.Save();
 

@@ -40,7 +40,7 @@ public class MainGameManager : MonoBehaviour
         var width = Screen.width;
         LimitTouchingphase = 0;
         CurrentPointToPlane = CurrentPointToPlane;
-        
+        core = GameObject.Find("InSubject").transform.GetComponent<SlopeStickCore>();
          VisualPlayerChildCollider=GameObject.Find("VisualPlayerRoot").transform.GetComponentsInChildren<SphereCollider>();
 
         mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
