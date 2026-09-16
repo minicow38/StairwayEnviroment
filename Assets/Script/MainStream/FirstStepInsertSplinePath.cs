@@ -1382,7 +1382,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         float localX = ShiftObj[widthObj].x;
 
 
-        if (value < 3)
+        if (value < 1)
         {
             OnPylon = true;
         }

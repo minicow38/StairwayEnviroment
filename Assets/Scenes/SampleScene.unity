@@ -288,10 +288,9 @@ MonoBehaviour:
   waveTimingMode: 1
   spatialWavesPerStair: 3
   spatialCarrierHeightFractionOfEnvelope: 0.8
-  spatialMomentumBiasEnabled: 1
-  spatialMomentumBiasStartNormalSpeed: 0.75
-  spatialMomentumBiasFullNormalSpeed: 4
-  spatialMomentumMinimumCarrierGain: 0.35
+  usePreferredHalfPeriodGuidance: 1
+  preferredHalfPeriodSeconds: 0.08
+  preferredHalfPeriodFeedForwardBlend01: 0.35
   spatialWaveAccelerationBudget: 450
   spatialWaveJerkBudget: 2500
   spatialWaveFeedForward: 1
@@ -303,34 +302,23 @@ MonoBehaviour:
   spatialCatchUpSpeedHeadroom01: 0.75
   spatialMaximumCatchUpAcceleration: 180
   spatialGoalVelocityAcceleration: 160
-  enableStrongInitialLogicalLaunch: 0
-  initialLogicalLaunchNormalSpeedMultiplier: 1.2
-  maximumSpeedAwareLaunchNormalSpeedMultiplier: 1.4
-  launchBoostReferenceTangentSpeed: 16
-  launchBoostFullTangentSpeed: 24
-  maximumSourceNormalSpeedForLaunchBoost: 8
-  maximumBoostedLogicalLaunchNormalSpeed: 8
-  useDampedFirstAscent: 1
-  firstAscentInitialVelocityRatio: 0.4
-  firstAscentRampLambda: 12
-  firstAscentMaximumDuration: 0.35
-  firstAscentExtraDamperRatio: 0.5
-  firstAscentMaximumAcceleration: 50
-  firstAscentMaximumJerk: 250
-  firstAscentSolidRecoveryStart01: 0.65
-  firstAscentSolidRecoveryFull01: 0.85
+  naturalConnectAverageFrames: 5
+  naturalConnectAverageSeconds: 0.08
+  naturalConnectMaximumWaitSeconds: 0.18
+  naturalConnectBlendSeconds: 0.12
+  naturalConnectMinimumEnvelopeNormalSpeed: 0.05
   rideSpringStrength: 180
   rideSpringDamper: 18
+  useHybridPassiveNormalDamping: 1
+  rigidbodyPassiveDampingShare01: 0.5
   gravityCompensation: 1
   maximumRideAcceleration: 450
   maximumRideJerk: 3000
   rideEquilibrium01: 0.5
   enableLogicalPhysicalHandoff: 1
-  authorityHandoffBandR: 1
   authorityHandoffMaxJerk: 900
   physicalLowerMeasurementOutgoingSpeed: 0.05
   physicalLowerMinimumDescendingSpeed: 0.25
-  hardReleaseNormalForceBelowVirtualLower: 1
   supportKinematicsMaximumCenterJumpR: 2.5
   supportKinematicsMaximumMeasuredSpeed: 80
   supportKinematicsMaximumMeasuredAcceleration: 600
@@ -404,10 +392,12 @@ MonoBehaviour:
   spatialReferencePeriodSeconds: 0
   spatialCarrierHeightMeters: 0
   spatialCarrierFeasibility01: 1
-  spatialBallVisualRelativeNormalSpeed: 0
-  spatialMomentumBias01: 0
-  spatialMomentumCarrierGain: 1
-  spatialCarrierHeightBeforeMomentumBias: 0
+  spatialPathHalfPeriodSeconds: 0
+  spatialGuidedHalfPeriodSeconds: 0
+  spatialPathAngularSpeed: 0
+  spatialGuidedAngularSpeed: 0
+  spatialHalfPeriodFeedForwardBlendApplied01: 0
+  spatialCarrierHeightBeforeFeasibility: 0
   spatialSubjectTimeToGo: 0
   spatialRequiredArrivalSpeed: 0
   spatialArrivalFeasibility01: 1
@@ -417,7 +407,6 @@ MonoBehaviour:
   normalTargetAccelerationBeforeAuthority: 0
   normalTargetAccelerationAfterAuthority: 0
   normalActiveJerkLimit: 0
-  authorityHandoffBandMeters: 0
   physicalUpperSeenSinceLastLower: 0
   physicalLowerContactActive: 0
   physicalLowerContactCount: 0
@@ -438,22 +427,25 @@ MonoBehaviour:
   logicalLaunchEnergyJoule: 0
   logicalLaunchAppliedMultiplier: 1
   logicalLaunchReferenceTangentSpeed: 0
-  firstAscentDampingActive: 0
-  firstAscentAuthority01: 0
-  firstAscentDamperMultiplier: 1
-  firstAscentUpperProgress01: 0
-  firstAscentSolidRecovery01: 0
-  firstAscentActualInitialNormalSpeed: 0
-  firstAscentStoredEnergyJoule: 0
-  descendingLowerDecayActive: 0
-  descendingLowerBoundaryNear01: 0
-  descendingLowerHeightNear01: 0
-  descendingLowerTimeNear01: 0
-  descendingLowerTimeToBoundarySeconds: 0
-  descendingLowerDamperRatio01: 1
-  descendingLowerRestoringBrakeRatio01: 1
+  naturalConnectSamplingActive: 0
+  naturalConnectBlendActive: 0
+  naturalConnectSampleCount: 0
+  naturalConnectSamplingElapsed: 0
+  naturalConnectBlendElapsed: 0
+  naturalConnectControlAuthority01: 1
+  naturalConnectAveragedVelocity: {x: 0, y: 0, z: 0}
+  naturalConnectAveragedSubjectVelocity: {x: 0, y: 0, z: 0}
+  naturalConnectAveragedNormal: {x: 0, y: 1, z: 0}
+  naturalConnectAveragedTangent: {x: 0, y: 0, z: 1}
+  naturalConnectMeasuredRelativeNormalSpeed: 0
+  naturalConnectMeasuredEnergyJoule: 0
   effectiveRideSpringDamper: 0
-  previousDescendingLowerDecayActive: 0
+  activeTargetNormalDriveAcceleration: 0
+  totalPassiveNormalDampingAcceleration: 0
+  controllerPassiveDampingAcceleration: 0
+  rigidbodyPassiveDampingAcceleration: 0
+  rigidbodyPassiveDampingAppliedAcceleration: 0
+  rigidbodyPassiveDampingShareApplied01: 0
   positionErrorToBallVisual: 0
   velocityErrorToBallVisual: 0
   currentKineticEnergy: 0
@@ -512,7 +504,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: -876546973899608171, guid: b0405292dfe0661409b548a8d04a5f55, type: 3}
+  - {fileID: 2100000, guid: a2400df4934cc984292aea3de7cbdcf3, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -966,6 +958,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   mainGameManager: {fileID: 0}
   mainDrive: {fileID: 0}
+  BackGrounds: []
 --- !u!1 &279495547
 GameObject:
   m_ObjectHideFlags: 0
@@ -1999,28 +1992,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d99a3c00274420c4c9f57fc2708a4a3d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  guttnJurge: 0
   slopeCore: {fileID: 1083418876}
   BallVisualEqualizer: {fileID: 64372316}
   respondSubject: {fileID: 572935013}
   turnLandingIntentRetentionSeconds: 3
-  preLimitTargetHeightRelativeToSubject: 0.45
-  limitFirstPopAfterTurn: 1
-  postTurnMaximumIncidentNormalSpeed: 2.4
-  postTurnMaximumRelativeUpSpeed: 0.5
-  normalizeEqualizerEnergyAfterTurn: 1
-  postTurnEqualizerNormalSpeedRatioToMaxGround: 0.33333334
-  postTurnFallbackMaxGroundSpeed: 24
-  postTurnDetectionMinimumAccumulatedAngleDeg: 20
+  turnHandoffDurationSeconds: 0.15
+  useNaturalPlaneToStairEntry: 1
   oscillationReferenceHeight: 0.45
-  firstPopVelocitySquaredRatio: 0.01533
-  minimumEnergyScaledPopHeight: 0.08
-  maximumEnergyScaledPopHeight: 1.5
-  incidentPlanarPositionGain: 4
-  incidentPlanarVelocityGain: 2
-  incidentMaximumPlanarAcceleration: 20
-  incidentMaximumPlanarJerk: 220
-  incidentUseTriggerDuringFlight: 1
+  RawTimeJurge: 0
   secondPopUpSpeed: 3
   missileAscentPositionGain: 5
   missileAscentVelocityGain: 2
@@ -2033,7 +2012,23 @@ MonoBehaviour:
   missileChaseMaximumAcceleration: 48
   missileChaseMaximumJerk: 420
   missileChaseLeadSeconds: 0.18
+  enableMissileOvershootValidation: 0
+  missileOvershootValidationLeadSeconds: 0.35
   missileMaximumWaitForSubjectFlatSeconds: 2.5
+  enableMissileLandingPrediction: 1
+  missileLandingPredictionHorizonSeconds: 0.8
+  missileLandingPredictionStepSeconds: 0.02
+  missileLandingPredictionRefreshSeconds: 0.04
+  missileLandingPredictionContactEpsilon: 0.01
+  missileFlatSupportProbeRadiusFraction: 0.75
+  missileFlatSupportProbeLift: 0.08
+  missileFlatSupportProbeDepth: 0.2
+  missileFlatSupportRequiredProbeCount: 5
+  enableMissileBoundaryRecovery: 1
+  missileBoundaryRecoveryTriggerLeadSeconds: 0.5
+  missileBoundaryRecoveryMinimumDuration: 0.12
+  missileBoundaryRecoveryMaximumDuration: 0.24
+  missileBoundaryRecoveryImpactFraction: 0.6
   terminalTimeBudget: 0.3
   terminalMinimumTimeToGo: 0.04
   maximumTerminalAcceleration: 80
@@ -2054,7 +2049,6 @@ MonoBehaviour:
   emergencyVisualVelocityTolerance: 0.3
   enableDebugLog: 1
   logEveryFixedFrames: 10
-  RawTimeJurge: 0
 --- !u!1 &434412093
 GameObject:
   m_ObjectHideFlags: 0
@@ -2483,7 +2477,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 572935008}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -2496,7 +2490,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 70eedbc2f3d37f346a43b7c8f6f8b892, type: 2}
+  - {fileID: 2100000, guid: 073252b28ab56cc40927fc7bd3246049, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -4232,7 +4226,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: dd06d0fa13267b2438ae003cdec094b0, type: 2}
+  - {fileID: 2100000, guid: 3d71360f495df1548883aae8f25527ab, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -4554,7 +4548,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
   maxGroundSpeed: 24
   GroundAcceleration: 35
-  OnGround: {fileID: 0}
   TargetAccelerationLimit: 120
   knotDetector: {fileID: 156220176}
   groundMask:
@@ -4569,15 +4562,13 @@ MonoBehaviour:
   visualRotationPivot: {fileID: 0}
   visualRootTurnsOppositeToInput: 1
   minimumFlickPixels: 10
-  turnPathRadiusMeters: 1.2
-  turnPathMinimumFixedSteps: 4
-  turnPathMaximumDurationSeconds: 0.14
-  turnPathMinimumReferencePlanarSpeed: 1
-  logTurnPath: 0
-  energyTargetPassToleranceMeters: 0.08
+  turnInputBufferSeconds: 0.25
+  turnVisualDurationSeconds: 0.3
+  turnHardFreezeSeconds: 0.12
+  enableFiveLineAfterPop: 1
   fiveLineCorrectionDurationSeconds: 0.1
   fiveLineMaximumCorrectionMeters: 0.75
-  logTurnPolicy: 1
+  logTurnTransition: 1
   probeDistance: 28
   maxSlopeAngle: 75
   supportGraceSeconds: 0.16
@@ -5091,11 +5082,6 @@ MonoBehaviour:
     m_RotationOrder: 4
   minimumPresentationCeilingR: 0.05
   waveTimeDecayInfluence: 0.35
-  useDescendingLowerBoundaryDecayPreservation: 1
-  minimumDescendingLowerDamperRatio01: 0.12
-  minimumDescendingLowerRestoringBrakeRatio01: 0.2
-  useTimeToVirtualLowerDecayLead: 1
-  descendingLowerTimeLeadSeconds: 0.1
   useEqualizerProjectionContinuity: 1
   equalizerProjectionContinuityWindowMultiplier: 2.5
   minimumEqualizerProjectionContinuityWindow01: 0.02
@@ -5142,11 +5128,6 @@ MonoBehaviour:
   equalizerUnderNormalVisual: {x: 0, y: 1, z: 0}
   equalizerUnderClearanceMeters: 0
   equalizerUnderProjectionValid: 0
-  descendingLowerDecayProfileActive: 0
-  descendingLowerDecayBandMeters: 0
-  descendingLowerNear01: 0
-  descendingLowerDamperRatio01: 1
-  descendingLowerRestoringBrakeRatio01: 1
   arrivalTerminalActive: 0
   arrivalTerminalTimeToGo: 0
   arrivalTerminalBlend01: 0

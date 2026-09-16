@@ -9,7 +9,8 @@ public class AndroidOneOnly : MonoBehaviour
     public static readonly string CallForCurrrentCoin = "CallForCurrrentCoin";
     public static readonly string itemList = "itemList";
 
-    public static readonly string BallNumber = "ActiveUselessBall";
+    //public static readonly string BallNumber = "ActiveUselessBall";
+    public static readonly string ArchiveBallItem = "SettingBallItem";
 
     public static readonly string CallForBestScore = "CallForBestScore";
     
@@ -24,6 +25,7 @@ public class AndroidOneOnly : MonoBehaviour
     public static int UsingBallNow=0;
     public static int bestScore = 0;
     public static string MiddleItemList;
+    public static string activeBallMaterial;
     public static List<int> LinenapItemList;
     
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -35,7 +37,9 @@ public class AndroidOneOnly : MonoBehaviour
         currentScore = PlayerPrefs.GetInt(CallForCurrrentScore,0);
         bestScore=PlayerPrefs.GetInt(CallForBestScore,0);
         pharseCoin = PlayerPrefs.GetInt(CallForCurrrentCoin,0);
-        UsingBallNow = PlayerPrefs.GetInt(BallNumber,0);
+        //UsingBallNow = PlayerPrefs.GetInt(BallNumber,0);
+        activeBallMaterial = PlayerPrefs.GetString(ArchiveBallItem, "Airman");
+        
         MiddleItemList = PlayerPrefs.GetString(itemList,"");
         
         if (MiddleItemList == "")
@@ -96,8 +100,10 @@ public class AndroidOneOnly : MonoBehaviour
             stringPlus += LinenapItemList[i].ToString();
         }
         PlayerPrefs.SetString(itemList,stringPlus);
+        PlayerPrefs.SetString(ArchiveBallItem,activeBallMaterial);
         PlayerPrefs.SetInt(CallForCurrrentCoin, pharseCoin);
-        PlayerPrefs.SetInt(BallNumber,UsingBallNow);
+        //PlayerPrefs.SetInt(BallNumber,UsingBallNow);
+        
 
 
         PlayerPrefs.Save();

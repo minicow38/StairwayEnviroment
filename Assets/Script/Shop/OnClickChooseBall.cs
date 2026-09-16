@@ -45,7 +45,7 @@ public class OnClickChooseBall : MonoBehaviour
 
             if (match.Groups[2].Success)
             {
-                commodityNumber = int.Parse(match.Groups[2].Value) - 1;
+                commodityNumber = int.Parse(match.Groups[2].Value);
                 
                 WBooking=AndroidOneOnly.LinenapItemList[commodityNumber] == 1 ? true : false;
                 
@@ -58,7 +58,6 @@ public class OnClickChooseBall : MonoBehaviour
                 // 名前がちょうど "BlockInBall"
                 commodityNumber = 0;
                 AndroidOneOnly.LinenapItemList[0] = 1;
-
             }
 
             if (IsExstict.transform.gameObject.activeSelf)
@@ -87,14 +86,15 @@ public class OnClickChooseBall : MonoBehaviour
             }
             else
             {
-                GameObject[] CollectionLinenap = SpherePreviewManager.BackGrounds;
+               Transform[] CollectionLinenap = SpherePreviewManager.BackGrounds;
                 for (int beginAllLinenap = 0; beginAllLinenap < CollectionLinenap.Length; beginAllLinenap++)
                 {
                     CollectionLinenap[beginAllLinenap].transform.gameObject.SetActive(false);
                 }
+
+                AndroidOneOnly.activeBallMaterial=transform.GetComponent<PersonalMaterial>().BallMaterial.name;
                 CollectionLinenap[commodityNumber].transform.gameObject.SetActive(true);
-                AndroidOneOnly.UsingBallNow = commodityNumber;
-                PlayerPrefs.SetInt(UsingBallNow, commodityNumber);
+               
 
             }
             PlayerPrefs.Save();

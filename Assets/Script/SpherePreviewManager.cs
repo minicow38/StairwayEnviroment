@@ -1,6 +1,8 @@
 using System.Collections;
 using UnityEngine;
+using System.Linq;
 using TMPro;
+using UnityEngine.UI;
 
 public class SpherePreviewManager : MonoBehaviour
 {
@@ -19,21 +21,20 @@ public class SpherePreviewManager : MonoBehaviour
     public static bool ConvertedCoin = false;
     public int commodityNumber = 0;
     public int lockNumber = 0;
-    public static GameObject[] BackGrounds;
+    public static RectTransform[] BackGrounds;
     private IEnumerator Start()
     {
-        commodityNumber = 0;
+
+        BackGrounds =
+            GameObject.Find("BallCollections/Viewport/Content").transform.Cast<Transform>()
+                .Select(x => x.Find("BackGround/Image")?.GetComponent<RectTransform>())
+                .Where(x => x != null)
+                .ToArray();
         // UIなどの初期化を1フレーム待つ
         yield return null;
         GameObject.Find("Main Camera/UICamera/CoinLimit").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
             AndroidOneOnly.pharseCoin.ToString();
-        BackGrounds = GameObject.FindGameObjectsWithTag("BallCollection");
         
-        
-        System.Array.Sort(BackGrounds, (a, b) =>
-            a.transform.parent.GetSiblingIndex()
-                .CompareTo(b.transform.parent.GetSiblingIndex())
-        );
         foreach (var indivisualBack in BackGrounds)
         {
             indivisualBack.transform.gameObject.SetActive(false);

@@ -45,7 +45,7 @@ public sealed class CorrespondSubject : MonoBehaviour
     bool stageTurnsOppositeToPlayer = true;
 
     [SerializeField, Range(0f, 180f)] float turnAngle = 45f;
-    [SerializeField, Min(.01f)] float turnDuration = .45f;
+    [SerializeField, Min(.01f)] float turnDuration = .30f;
     [SerializeField] Ease turnEase = Ease.InOutCubic;
 
     Tween turnTween;
@@ -508,12 +508,15 @@ public sealed class CorrespondSubject : MonoBehaviour
     /// <summary>
     /// VisualPlayerRootをワールド空間のPivot回りに回します。
     /// InSubject、PhysicsRoot、InSubjectの速度・headingには触れません。
+    /// durationOverrideSeconds > 0 の場合だけ、この呼び出し専用の旋回時間を使用します。
     /// </summary>
     public bool RotateVisualFrameAround(
         Vector3 pivot,
         Quaternion worldTurn,
         bool synchronizeImmediately = true,
-        System.Action<float> turnProgress = null)
+        System.Action<float> turnProgress = null,
+        System.Action turnCompleted = null,
+        float durationOverrideSeconds = -1f)
     {
         if (!visualPlayerRoot)
             return false;
@@ -604,11 +607,16 @@ public sealed class CorrespondSubject : MonoBehaviour
                 SynchronizeTurnFollowers();
         }
 
+        float effectiveTurnDuration =
+            durationOverrideSeconds > 0f
+                ? Mathf.Max(0.01f, durationOverrideSeconds)
+                : turnDuration;
+
         turnTween = DOTween.To(
                 () => 0f,
                 Apply,
                 1f,
-                turnDuration
+                effectiveTurnDuration
             )
             .SetEase(turnEase)
             .SetUpdate(UpdateType.Fixed)
@@ -617,6 +625,7 @@ public sealed class CorrespondSubject : MonoBehaviour
                 PointToPlane++;
                 Apply(1f);
                 turnTween = null;
+                turnCompleted?.Invoke();
             });
 
         return true;
