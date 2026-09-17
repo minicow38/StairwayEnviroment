@@ -7,108 +7,115 @@ using System.Text.RegularExpressions;
 public sealed class SlopeStickCore : MonoBehaviour
 {
     const float Eps = 0.000001f;
-
     [Min(0f)] [SerializeField] float maxGroundSpeed = 24f;
-
     // Compactから固定値化
     const float ProbeRadius = .475f;
-    [SerializeField] public float GroundAcceleration = 35f;
+    [SerializeField]public float GroundAcceleration = 35f;
     const float MaxDeceleration = 80f;
     const float ResponseInverse = 8.333333f;
     const float AccelerationJerk = 600f;
 
     const float TargetMinDistance = .27f;
-    [SerializeField] public float TargetAccelerationLimit = 120f;
+    [SerializeField]public float TargetAccelerationLimit = 120f;
     const float PostTargetBlendWidth = .05f;
     const float PostTargetGravityRatio = .50f;
 
-    RaycastHit currentHit;
     const float StickJerk = 3000f;
     const float ReleaseHold = .02f;
     const float NaturalReleaseEnd = .90f;
 
     [SerializeField] NearestKnotDetector knotDetector;
     [SerializeField] LayerMask groundMask = ~0;
-
-    [Header("Travel")] [SerializeField] Vector3 travelDirection = Vector3.forward;
-
+    
+    [Header("Travel")]
+    [SerializeField] Vector3 travelDirection = Vector3.forward;
+    
     [Range(0f, 100f)] [SerializeField] public float targetSlopeProgressPercent = 60f;
 
-    [Header("Coordinate Mapping")] [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")] [SerializeField]
-    CorrespondSubject correspondSubject;
+    [Header("Coordinate Mapping")]
+    [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")]
+    [SerializeField] CorrespondSubject correspondSubject;
+    [Tooltip("Energy target / POP状態をREAD ONLY参照するBallVisual軌道担当です。")]
+    [SerializeField] BallVisualSlopeDrive ballVisualSlopeDrive;
+    [Tooltip("回転させない物理座標系。InSubjectはこの配下で物理計算します。")]
+    [SerializeField] Transform physicsRoot;
 
-    [Tooltip("Energy target / POP状態をREAD ONLY参照するBallVisual軌道担当です。")] [SerializeField]
-    BallVisualSlopeDrive ballVisualSlopeDrive;
+    [Header("Map Direction Turn")]
+    [Tooltip("回転する表示座標系。InSubject/PhysicsRootは回転させません。")]
+    [SerializeField] Transform visualPlayerRoot;
+    [Tooltip("VisualPlayerRootを回すワールドPivot。未設定ならCenter1を検索します。")]
+    [SerializeField] Transform visualRotationPivot;
+    [Tooltip("ONなら入力方向と反対へVisualPlayerRootを回し、マップが逆向きに旋回して見えるようにします。")]
+    [SerializeField] bool visualRootTurnsOppositeToInput = true;
+    [Tooltip("これ未満の横フリックは旋回として扱いません。MouseUpを待たず、押下中にこの閾値を超えた瞬間にTurn Input Intentを確定します。")]
+    [Min(1f)] [SerializeField] float minimumFlickPixels = 10f;
 
-    [Tooltip("回転させない物理座標系。InSubjectはこの配下で物理計算します。")] [SerializeField]
-    Transform physicsRoot;
+    [Tooltip("Turn Input Intentを保持する最大時間[s]。古いフリックがRecovery/前回Turn終了後に突然実行されることを防ぎます。")]
+    [Min(0.05f)] [SerializeField] float turnInputBufferSeconds = 0.25f;
 
-    [Header("Map Direction Turn")] [Tooltip("回転する表示座標系。InSubject/PhysicsRootは回転させません。")] [SerializeField]
-    Transform visualPlayerRoot;
+    [Header("Turn Transition / Smooth Handoff")]
+    [Tooltip("VisualPlayerRootの90度旋回時間[s]。CorrespondSubjectのTween時間をこの値で上書きします。")]
+    [Min(0.05f)] [SerializeField] float turnVisualDurationSeconds = 0.30f;
 
-    [Tooltip("VisualPlayerRootを回すワールドPivot。未設定ならCenter1を検索します。")] [SerializeField]
-    Transform visualRotationPivot;
+    [Tooltip("旋回開始直後にInSubjectをKinematic停止する時間[s]。解除後はUTurnならBezier TurnPath、FiveLine系ならCoastへ移ります。")]
+    [Min(0f)] [SerializeField] float turnHardFreezeSeconds = 0.12f;
 
-    [Tooltip("ONなら入力方向と反対へVisualPlayerRootを回し、マップが逆向きに旋回して見えるようにします。")] [SerializeField]
-    bool visualRootTurnsOppositeToInput = true;
-
-    [Tooltip("これ未満の横フリックは旋回として扱いません。MouseUpを待たず、押下中にこの閾値を超えた瞬間にTurn Input Intentを確定します。")] [Min(1f)] [SerializeField]
-    float minimumFlickPixels = 10f;
-
-    [Tooltip("Turn Input Intentを保持する最大時間[s]。古いフリックがRecovery/前回Turn終了後に突然実行されることを防ぎます。")] [Min(0.05f)] [SerializeField]
-    float turnInputBufferSeconds = 0.25f;
+    [Tooltip("Turn Input Intent / HardFreeze / Coastの診断ログを出します。")]
+    [SerializeField] bool logTurnTransition = true;
 
     // 旋回角度は1系統だけ。入力強度や呼び出し元に関係なく必ず90度。
     const float QuarterTurnDegrees = 90f;
+    const float QuarterCircleBezierKappa = 0.5522847498307936f;
 
-    public enum TurnPostCorrectionMode
+    [Header("Physics Turn Path")]
+    [Tooltip("物理軌道だけに使う90度旋回半径[m]。小さいほど早くインコーナーへ入ります。")]
+    [Min(0.10f)] [SerializeField] float turnPathRadiusMeters = 1.20f;
+    [Tooltip("高速時でも1～2FixedUpdateだけの折れにしないための最低ステップ数です。")]
+    [Min(2)] [SerializeField] int turnPathMinimumFixedSteps = 4;
+    [Tooltip("低速時でも物理旋回を長引かせない上限[s]。Visualの回転時間とは独立です。")]
+    [Min(0.02f)] [SerializeField] float turnPathMaximumDurationSeconds = 0.14f;
+    [Tooltip("開始水平速度がほぼ0のときだけDuration計算に使う最低速度[m/s]です。")]
+    [Min(0.01f)] [SerializeField] float turnPathMinimumReferencePlanarSpeed = 1.0f;
+    [SerializeField] bool logTurnPath;
+
+    public enum TurnResolutionMode
     {
         None,
-        FiveLineAfterPop
+        FiveLineAfterPop,
+        UTurnBeforeEnergyTarget,
+        FiveLineAfterEnergyTarget
     }
 
-    [Header("Turn Transition / Landing Correction")]
-    [Tooltip("VisualPlayerRootの90度旋回時間[s]。SlopeStickCoreからCorrespondSubjectへ明示的に渡します。")]
-    [Min(0.05f)]
-    [SerializeField]
-    float turnVisualDurationSeconds = 0.30f;
+    [Header("Turn Policy - Upper Stair / Flat / Energy Target")]
+    [Tooltip("Flat上でEnergy targetを通過したと判定する前後ヒステリシス[m]。targetがこの距離より前方ならU字。")]
+    [Min(0f)] [SerializeField] float energyTargetPassToleranceMeters = 0.08f;
 
-    [Tooltip("旋回開始後、InSubjectを完全Kinematic停止する時間[s]。この時間を過ぎたらVisual旋回中でもDynamicへ戻してCoastします。")]
-    [Min(0f)]
-    [SerializeField]
-    float turnHardFreezeSeconds = 0.12f;
+    [Tooltip("FiveLine横補正を滑らかに収束させる時間[s]。")]
+    [Min(0.02f)] [SerializeField] float fiveLineCorrectionDurationSeconds = 0.10f;
 
-    [Tooltip("Slope/Air中の旋回後、BallVisualの着地レーン整理としてFiveLine補正を使います。Flat旋回では使いません。")] [SerializeField]
-    bool enableFiveLineAfterPop = true;
+    [Tooltip("FiveLineが一度に許す最大横補正距離[m]。遠距離スナップを防ぎます。")]
+    [Min(0.05f)] [SerializeField] float fiveLineMaximumCorrectionMeters = 0.75f;
 
-    [Tooltip("FiveLine横補正を滑らかに収束させる時間[s]。")] [Min(0.02f)] [SerializeField]
-    float fiveLineCorrectionDurationSeconds = 0.10f;
+    [Tooltip("Turn policyとFiveLine選択をログへ出します。")]
+    [SerializeField] bool logTurnPolicy = true;
 
-    [Tooltip("FiveLineが一度に許す最大横補正距離[m]。遠距離スナップを防ぎます。")] [Min(0.05f)] [SerializeField]
-    float fiveLineMaximumCorrectionMeters = 0.75f;
-
-    [Tooltip("Turn Transition / FiveLineの状態をログへ出します。")] [SerializeField]
-    bool logTurnTransition = true;
-
-    [Header("Spline Support")] [Min(.01f)] [SerializeField]
-    float probeDistance = .85f;
-
+    [Header("Spline Support")]
+    [Min(.01f)] [SerializeField] float probeDistance = .85f;
     [Range(1f, 89f)] [SerializeField] float maxSlopeAngle = 75f;
 
     [Min(0f)] [SerializeField] float supportGraceSeconds = .12f;
     [Min(0f)] [SerializeField] float supportGraceMaxGuideDistance = 1.75f;
     [Min(0f)] [SerializeField] float maxGraceOutwardSpeed = 2f;
 
-    [Header("Stick")] [Min(0f)] [SerializeField]
-    float flatStick = 24.6f;
-
+    [Header("Stick")]
+    [Min(0f)] [SerializeField] float flatStick = 24.6f;
     [Min(0f)] [SerializeField] float maxStick = 1000f;
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
 
     [Header("PlayerMotivation")] [SerializeField]
     public bool BeginCommandOnTouch = false;
-
-    [Header("Debug")] [SerializeField] bool logCore;
+    [Header("Debug")]
+    [SerializeField] bool logCore;
 
     Rigidbody rb;
     Vector3 direction;
@@ -121,8 +128,6 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector3 initialVisualPlayerRootPosition;
     Quaternion initialVisualPlayerRootRotation = Quaternion.identity;
     bool hasInitialVisualPlayerRootPose;
-
-
 
     // FirstStepInsertSplinePath側が「死亡復帰の再構築」を開始した時だけtrue。
     // 通常のStart() -> delayStart()には復帰専用処理を侵入させない。
@@ -139,9 +144,17 @@ public sealed class SlopeStickCore : MonoBehaviour
     float stickState;
     bool wasSlope;
 
-    // Visual旋回完了後、NearestKnotDetectorが旋回後Splineを捕捉するまでだけtrue。
+    // Physicsの短いTurnPathが完了したあと、NearestKnotDetectorが
+    // 旋回後Splineを捕捉するまでだけtrue。
     bool waitingForTurnGuide;
     Vector3 turnTargetDirection;
+
+    bool turnPathActive;
+    float turnPathElapsed;
+    float turnPathDuration;
+    float turnPathCapturedPlanarSpeed;
+    Vector3 turnPathP0, turnPathP1, turnPathP2, turnPathP3;
+    Vector3 turnPathCurrentDirection = Vector3.forward;
 
     struct TurnTransitionSnapshot
     {
@@ -154,40 +167,35 @@ public sealed class SlopeStickCore : MonoBehaviour
         public bool useGravity;
     }
 
-    // TurnTransition全体と、本当にRigidbodyをKinematic停止している区間を分離する。
-    // turnTransitionActive: Visual旋回開始～Visual旋回完了まで。
-    // turnBodyFrozen: その先頭の短いHardFreeze区間だけ。
+    // Visual旋回全体と、先頭の短いKinematic停止区間を分ける。
     bool turnTransitionActive;
     bool turnBodyFrozen;
     float turnTransitionStartTime = -1f;
     float activeTurnDegrees;
     TurnTransitionSnapshot turnTransitionSnapshot;
 
-    TurnPostCorrectionMode activeTurnPostCorrectionMode = TurnPostCorrectionMode.None;
+    TurnResolutionMode activeTurnMode = TurnResolutionMode.None;
     bool fiveLineCorrectionPending;
     bool fiveLineCorrectionActive;
     float fiveLineCorrectionElapsed;
     Vector3 fiveLineCorrectionSide;
     Vector3 fiveLineCorrectionStartPosition;
     float fiveLineCorrectionTargetOffset;
-
     NearestKnotDetector.FiveLineGroup fiveLineTargetGroup =
         NearestKnotDetector.FiveLineGroup.Center;
 
     bool capturedTurnLandingIntentValid;
     BallVisualSlopeDrive.TurnLandingIntent capturedTurnLandingIntent;
+    float lastEnergyTargetForwardDistance = float.PositiveInfinity;
 
+    public bool IsPhysicsTurnPathActive => turnPathActive;
     public bool IsTurnTransitionActive => turnTransitionActive;
     public bool IsTurnBodyFrozen => turnBodyFrozen;
-
-    // 旧外部参照との互換。旧プロパティは従来どおり「旋回処理全体が進行中」を返す。
-    // 新コードでは IsTurnTransitionActive / IsTurnBodyFrozen を使い分ける。
-    public bool IsTurnFreezeActive => turnTransitionActive;
-
-    public TurnPostCorrectionMode CurrentTurnPostCorrectionMode => activeTurnPostCorrectionMode;
+    public TurnResolutionMode CurrentTurnResolutionMode => activeTurnMode;
     public bool IsFiveLineCorrectionPending => fiveLineCorrectionPending;
     public bool IsFiveLineCorrectionActive => fiveLineCorrectionActive;
     public NearestKnotDetector.FiveLineGroup CurrentFiveLineTargetGroup => fiveLineTargetGroup;
+    public float LastEnergyTargetForwardDistance => lastEnergyTargetForwardDistance;
 
     const float TurnGuideAlignmentMin = 0.8f;
 
@@ -268,10 +276,11 @@ public sealed class SlopeStickCore : MonoBehaviour
         currentSurfaceValid &&
         currentGuide.isSlope &&
         !waitingForTurnGuide &&
+        !IsPhysicsTurnPathActive &&
         !turnTransitionActive;
 
     public bool IsWaitingForTurnGuide =>
-        waitingForTurnGuide || turnTransitionActive;
+        waitingForTurnGuide || IsPhysicsTurnPathActive || turnTransitionActive;
 
     // Exact Incident gate used by BallVisualSlopeDrive.
     // World-Y velocity is intentionally not used: outwardSpeed is measured
@@ -511,6 +520,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             !guide.isSlope ||
             !surface.Valid ||
             waitingForTurnGuide ||
+            IsPhysicsTurnPathActive ||
             turnTransitionActive ||
             !knotDetector)
         {
@@ -548,7 +558,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         bool plausibleProgress =
             delta >= -BallVisualAllowedReverseProgress01 &&
             Mathf.Abs(delta) <=
-            BallVisualMaximumProgressJump01;
+                BallVisualMaximumProgressJump01;
 
         if (!plausibleProgress)
         {
@@ -614,7 +624,7 @@ public sealed class SlopeStickCore : MonoBehaviour
                 targetSide,
                 targetNormal).normalized;
 
-
+        
         Vector3 currentGuideOffset = rb.position - guide.point;
 
         float sideOffset = Vector3.Dot(currentGuideOffset, surface.side);
@@ -640,8 +650,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             // v^2 * curvature * stickSafety - gravitySupport <= maxStick
             // so invert the same inequality at Target Progress.
             float supportedSpeed =
-                Mathf.Sqrt(Mathf.Max(0f,
-                    (maxStick + targetGravitySupport) / Mathf.Max(Eps, targetCurvature * stickSafety)));
+                Mathf.Sqrt(Mathf.Max(0f, (maxStick + targetGravitySupport) / Mathf.Max(Eps, targetCurvature * stickSafety)));
 
             targetTangentSpeed =
                 Mathf.Min(
@@ -732,7 +741,6 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     void Start()
     {
-
         FindMapFrameReferences();
         CaptureInitialVisualFramePose();
         BindCoordinateFrames();
@@ -744,14 +752,9 @@ public sealed class SlopeStickCore : MonoBehaviour
         ReadTurnFlick();
     }
 
-
+   
     public IEnumerator delayStart()
     {
-        Material activeMaterial = Resources.Load<Material>("BallCollections/" + AndroidOneOnly.activeBallMaterial);
-        GameObject.Find("VisualPlayerRoot/BallVisualEqualizer")
-            .GetComponent<MeshRenderer>()
-            .material = activeMaterial;
-
         yield return new WaitForSeconds(0.3f);
         GameObject startSlab =
             GameObject.Find(
@@ -780,11 +783,8 @@ public sealed class SlopeStickCore : MonoBehaviour
         // 無条件にここへ入れると通常起動のdirection/Controller状態まで変えてしまう。
         // FirstStepInsertSplinePathが死亡復帰時にPrepareForStageRebuild()を
         // 呼んだ場合だけ、下のrestartPreparedがtrueになる。
-       
-
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
-
 
         Vector3 restart =
             startSlab.transform.position;
@@ -811,7 +811,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         MainGameManager.LimitTouchingphase = 9;
         turnTargetDirection = direction;
 
-        // 旋回中に死亡/再構築へ入ってもKinematicを持ち越さない。
+        // 旋回中に死亡/再構築へ入ってもKinematic状態を持ち越さない。
         if (rb.isKinematic)
             rb.isKinematic = false;
 
@@ -853,17 +853,44 @@ public sealed class SlopeStickCore : MonoBehaviour
         // Updateで予約した90度旋回を、物理/Spline観測より先に1回だけ適用する。
         ApplyPendingQuarterTurn();
 
-        // TurnTransition中はSpline Drive / Stick / FiveLineを止める。
-        // ただしHardFreeze終了後はRigidbody自体をDynamicへ戻すため、
-        // このreturn中でもPhysXの慣性・Gravity・Collider応答は継続できる。
+        // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。
+        // HardFreeze解除後は、UTurnならBezier物理旋回を進め、FiveLine系なら慣性Coastする。
         if (turnTransitionActive)
         {
             AdvanceTurnTransition();
+
+            if (turnBodyFrozen)
+            {
+                ResetBallVisualSplineSession();
+                return;
+            }
+
+            if (turnPathActive)
+            {
+                StepQuarterTurnPath();
+                direction = turnPathCurrentDirection;
+            }
+            else
+            {
+                direction = turnTargetDirection;
+            }
+
+            driveState = 0f;
             ResetBallVisualSplineSession();
             return;
         }
 
-        // Visual旋回完了後は、旋回後Splineを捕捉するまで新しいheadingを保持する。
+        // Visual TweenよりTurnPathが長く残った設定でも、Pathだけは最後まで完走させる。
+        if (turnPathActive)
+        {
+            StepQuarterTurnPath();
+            direction = turnPathCurrentDirection;
+            driveState = 0f;
+            ResetBallVisualSplineSession();
+            return;
+        }
+
+        // TurnPathが完了していればheadingは旋回後方向へ確定。
         if (waitingForTurnGuide)
             direction = turnTargetDirection;
 
@@ -879,33 +906,12 @@ public sealed class SlopeStickCore : MonoBehaviour
         currentGuide = guide;
         currentGuideValid = true;
 
-        (bool grounded, RaycastHit hit) = HasGroundSupport();
+        (bool grounded,RaycastHit hit)= HasGroundSupport();
 
         if (grounded)
-        {
             graceTimer = supportGraceSeconds;
-            currentHit = hit;
-        }
         else
             graceTimer = Mathf.Max(0f, graceTimer - Time.fixedDeltaTime);
-
-        if (currentHit.transform != null)
-            if (Vector3.Distance(transform.position, currentHit.transform.position) > 12)
-            {
-
-                if (!MainGameManager.OnDead)
-                {
-                    StartCoroutine(Recover());
-                }
-
-                MainGameManager.OnDead = true;
-            }
-
-        if (hit.transform != null)
-        {
-            currentHit = hit;
-
-        }
 
         float load = grounded ? 0f : SupportLoad(guide);
         bool grace = !grounded && graceTimer > 0f && load <= 1f && CanGrace(guide);
@@ -913,16 +919,14 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (!grounded && !grace)
         {
             if (logCore)
-                Debug.Log(
-                    $"[CORE SUPPORT LOST] load={load:F3} dist={guide.distanceToGuide:F3} outward={Outward(guide):F3}");
+                Debug.Log($"[CORE SUPPORT LOST] load={load:F3} dist={guide.distanceToGuide:F3} outward={Outward(guide):F3}");
 
             LoseSupport();
             return;
         }
-
-
+        
         currentSupported = true;
-
+        
         Surface surface = BuildSplineSurface(guide);
 
         if (!surface.Valid)
@@ -962,14 +966,14 @@ public sealed class SlopeStickCore : MonoBehaviour
                     guide.tangent,
                     Vector3.up);
 
-
+           
 
             float alignment = 0f;
 
-            if (flatGuideTangent.sqrMagnitude > Eps)
+            if (flatGuideTangent.sqrMagnitude > Eps )
             {
                 flatGuideTangent.Normalize();
-
+               
 
                 alignment =
                     Mathf.Abs(
@@ -995,7 +999,7 @@ public sealed class SlopeStickCore : MonoBehaviour
                     -surface.normal * stickState,
                     ForceMode.Acceleration);
 
-                // Freeze解除後はtargetDirectionの復元速度を保持したまま、
+                // 物理TurnPath完了後はtargetDirectionの水平速度を保持したまま、
                 // 新Splineが捕捉されるまで旧SplineのDriveだけを止める。
                 return;
             }
@@ -1004,10 +1008,10 @@ public sealed class SlopeStickCore : MonoBehaviour
             waitingForTurnGuide = false;
             driveState = 0f;
 
-            // Flat旋回は後補正を持たないため、Spline捕捉時点でTurn状態を完了する。
-            if (!fiveLineCorrectionPending)
+            if (activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
             {
-                activeTurnPostCorrectionMode = TurnPostCorrectionMode.None;
+                // UTurnという「前回旋回の方針」は次の旋回判定まで保持する。
+                // 着地点Intentだけは古くなるので、Spline捕捉時点で破棄する。
                 capturedTurnLandingIntentValid = false;
                 capturedTurnLandingIntent = default;
             }
@@ -1029,15 +1033,14 @@ public sealed class SlopeStickCore : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
-            /* MainGameManager.TopTitle.SetActive(false);
-             MainGameManager.PreviewIconRoot.SetActive(false);
-             MainGameManager.TopLiteral.SetActive(false);
-             MainGameManager.PlayButton.SetActive(false);
-             MainGameManager.Userbility.SetActive(true);
+            MainGameManager.TopTitle.SetActive(false);
+            MainGameManager.PreviewIconRoot.SetActive(false);
+            MainGameManager.TopLiteral.SetActive(false);
+            MainGameManager.PlayButton.SetActive(false);
+            MainGameManager.Userbility.SetActive(true);
 
-           BeginCommandOnTouch = true;*/
+          BeginCommandOnTouch = true;
         }
-
         // Build the stable read-only Spline plan used by BallVisual.
         // This runs only after turn-guide handoff has completed.
         if (BeginCommandOnTouch == true)
@@ -1138,7 +1141,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     // Collider = Support existence only
     // ================================================================
 
-    (bool, RaycastHit) HasGroundSupport()
+    (bool ,RaycastHit)HasGroundSupport()
     {
         Vector3 origin = rb.worldCenterOfMass + Vector3.up * .05f;
 
@@ -1150,9 +1153,9 @@ public sealed class SlopeStickCore : MonoBehaviour
                 probeDistance,
                 groundMask,
                 QueryTriggerInteraction.Ignore))
-            return (false, hit);
+            return (false,hit);
 
-        return (Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle, hit);
+        return (Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle,hit);
     }
 
     // ================================================================
@@ -1485,8 +1488,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     /// </summary>
     public bool PrepareForStageRebuild()
     {
-        // 旋回Tweenが途中でも、再構築へ旋回前Snapshot/Kinematic状態を持ち越さない。
-        ClearTurnTransitionForStageRebuild();
+        // Tween途中・HardFreeze途中・TurnPath途中の状態を再生成へ持ち越さない。
+        ClearSmoothTurnStateForStageRebuild();
 
         FindMapFrameReferences();
         BindCoordinateFrames();
@@ -1535,13 +1538,16 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (rb && rb.isKinematic)
             rb.isKinematic = false;
 
-        activeTurnPostCorrectionMode = TurnPostCorrectionMode.None;
+        CancelQuarterTurnPath();
+
+        activeTurnMode = TurnResolutionMode.None;
         fiveLineCorrectionPending = false;
         fiveLineCorrectionActive = false;
         fiveLineCorrectionElapsed = 0f;
         fiveLineCorrectionTargetOffset = 0f;
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
+        lastEnergyTargetForwardDistance = float.PositiveInfinity;
 
         waitingForTurnGuide = false;
 
@@ -1650,8 +1656,8 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (!trackingFlick)
             return;
 
-        // MouseUpを待たない。押下中に閾値を超えた最初の1回だけTurn Input Intentへ変換する。
-        // GetMouseButtonUpも評価対象に残すことで、Down->Upが短い高速フリックも拾う。
+        // MouseUpを待たず、押下中に横移動が閾値を超えた最初の1回でIntentを確定する。
+        // MouseUpも評価に含めるので、短い高速フリックも拾える。
         if (!flickConsumed &&
             (Input.GetMouseButton(0) || Input.GetMouseButtonUp(0)))
         {
@@ -1694,14 +1700,11 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (Mathf.Abs(directionSign) <= Eps)
             return;
 
-        // Turn Input Intentは常に最新1件だけ保持する。
-        // ただし永久予約にはせず、turnInputBufferSecondsを超えた古い入力は破棄する。
         pendingTurnDegrees =
             Mathf.Sign(directionSign) * QuarterTurnDegrees;
         pendingTurnQueuedTime = Time.time;
 
-        // BallVisualが独立Pose Authorityを持っている場合は、通常Recovery完了を待つのではなく、
-        // Turn専用の短時間Handoff Rejoinを即座に要求する。
+        // BallVisualが独立Pose Authority中なら、通常Recoveryを待たず短いTurn Handoffへ入れる。
         RequestTurnHandoffForPendingIntent();
 
         if (logCore || logTurnTransition)
@@ -1712,14 +1715,13 @@ public sealed class SlopeStickCore : MonoBehaviour
                 $"angle={pendingTurnDegrees:F1} " +
                 $"buffer={turnInputBufferSeconds:F3}s " +
                 $"blocked={IsTurnExecutionBlocked()} " +
-                $"transition={turnTransitionActive} bodyFrozen={turnBodyFrozen} " +
+                $"transition={turnTransitionActive} frozen={turnBodyFrozen} " +
+                $"turnPath={turnPathActive} " +
                 $"fiveLineActive={fiveLineCorrectionActive} " +
                 $"fiveLinePending={fiveLineCorrectionPending} " +
                 $"ballVisualOwnsPose={(ballVisualSlopeDrive && ballVisualSlopeDrive.OwnsBallVisualPose)} " +
                 $"turnHandoff={(ballVisualSlopeDrive && ballVisualSlopeDrive.IsTurnHandoffActive)} " +
-                $"visualTurning={(correspondSubject && correspondSubject.IsVisualFrameTurning)} " +
-                $"direction={direction:F4} " +
-                $"velocity={(rb ? rb.velocity : Vector3.zero):F4}",
+                $"visualTurning={(correspondSubject && correspondSubject.IsVisualFrameTurning)}",
                 this);
         }
     }
@@ -1766,23 +1768,16 @@ public sealed class SlopeStickCore : MonoBehaviour
             ballVisualSlopeDrive.RequestTurnHandoff();
     }
 
-    // 新しい旋回を「今このFixedUpdateで実行してよいか」だけを判定する。
-    // 入力の破棄はここでも行わない。
+    // 新しい旋回を「今このFixedUpdateで開始してよいか」だけ判定する。
     bool IsTurnExecutionBlocked()
     {
-        if (turnTransitionActive)
+        if (turnTransitionActive || turnPathActive)
             return true;
 
-        if (fiveLineCorrectionActive)
+        if (fiveLineCorrectionActive || fiveLineCorrectionPending)
             return true;
 
-        if (fiveLineCorrectionPending)
-            return true;
-
-        // Turn Input Intent中は、BallVisual側がTurnHandoffを完了して
-        // Synchronizedへ戻るまでTurnTransitionを開始しない。
-        // 単なるOwnsPose待ちではなく、RequestTurnHandoffForPendingIntent()が
-        // 通常Recoveryを短いTurnHandoffRejoinへ切り替える。
+        // Turn Handoffが完了してBallVisualのPose Authorityが同期側へ戻るまで待つ。
         if (ballVisualSlopeDrive &&
             !ballVisualSlopeDrive.IsReadyForTurnTransition)
         {
@@ -1800,27 +1795,25 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (!HasPendingTurnIntent)
             return;
 
-        // 古い入力をRecovery終了後に突然実行しない。
+        // Recovery終了後に古い入力が突然実行されることを防ぐ。
         if (IsPendingTurnIntentExpired())
         {
             ExpirePendingTurnIntent();
             return;
         }
 
-        // 独立軌道中なら通常Recoveryを待つ代わりにTurn専用Handoffへ短縮する。
         RequestTurnHandoffForPendingIntent();
 
-        // 実行禁止中はIntentを保持したまま待つ。
         if (IsTurnExecutionBlocked())
             return;
 
         float turnDegrees =
             Mathf.Sign(pendingTurnDegrees) * QuarterTurnDegrees;
 
-        // 実行する瞬間にだけIntentを消費する。
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
+
         ApplyQuarterTurn(turnDegrees);
     }
 
@@ -1839,45 +1832,36 @@ public sealed class SlopeStickCore : MonoBehaviour
             return;
         }
 
-        Quaternion physicsTurn =
+        Quaternion fullDirectionTurn =
             Quaternion.AngleAxis(turnDegrees, Vector3.up);
 
         Vector3 directionBefore =
             NormalizeFlat(direction, travelDirection);
 
-        turnTargetDirection =
-            NormalizeFlat(
-                physicsTurn * directionBefore,
-                directionBefore);
-
-        // Flat旋回はTransitionだけで横ズレを発生させないため後補正しない。
-        // Slope/Airだけ、BallVisualの独立軌道後に着地レーン整理としてFiveLineを残す。
-        bool needsFiveLineAfterPop =
-            enableFiveLineAfterPop &&
-            (BallVisualIsOnSlope || BallVisualIsAir);
-
-        activeTurnPostCorrectionMode =
-            needsFiveLineAfterPop
-                ? TurnPostCorrectionMode.FiveLineAfterPop
-                : TurnPostCorrectionMode.None;
-
-        fiveLineCorrectionPending = needsFiveLineAfterPop;
-
-        if (needsFiveLineAfterPop)
-        {
-            CaptureTurnLandingIntent();
-        }
-        else
-        {
-            capturedTurnLandingIntentValid = false;
-            capturedTurnLandingIntent = default;
-        }
-
         Vector3 velocityBefore = rb.velocity;
         Vector3 angularVelocityBefore = rb.angularVelocity;
 
+        turnTargetDirection =
+            NormalizeFlat(
+                fullDirectionTurn * directionBefore,
+                directionBefore);
+
+        // 基準版固有のEnergyTarget/UTurn/FiveLine方針はそのまま残す。
+        CaptureTurnLandingIntent();
+        activeTurnMode = ResolveTurnResolutionMode(directionBefore);
+
+        bool useUTurn =
+            activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
+
+        fiveLineCorrectionPending = !useUTurn;
+
         if (!BeginTurnTransition(turnDegrees))
             return;
+
+        // 旋回後Splineへ切り替わるまでは通常Driveを再開しない。
+        waitingForTurnGuide = true;
+        driveState = 0f;
+        ResetBallVisualSplineSession();
 
         FindMapFrameReferences();
         BindCoordinateFrames();
@@ -1908,8 +1892,7 @@ public sealed class SlopeStickCore : MonoBehaviour
                     turnVisualDurationSeconds);
         }
 
-        // CorrespondSubjectが無い互換SceneではDirect回転を使う。
-        // Direct回転は同一FixedUpdateで完了するのでHardFreezeも即解除する。
+        // 古いScene向けfallback。Direct回転は同一FixedUpdateで完了する。
         if (!visualTurnStarted)
         {
             visualTurnStarted = RotateVisualMapFrameDirect(visualAngle);
@@ -1924,19 +1907,17 @@ public sealed class SlopeStickCore : MonoBehaviour
             return;
         }
 
-        if (logCore || logTurnTransition)
+        if (logCore || logTurnPolicy || logTurnTransition)
         {
             Debug.Log(
-                $"[CORE TURN TRANSITION BEGIN] " +
+                $"[CORE SMOOTH TURN BEGIN] " +
                 $"time={Time.fixedTime:F4} " +
-                $"turn={turnDegrees:F1} " +
+                $"mode={activeTurnMode} turn={turnDegrees:F1} " +
                 $"visualDuration={turnVisualDurationSeconds:F3}s " +
                 $"hardFreeze={turnHardFreezeSeconds:F3}s " +
-                $"directionBefore={directionBefore:F4} " +
-                $"targetDirection={turnTargetDirection:F4} " +
-                $"velocityBefore={velocityBefore:F4} " +
-                $"angularVelocityBefore={angularVelocityBefore:F4} " +
-                $"postCorrection={activeTurnPostCorrectionMode}",
+                $"energyTargetForward={lastEnergyTargetForwardDistance:F4}m " +
+                $"directionBefore={directionBefore:F4} targetDirection={turnTargetDirection:F4} " +
+                $"velocityBefore={velocityBefore:F4} angularBefore={angularVelocityBefore:F4}",
                 this);
         }
     }
@@ -1960,7 +1941,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         activeTurnDegrees =
             Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
 
-        // HardFreeze開始。旧速度を同期側に漏らさないため明示的に0化してからKinematicへ。
+        // 旋回冒頭だけ完全停止。BallVisual/SubjectのAuthority切替境界を静かにする。
         rb.velocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
         rb.isKinematic = true;
@@ -1968,14 +1949,12 @@ public sealed class SlopeStickCore : MonoBehaviour
         turnTransitionActive = true;
         turnBodyFrozen = true;
         turnTransitionStartTime = Time.fixedTime;
-        waitingForTurnGuide = false;
 
         ResetBallVisualSplineSession();
         return true;
     }
 
-    // SlopeStickCore.FixedUpdateとCorrespondSubjectのTween tickの両方から呼べる。
-    // 時間基準なのでVisual Easeを変更してもHardFreezeの体感時間は変わらない。
+    // FixedUpdateとCorrespondSubjectのTween tickの両方から呼ばれる時間基準の解除判定。
     void AdvanceTurnTransition()
     {
         if (!turnTransitionActive || !turnBodyFrozen)
@@ -1987,7 +1966,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (elapsed + Eps < hardFreeze)
             return;
 
-        ReleaseTurnBodyToCoast("HardFreezeElapsed");
+        ReleaseTurnBodyToMotion("HardFreezeElapsed");
     }
 
     void OnVisualTurnProgress(float visualProgress01)
@@ -1998,7 +1977,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         AdvanceTurnTransition();
     }
 
-    void ReleaseTurnBodyToCoast(string reason)
+    void ReleaseTurnBodyToMotion(string reason)
     {
         if (!turnTransitionActive ||
             !turnBodyFrozen ||
@@ -2008,38 +1987,49 @@ public sealed class SlopeStickCore : MonoBehaviour
             return;
         }
 
+        TurnTransitionSnapshot snapshot = turnTransitionSnapshot;
         Quaternion physicsTurn =
             Quaternion.AngleAxis(activeTurnDegrees, Vector3.up);
 
-        Vector3 restoredVelocity =
-            physicsTurn * turnTransitionSnapshot.velocity;
-
-        Vector3 restoredAngularVelocity =
-            physicsTurn * turnTransitionSnapshot.angularVelocity;
-
-        Vector3 restoredDirection =
-            NormalizeFlat(
-                physicsTurn * turnTransitionSnapshot.direction,
-                turnTargetDirection);
-
-        // HardFreeze中は位置/回転を固定したまま。Coast開始時だけDynamicへ戻す。
-        rb.position = turnTransitionSnapshot.position;
-        rb.rotation = turnTransitionSnapshot.rotation;
+        // Freezeした地点から再開する。
+        rb.position = snapshot.position;
+        rb.rotation = snapshot.rotation;
         rb.isKinematic = false;
-        rb.useGravity = turnTransitionSnapshot.useGravity;
-        rb.velocity = restoredVelocity;
-        rb.angularVelocity = restoredAngularVelocity;
+        rb.useGravity = snapshot.useGravity;
+        rb.velocity = snapshot.velocity;
+        rb.angularVelocity = snapshot.angularVelocity;
         rb.WakeUp();
 
-        direction = restoredDirection;
-        turnTargetDirection = restoredDirection;
         turnBodyFrozen = false;
-
-        // Visual旋回完了までは通常Spline Driveを再開しない。
-        // Rigidbody自身の慣性・Gravity・Collider応答だけでCoastする。
         driveState = 0f;
-        ResetBallVisualSplineSession();
 
+        bool useUTurn =
+            activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
+
+        if (useUTurn)
+        {
+            // UTurnは基準版のBezier軌道を残す。速度を先に90°へ折らず、Path自身に曲げさせる。
+            direction = NormalizeFlat(snapshot.direction, travelDirection);
+
+            if (!BeginQuarterTurnPath(activeTurnDegrees, direction))
+            {
+                // 数値的にPath開始できない場合だけFiveLine型の直進旋回へ安全退避する。
+                activeTurnMode = TurnResolutionMode.FiveLineAfterEnergyTarget;
+                fiveLineCorrectionPending = true;
+                rb.velocity = snapshot.velocity;
+                ApplyDirectFiveLineTurn(activeTurnDegrees);
+                rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
+            }
+        }
+        else
+        {
+            // FiveLine系は位置を飛ばさず、速度/headingだけ新方向へ向けてVisual旋回完了までCoast。
+            rb.velocity = snapshot.velocity;
+            ApplyDirectFiveLineTurn(activeTurnDegrees);
+            rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
+        }
+
+        ResetBallVisualSplineSession();
         Physics.SyncTransforms();
         correspondSubject?.ResetDerivedVelocitySample();
         correspondSubject?.SynchronizeNow(true);
@@ -2047,13 +2037,10 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (logCore || logTurnTransition)
         {
             Debug.Log(
-                $"[CORE TURN COAST BEGIN] " +
-                $"reason={reason} " +
-                $"time={Time.fixedTime:F4} " +
-                $"elapsed={Mathf.Max(0f, Time.fixedTime - turnTransitionStartTime):F4}s " +
-                $"velocity={rb.velocity:F4} " +
-                $"speed={rb.velocity.magnitude:F4} " +
-                $"direction={direction:F4}",
+                $"[CORE TURN MOTION RELEASE] " +
+                $"reason={reason} time={Time.fixedTime:F4} " +
+                $"mode={activeTurnMode} turnPath={turnPathActive} " +
+                $"velocity={rb.velocity:F4} direction={direction:F4}",
                 this);
         }
     }
@@ -2065,9 +2052,9 @@ public sealed class SlopeStickCore : MonoBehaviour
 
         float completedTurnDegrees = activeTurnDegrees;
 
-        // Visual旋回の方がHardFreezeより短い設定でも、終了時には必ずDynamicへ復帰させる。
+        // Visual TweenがFreeze時間より短い設定でも必ずDynamicへ戻す。
         if (turnBodyFrozen)
-            ReleaseTurnBodyToCoast("VisualTurnCompleted");
+            ReleaseTurnBodyToMotion("VisualTurnCompleted");
 
         turnTransitionActive = false;
         turnBodyFrozen = false;
@@ -2075,10 +2062,8 @@ public sealed class SlopeStickCore : MonoBehaviour
         activeTurnDegrees = 0f;
         turnTransitionSnapshot = default;
 
-        // Visualは完了してもNearestKnotDetectorが旧Splineを返す可能性がある。
-        // 新Splineを捕捉するまでは旧Spline Driveを再開しないが、
-        // Rigidbodyの復元速度は保持されるため移動自体は止めない。
-        waitingForTurnGuide = true;
+        // waitingForTurnGuideはApplyQuarterTurn開始時からtrueのまま。
+        // TurnPathが残っていればPathを完走した後にSpline捕捉へ進む。
         driveState = 0f;
         ResetBallVisualSplineSession();
 
@@ -2089,50 +2074,41 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (logCore || logTurnTransition)
         {
             Debug.Log(
-                $"[CORE TURN TRANSITION COMPLETE] " +
-                $"time={Time.fixedTime:F4} " +
-                $"turn={completedTurnDegrees:F1} " +
-                $"position={rb.position:F4} " +
-                $"velocity={rb.velocity:F4} " +
-                $"speed={rb.velocity.magnitude:F4} " +
-                $"direction={direction:F4} " +
-                $"waitingForGuide={waitingForTurnGuide}",
+                $"[CORE SMOOTH TURN VISUAL COMPLETE] " +
+                $"time={Time.fixedTime:F4} turn={completedTurnDegrees:F1} " +
+                $"mode={activeTurnMode} turnPath={turnPathActive} " +
+                $"position={rb.position:F4} velocity={rb.velocity:F4}",
                 this);
         }
     }
 
     void AbortTurnTransitionAndRestoreOriginal(string reason)
     {
-        if (!rb)
-        {
-            turnTransitionActive = false;
-            turnBodyFrozen = false;
-            turnTransitionStartTime = -1f;
-            activeTurnDegrees = 0f;
-            turnTransitionSnapshot = default;
-            return;
-        }
-
         TurnTransitionSnapshot snapshot = turnTransitionSnapshot;
 
-        if (snapshot.valid)
-        {
-            rb.position = snapshot.position;
-            rb.rotation = snapshot.rotation;
+        CancelQuarterTurnPath();
 
-            if (rb.isKinematic)
+        if (rb)
+        {
+            if (snapshot.valid)
+            {
+                rb.position = snapshot.position;
+                rb.rotation = snapshot.rotation;
+
+                if (rb.isKinematic)
+                    rb.isKinematic = false;
+
+                rb.useGravity = snapshot.useGravity;
+                rb.velocity = snapshot.velocity;
+                rb.angularVelocity = snapshot.angularVelocity;
+                direction = NormalizeFlat(snapshot.direction, travelDirection);
+                turnTargetDirection = direction;
+                rb.WakeUp();
+            }
+            else if (rb.isKinematic)
+            {
                 rb.isKinematic = false;
-
-            rb.useGravity = snapshot.useGravity;
-            rb.velocity = snapshot.velocity;
-            rb.angularVelocity = snapshot.angularVelocity;
-            direction = NormalizeFlat(snapshot.direction, travelDirection);
-            turnTargetDirection = direction;
-            rb.WakeUp();
-        }
-        else if (rb.isKinematic)
-        {
-            rb.isKinematic = false;
+            }
         }
 
         turnTransitionActive = false;
@@ -2142,7 +2118,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         turnTransitionSnapshot = default;
         waitingForTurnGuide = false;
 
-        activeTurnPostCorrectionMode = TurnPostCorrectionMode.None;
+        activeTurnMode = TurnResolutionMode.None;
         fiveLineCorrectionPending = false;
         fiveLineCorrectionActive = false;
         capturedTurnLandingIntentValid = false;
@@ -2156,18 +2132,22 @@ public sealed class SlopeStickCore : MonoBehaviour
         {
             Debug.LogWarning(
                 $"[CORE TURN TRANSITION ABORT] reason={reason} " +
-                $"position={rb.position:F4} velocity={rb.velocity:F4}",
+                $"position={(rb ? rb.position : Vector3.zero):F4} " +
+                $"velocity={(rb ? rb.velocity : Vector3.zero):F4}",
                 this);
         }
     }
 
-    void ClearTurnTransitionForStageRebuild()
+    void ClearSmoothTurnStateForStageRebuild()
     {
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
         trackingFlick = false;
         flickConsumed = false;
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
+
+        correspondSubject?.CancelVisualFrameTurn(false);
+        CancelQuarterTurnPath();
 
         turnTransitionActive = false;
         turnBodyFrozen = false;
@@ -2176,30 +2156,58 @@ public sealed class SlopeStickCore : MonoBehaviour
         turnTransitionSnapshot = default;
         waitingForTurnGuide = false;
 
-        activeTurnPostCorrectionMode = TurnPostCorrectionMode.None;
+        activeTurnMode = TurnResolutionMode.None;
         fiveLineCorrectionPending = false;
         fiveLineCorrectionActive = false;
         fiveLineCorrectionElapsed = 0f;
         fiveLineCorrectionTargetOffset = 0f;
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
+        lastEnergyTargetForwardDistance = float.PositiveInfinity;
 
         if (rb && rb.isKinematic)
             rb.isKinematic = false;
 
         if (rb)
         {
-            // Death/rebuildは通常の旋回取消ではなく再配置処理なので、
-            // 旋回前速度を復元せず再開地点用の0状態へ揃える。
             rb.velocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
         }
+    }
+
+    TurnResolutionMode ResolveTurnResolutionMode(Vector3 directionBefore)
+    {
+        // 1) 上階段/斜面中の旋回はPOP後の下階段FiveLineへ委譲。
+        if (BallVisualIsOnSlope || BallVisualIsAir)
+            return TurnResolutionMode.FiveLineAfterPop;
+
+        // 2) 平面ではBallVisualのEnergy landing targetの前後で分岐。
+        if (BallVisualIsOnFlat && TryGetCapturedLandingIntentPhysics(out Vector3 targetPhysics))
+        {
+            Vector3 flatDirection = NormalizeFlat(directionBefore, travelDirection);
+            lastEnergyTargetForwardDistance =
+                Vector3.Dot(targetPhysics - rb.position, flatDirection);
+
+            // 目標地点がまだ前方に残っている = 一歩手前側 -> 新U字仕様。
+            if (lastEnergyTargetForwardDistance > energyTargetPassToleranceMeters)
+                return TurnResolutionMode.UTurnBeforeEnergyTarget;
+
+            // 目標地点を到達/通過済み -> FiveLine。
+            return TurnResolutionMode.FiveLineAfterEnergyTarget;
+        }
+
+        // FlatだがEnergy targetが取れない時は、誤ったU字を作らないためFiveLine側へ倒す。
+        if (BallVisualIsOnFlat)
+            return TurnResolutionMode.FiveLineAfterEnergyTarget;
+
+        return TurnResolutionMode.FiveLineAfterPop;
     }
 
     void CaptureTurnLandingIntent()
     {
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
+        lastEnergyTargetForwardDistance = float.PositiveInfinity;
 
         if (!ballVisualSlopeDrive)
             ballVisualSlopeDrive = FindObjectOfType<BallVisualSlopeDrive>(true);
@@ -2221,7 +2229,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         BallVisualSlopeDrive.TurnLandingIntent intent = capturedTurnLandingIntent;
         bool valid = capturedTurnLandingIntentValid;
 
-        // FiveLineAfterPopではターン開始後にLanding targetが更新される場合があるため、
+        // FiveLineAfterPopではターン開始後にEnergy targetが更新される場合があるため、
         // 補正開始時は最新Intentを優先する。
         if (ballVisualSlopeDrive &&
             ballVisualSlopeDrive.TryGetTurnLandingIntent(
@@ -2248,6 +2256,152 @@ public sealed class SlopeStickCore : MonoBehaviour
             !float.IsInfinity(targetPhysics.z);
     }
 
+    void ApplyDirectFiveLineTurn(float turnDegrees)
+    {
+        float verticalSpeed = Vector3.Dot(rb.velocity, Vector3.up);
+        Vector3 planarVelocity = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
+
+        if (planarVelocity.sqrMagnitude > Eps * Eps)
+        {
+            Quaternion turn = Quaternion.AngleAxis(turnDegrees, Vector3.up);
+            planarVelocity = turn * planarVelocity;
+        }
+
+        rb.velocity = planarVelocity + Vector3.up * verticalSpeed;
+        direction = turnTargetDirection;
+        rb.WakeUp();
+    }
+
+    // ================================================================
+    // Integrated Physics Quarter Turn Path
+    // ================================================================
+
+    bool BeginQuarterTurnPath(float turnDegrees, Vector3 heading)
+    {
+        if (!rb || rb.isKinematic || Mathf.Abs(turnDegrees) <= Eps)
+            return false;
+
+        float signedDegrees = Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
+        Vector3 planarVelocity = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
+        turnPathCapturedPlanarSpeed = planarVelocity.magnitude;
+
+        Vector3 startDirection = NormalizeFlat(
+            heading,
+            planarVelocity.sqrMagnitude > Eps * Eps ? planarVelocity : transform.forward);
+
+        turnTargetDirection = NormalizeFlat(
+            Quaternion.AngleAxis(signedDegrees, Vector3.up) * startDirection,
+            startDirection);
+        turnPathCurrentDirection = startDirection;
+
+        float radius = Mathf.Max(0.10f, turnPathRadiusMeters);
+        turnPathP0 = Flatten(rb.position);
+        turnPathP3 = turnPathP0 + (startDirection + turnTargetDirection) * radius;
+
+        float tangentLength = QuarterCircleBezierKappa * radius;
+        turnPathP1 = turnPathP0 + startDirection * tangentLength;
+        turnPathP2 = turnPathP3 - turnTargetDirection * tangentLength;
+
+        float arcLength = Mathf.PI * 0.5f * radius;
+        float referenceSpeed = Mathf.Max(turnPathMinimumReferencePlanarSpeed, turnPathCapturedPlanarSpeed);
+        float naturalDuration = arcLength / referenceSpeed;
+        float minimumDuration = Mathf.Max(2, turnPathMinimumFixedSteps) * Time.fixedDeltaTime;
+
+        turnPathDuration = Mathf.Clamp(
+            naturalDuration,
+            minimumDuration,
+            Mathf.Max(minimumDuration, turnPathMaximumDurationSeconds));
+
+        turnPathElapsed = 0f;
+        turnPathActive = true;
+        rb.WakeUp();
+
+        if (logTurnPath)
+        {
+            Debug.Log(
+                $"[CORE TURN PATH BEGIN] time={Time.fixedTime:F4} " +
+                $"radius={radius:F3} duration={turnPathDuration:F4}s " +
+                $"speed={turnPathCapturedPlanarSpeed:F3} " +
+                $"start={startDirection:F4} target={turnTargetDirection:F4}",
+                this);
+        }
+
+        return true;
+    }
+
+    bool StepQuarterTurnPath()
+    {
+        if (!turnPathActive || !rb)
+            return false;
+
+        float dt = Mathf.Max(Time.fixedDeltaTime, Eps);
+        float nextElapsed = Mathf.Min(turnPathDuration, turnPathElapsed + dt);
+        float t = turnPathDuration > Eps ? Mathf.Clamp01(nextElapsed / turnPathDuration) : 1f;
+
+        Vector3 targetPlanarPoint = EvaluateTurnPathBezier(t);
+        Vector3 currentPlanarPoint = Flatten(rb.position);
+        Vector3 requiredPlanarVelocity = (targetPlanarPoint - currentPlanarPoint) / dt;
+
+        float verticalSpeed = Vector3.Dot(rb.velocity, Vector3.up);
+        rb.velocity = requiredPlanarVelocity + Vector3.up * verticalSpeed;
+
+        turnPathCurrentDirection = NormalizeFlat(
+            EvaluateTurnPathBezierDerivative(t),
+            turnTargetDirection);
+
+        turnPathElapsed = nextElapsed;
+        rb.WakeUp();
+
+        if (t < 1f - Eps)
+            return true;
+
+        turnPathActive = false;
+        turnPathCurrentDirection = turnTargetDirection;
+
+        if (logTurnPath)
+        {
+            Debug.Log(
+                $"[CORE TURN PATH COMPLETE] time={Time.fixedTime:F4} " +
+                $"target={turnTargetDirection:F4} velocity={rb.velocity:F4}",
+                this);
+        }
+
+        return true;
+    }
+
+    void CancelQuarterTurnPath()
+    {
+        turnPathActive = false;
+        turnPathElapsed = 0f;
+        turnPathDuration = 0f;
+        turnPathCapturedPlanarSpeed = 0f;
+        turnPathCurrentDirection = NormalizeFlat(direction, travelDirection);
+    }
+
+    Vector3 EvaluateTurnPathBezier(float t)
+    {
+        float u = 1f - t;
+        float uu = u * u;
+        float tt = t * t;
+        return
+            uu * u * turnPathP0 +
+            3f * uu * t * turnPathP1 +
+            3f * u * tt * turnPathP2 +
+            tt * t * turnPathP3;
+    }
+
+    Vector3 EvaluateTurnPathBezierDerivative(float t)
+    {
+        float u = 1f - t;
+        return
+            3f * u * u * (turnPathP1 - turnPathP0) +
+            6f * u * t * (turnPathP2 - turnPathP1) +
+            3f * t * t * (turnPathP3 - turnPathP2);
+    }
+
+    static Vector3 Flatten(Vector3 value) =>
+        Vector3.ProjectOnPlane(value, Vector3.up);
+
     // ================================================================
     // FiveLine landing correction
     // ================================================================
@@ -2259,6 +2413,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (!fiveLineCorrectionPending ||
             fiveLineCorrectionActive ||
             waitingForTurnGuide ||
+            turnPathActive ||
             turnTransitionActive)
         {
             return;
@@ -2268,7 +2423,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             return;
 
         // 上段POP -> 下段ではBallVisualの軌道権威が返るまで待つ。
-        // Turn Transitionは終了済みでも、BallVisualが独立軌道中ならFiveLineを開始しない。
+        // Flat-after-targetでも同じGateを使うことでPose二重所有を避ける。
         if (ballVisualSlopeDrive &&
             !ballVisualSlopeDrive.IsStableForFiveLineCorrection)
         {
@@ -2342,10 +2497,10 @@ public sealed class SlopeStickCore : MonoBehaviour
             return;
         }
 
-        if (logCore || logTurnTransition)
+        if (logCore || logTurnPolicy)
         {
             Debug.Log(
-                $"[CORE FIVE LINE BEGIN] mode={activeTurnPostCorrectionMode} " +
+                $"[CORE FIVE LINE BEGIN] mode={activeTurnMode} " +
                 $"group={selectedGroup} rawCorrection={rawCorrection:F4} " +
                 $"appliedCorrection={correction:F4} selector={selectorPosition:F4}",
                 this);
@@ -2399,7 +2554,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             rb.velocity -= fiveLineCorrectionSide * lateralSpeed;
         }
 
-        activeTurnPostCorrectionMode = TurnPostCorrectionMode.None;
+        activeTurnMode = TurnResolutionMode.None;
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
         ResetBallVisualSplineSession();
@@ -2411,7 +2566,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             currentSurfaceValid = surface.Valid;
         }
 
-        if (logCore || logTurnTransition)
+        if (logCore || logTurnPolicy)
         {
             Debug.Log(
                 $"[CORE FIVE LINE COMPLETE] group={fiveLineTargetGroup} " +
@@ -2464,259 +2619,6 @@ public sealed class SlopeStickCore : MonoBehaviour
         float t = Mathf.Clamp01(Mathf.InverseLerp(start, end, value));
         return t * t * t * (t * (t * 6f - 15f) + 10f);
     }
-
-
-#if UNITY_EDITOR
-    // ================================================================
-    // TurnTransition embedded self check
-    // ================================================================
-    // Unity Test Framework / NUnitへ依存せず、Play Mode中にInspectorの
-    // ContextMenuからTurnTransitionの主要契約を確認するための自己診断。
-    // Runtime Player buildではUNITY_EDITORが未定義なので含まれない。
-    [ContextMenu("Debug/Turn Transition Self Check")]
-    void RunTurnTransitionSelfCheck()
-    {
-        if (!Application.isPlaying)
-        {
-            Debug.LogWarning(
-                "[TURN TRANSITION SELF CHECK] Play Modeで実行してください。",
-                this);
-            return;
-        }
-
-        if (Time.timeScale <= 0f)
-        {
-            Debug.LogWarning(
-                "[TURN TRANSITION SELF CHECK] Time.timeScaleが0以下です。Tween完了を確認できないため中止します。",
-                this);
-            return;
-        }
-
-        StartCoroutine(RunTurnTransitionSelfCheckCoroutine());
-    }
-
-    public void PushStart()
-    {
-        MainGameManager.TopTitle.SetActive(false);
-        MainGameManager.PreviewIconRoot.SetActive(false);
-        MainGameManager.TopLiteral.SetActive(false);
-        MainGameManager.PlayButton.SetActive(false);
-        MainGameManager.Userbility.SetActive(true);
-
-        BeginCommandOnTouch = true;
-    }
-
-    IEnumerator Recover()
-    {
-        yield return new WaitForSeconds(0.5f);
-        MainGameManager.DropOut.SetActive(true);
-        yield return new WaitForSeconds(2f);
-        MainGameManager.DropOut.SetActive(false);
-        MainGameManager.OpenChunkStage = true;
-    }
-
-    IEnumerator RunTurnTransitionSelfCheckCoroutine()
-    {
-        int failureCount = 0;
-
-        GameObject physicsRootObject = null;
-        GameObject visualRootObject = null;
-        GameObject pivotObject = null;
-        GameObject inSubjectObject = null;
-        GameObject subjectObject = null;
-
-        try
-        {
-            physicsRootObject =
-                new GameObject("PhysicsRoot_TurnTransitionSelfCheck");
-            visualRootObject =
-                new GameObject("VisualPlayerRoot_TurnTransitionSelfCheck");
-            pivotObject =
-                new GameObject("TurnPivot_TurnTransitionSelfCheck");
-            inSubjectObject =
-                new GameObject("InSubject_TurnTransitionSelfCheck");
-            subjectObject =
-                new GameObject("Subject_TurnTransitionSelfCheck");
-
-            inSubjectObject.transform.SetParent(
-                physicsRootObject.transform,
-                false);
-
-            Rigidbody inSubjectBody =
-                inSubjectObject.AddComponent<Rigidbody>();
-            inSubjectBody.useGravity = false;
-            inSubjectBody.detectCollisions = false;
-
-            inSubjectObject.AddComponent<SphereCollider>();
-            inSubjectObject.AddComponent<NearestKnotDetector>();
-
-            SlopeStickCore testCore =
-                inSubjectObject.AddComponent<SlopeStickCore>();
-
-            // 自己診断用インスタンス自身のUpdate/FixedUpdate/Startは使わない。
-            // ApplyQuarterTurnをこのクラス内部から直接呼び、TurnTransition契約だけを検査する。
-            testCore.enabled = false;
-
-            Rigidbody subjectBody =
-                subjectObject.AddComponent<Rigidbody>();
-            subjectBody.useGravity = false;
-            subjectBody.detectCollisions = false;
-            subjectBody.isKinematic = true;
-
-            CorrespondSubject correspond =
-                subjectObject.AddComponent<CorrespondSubject>();
-
-            correspond.Bind(
-                inSubjectBody,
-                physicsRootObject.transform,
-                visualRootObject.transform);
-
-            // 同じSlopeStickCore型のprivate fieldなので直接設定できる。
-            testCore.correspondSubject = correspond;
-            testCore.physicsRoot = physicsRootObject.transform;
-            testCore.visualPlayerRoot = visualRootObject.transform;
-            testCore.visualRotationPivot = pivotObject.transform;
-            testCore.enableFiveLineAfterPop = false;
-            testCore.logCore = false;
-            testCore.logTurnTransition = false;
-
-            testCore.turnVisualDurationSeconds = 0.16f;
-            testCore.turnHardFreezeSeconds = 0.04f;
-
-            testCore.SetTravelDirection(Vector3.forward);
-
-            // Scene内のColliderと接触しないよう十分離れた位置で検証する。
-            inSubjectBody.position =
-                new Vector3(10000f, 10000f, 10000f);
-            inSubjectBody.rotation = Quaternion.identity;
-            inSubjectBody.velocity =
-                new Vector3(0f, 0f, 10f);
-            inSubjectBody.angularVelocity =
-                new Vector3(0f, 2f, 0f);
-
-            Vector3 frozenPosition = inSubjectBody.position;
-
-            // FixedUpdate経由ではなく、TurnTransition開始処理を直接検証する。
-            testCore.ApplyQuarterTurn(+QuarterTurnDegrees);
-
-            SelfCheck(
-                testCore.IsTurnTransitionActive,
-                "旋回開始直後にTurnTransitionが有効",
-                ref failureCount);
-
-            SelfCheck(
-                testCore.IsTurnBodyFrozen && inSubjectBody.isKinematic,
-                "HardFreeze中のInSubjectがKinematic",
-                ref failureCount);
-
-            SelfCheck(
-                Vector3.Distance(
-                    inSubjectBody.position,
-                    frozenPosition) < 0.0001f,
-                "旋回開始時点でInSubject位置を保持",
-                ref failureCount);
-
-            // HardFreeze=0.04秒を越え、VisualTurn=0.16秒はまだ完了していない時点。
-            yield return new WaitForSeconds(0.07f);
-            yield return new WaitForFixedUpdate();
-
-            SelfCheck(
-                testCore.IsTurnTransitionActive,
-                "Coast中もTurnTransition全体は継続",
-                ref failureCount);
-
-            SelfCheck(
-                !testCore.IsTurnBodyFrozen && !inSubjectBody.isKinematic,
-                "HardFreeze終了後にVisual旋回完了前でもDynamicへ復帰",
-                ref failureCount);
-
-            SelfCheck(
-                Mathf.Abs(inSubjectBody.velocity.magnitude - 10f) <= 0.10f,
-                "Coast開始時に旋回前Speedを復元",
-                ref failureCount);
-
-            // VisualTurn完了後まで待つ。
-            yield return new WaitForSeconds(0.14f);
-            yield return new WaitForFixedUpdate();
-
-            SelfCheck(
-                !testCore.IsTurnTransitionActive,
-                "Visual旋回完了後にTurnTransition終了",
-                ref failureCount);
-
-            SelfCheck(
-                !inSubjectBody.isKinematic,
-                "Visual旋回完了後もInSubjectはDynamic",
-                ref failureCount);
-
-            SelfCheck(
-                Mathf.Abs(inSubjectBody.velocity.magnitude - 10f) <= 0.02f,
-                "旋回前の速度Magnitudeを保存",
-                ref failureCount);
-
-            SelfCheck(
-                Mathf.Abs(inSubjectBody.velocity.x - 10f) <= 0.02f,
-                "右90度旋回後にX方向へ速度復元",
-                ref failureCount);
-
-            SelfCheck(
-                Mathf.Abs(inSubjectBody.velocity.z) <= 0.02f,
-                "右90度旋回後に旧Z速度を残さない",
-                ref failureCount);
-
-            if (failureCount == 0)
-            {
-                Debug.Log(
-                    "[TURN TRANSITION SELF CHECK PASS] HardFreeze→Coast→Completeの主要契約を確認しました。",
-                    this);
-            }
-            else
-            {
-                Debug.LogError(
-                    $"[TURN TRANSITION SELF CHECK FAILED] failures={failureCount}",
-                    this);
-            }
-        }
-        finally
-        {
-            if (physicsRootObject)
-                Object.Destroy(physicsRootObject);
-
-            if (visualRootObject)
-                Object.Destroy(visualRootObject);
-
-            if (pivotObject)
-                Object.Destroy(pivotObject);
-
-            if (inSubjectObject)
-                Object.Destroy(inSubjectObject);
-
-            if (subjectObject)
-                Object.Destroy(subjectObject);
-        }
-    }
-
-
-
-
-    void SelfCheck(
-        bool condition,
-        string message,
-        ref int failureCount)
-    {
-        if (condition)
-        {
-            Debug.Log(
-                $"[TURN TRANSITION SELF CHECK PASS] {message}",
-                this);
-            return;
-        }
-
-        failureCount++;
-        Debug.LogError(
-            $"[TURN TRANSITION SELF CHECK FAIL] {message}",
-            this);
-    }
-#endif
-
+    
 }
+

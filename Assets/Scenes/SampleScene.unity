@@ -2012,23 +2012,7 @@ MonoBehaviour:
   missileChaseMaximumAcceleration: 48
   missileChaseMaximumJerk: 420
   missileChaseLeadSeconds: 0.18
-  enableMissileOvershootValidation: 0
-  missileOvershootValidationLeadSeconds: 0.35
   missileMaximumWaitForSubjectFlatSeconds: 2.5
-  enableMissileLandingPrediction: 1
-  missileLandingPredictionHorizonSeconds: 0.8
-  missileLandingPredictionStepSeconds: 0.02
-  missileLandingPredictionRefreshSeconds: 0.04
-  missileLandingPredictionContactEpsilon: 0.01
-  missileFlatSupportProbeRadiusFraction: 0.75
-  missileFlatSupportProbeLift: 0.08
-  missileFlatSupportProbeDepth: 0.2
-  missileFlatSupportRequiredProbeCount: 5
-  enableMissileBoundaryRecovery: 1
-  missileBoundaryRecoveryTriggerLeadSeconds: 0.5
-  missileBoundaryRecoveryMinimumDuration: 0.12
-  missileBoundaryRecoveryMaximumDuration: 0.24
-  missileBoundaryRecoveryImpactFraction: 0.6
   terminalTimeBudget: 0.3
   terminalMinimumTimeToGo: 0.04
   maximumTerminalAcceleration: 80
@@ -4712,10 +4696,16 @@ MonoBehaviour:
   turnInputBufferSeconds: 0.25
   turnVisualDurationSeconds: 0.3
   turnHardFreezeSeconds: 0.12
-  enableFiveLineAfterPop: 1
+  logTurnTransition: 1
+  turnPathRadiusMeters: 1.2
+  turnPathMinimumFixedSteps: 4
+  turnPathMaximumDurationSeconds: 0.14
+  turnPathMinimumReferencePlanarSpeed: 1
+  logTurnPath: 0
+  energyTargetPassToleranceMeters: 0.08
   fiveLineCorrectionDurationSeconds: 0.1
   fiveLineMaximumCorrectionMeters: 0.75
-  logTurnTransition: 1
+  logTurnPolicy: 1
   probeDistance: 28
   maxSlopeAngle: 75
   supportGraceSeconds: 0.16

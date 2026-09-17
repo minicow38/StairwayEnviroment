@@ -1,15 +1,12 @@
 using UnityEngine;
 using Sirenix.OdinInspector;
-using System.Collections.Generic;
 
 [Searchable]
 [DefaultExecutionOrder(200)]
 [RequireComponent(typeof(Rigidbody), typeof(SphereCollider))]
 public class BallVisualSlopeDrive : MonoBehaviour
 {
-    public const string RuntimeBuildId = "BallVisualSlopeDrive-MissileOvershootValidation-v11";
-
-    private const int MissileFlatSupportProbeTotal = 5;
+    public const string RuntimeBuildId = "BallVisualSlopeDrive-TurnHandoff-v7";
 
     private enum MotionPhase
     {
@@ -17,48 +14,10 @@ public class BallVisualSlopeDrive : MonoBehaviour
         Incident,
         MissileAscent,
         MissileChase,
-        MissileBoundaryRecovery,
         TerminalRejoin,
         ContinuousRejoin,
         TurnHandoffRejoin,
         Settled
-    }
-
-    private enum MissileLandingPredictionType
-    {
-        Unknown,
-        SafeFlatLanding,
-        StairBoundaryThreat
-    }
-
-    private enum PredictedSurfaceType
-    {
-        Unknown,
-        FlatCandidate,
-        Stair
-    }
-
-    private struct MissileLandingPrediction
-    {
-        public bool valid;
-        public MissileLandingPredictionType type;
-        public float timeToImpact;
-        public Vector3 hitPoint;
-        public string colliderName;
-
-        // Flat候補診断。SafeFlatLanding時はaccepted*に実際の支持Probe結果を保持する。
-        public int rejectedFlatCandidateCount;
-        public float acceptedFlatSupportRatio;
-        public int acceptedFlatSupportedProbeCount;
-    }
-
-    private struct MissileBoundaryRecoveryPlan
-    {
-        public bool valid;
-        public float recoveryDuration;
-        public float predictedImpactTime;
-        public Vector3 predictedImpactPoint;
-        public string threatenedColliderName;
     }
     
     [Header("References")]
@@ -139,78 +98,13 @@ public class BallVisualSlopeDrive : MonoBehaviour
     [Min(0f)]
     [SerializeField] private float missileChaseMaximumJerk = 420f;
 
-    [Tooltip("Future Shadowの先読み時間[s]。通常プレイで使う本番値です。")]
+    [Tooltip("Future Shadowの先読み時間[s]")]
     [Min(0f)]
     [SerializeField] private float missileChaseLeadSeconds = 0.18f;
-
-    [Header("Missile Overshoot Validation (Development Only)")]
-    [Tooltip("Flat越え→Stair脅威→Boundary Recoveryを意図的に再現する検証用。通常プレイではOFFのまま使用します。Editor/Development Buildでのみ有効です。")]
-    [SerializeField] private bool enableMissileOvershootValidation = false;
-
-    [Tooltip("検証時だけ使うFuture Shadow先読み時間[s]。本番missileChaseLeadSeconds自体は書き換えません。")]
-    [Min(0f)]
-    [SerializeField] private float missileOvershootValidationLeadSeconds = 0.35f;
 
     [Tooltip("Subject Flat分類を待つ最大時間[s]")]
     [Min(0.2f)]
     [SerializeField] private float missileMaximumWaitForSubjectFlatSeconds = 2.50f;
-
-    [Header("Missile Landing Prediction")]
-    [Tooltip("MissileChase中に現在の誘導式を未来積分し、Flat着地か未来のStair境界脅威かを予測します。")]
-    [SerializeField] private bool enableMissileLandingPrediction = true;
-
-    [Tooltip("未来予測する最大時間[s]。長すぎるとSubject等速近似の誤差が増えます。")]
-    [Min(0.10f)]
-    [SerializeField] private float missileLandingPredictionHorizonSeconds = 0.80f;
-
-    [Tooltip("未来積分/Collider sweepの刻み[s]。FixedDeltaTimeと同程度を推奨します。")]
-    [Range(0.01f, 0.05f)]
-    [SerializeField] private float missileLandingPredictionStepSeconds = 0.02f;
-
-    [Tooltip("予測を再計算する間隔[s]。毎FixedUpdateで多数のSphereCastを行わないための負荷制限です。")]
-    [Min(0.02f)]
-    [SerializeField] private float missileLandingPredictionRefreshSeconds = 0.04f;
-
-    [Tooltip("SphereCast開始点で既に接触/重なっているColliderは未来脅威ではないため除外します。追加で距離0近傍Hitもこの距離[m]以下なら除外します。")]
-    [Min(0f)]
-    [SerializeField] private float missileLandingPredictionContactEpsilon = 0.01f;
-
-    [Header("Missile Flat Support Validation")]
-    [Tooltip("Flat候補を安全着地と認める支持Probeの水平半径。Ball半径に対する割合です。")]
-    [Range(0.25f, 0.95f)]
-    [SerializeField] private float missileFlatSupportProbeRadiusFraction = 0.75f;
-
-    [Tooltip("Flat候補面より上からSupport Rayを開始する高さ[m]。")]
-    [Min(0.01f)]
-    [SerializeField] private float missileFlatSupportProbeLift = 0.08f;
-
-    [Tooltip("Support Rayの下向き探索距離[m]。Flat面直下の階段を支持面として数えないよう短く保ちます。")]
-    [Min(0.05f)]
-    [SerializeField] private float missileFlatSupportProbeDepth = 0.20f;
-
-    [Tooltip("中心+前後左右の5Probeのうち、安全なFlat支持として必要な本数。5を推奨します。")]
-    [Range(3, 5)]
-    [SerializeField] private int missileFlatSupportRequiredProbeCount = 5;
-
-    [Header("Missile Boundary Recovery")]
-    [Tooltip("未来のStair境界脅威を検知したら通常Terminalを待たず、Subject相対Hermiteへ直接移譲します。")]
-    [SerializeField] private bool enableMissileBoundaryRecovery = true;
-
-    [Tooltip("予測衝突までこの秒数以内ならBoundary Recoveryを開始します。")]
-    [Min(0.05f)]
-    [SerializeField] private float missileBoundaryRecoveryTriggerLeadSeconds = 0.50f;
-
-    [Tooltip("Boundary Recoveryの最短時間[s]。衝突が近くても開始直後からColliderを無効化するためhard snapは不要です。")]
-    [Min(0.05f)]
-    [SerializeField] private float missileBoundaryRecoveryMinimumDuration = 0.12f;
-
-    [Tooltip("Boundary Recoveryの最長時間[s]。長すぎると入力応答と見た目が鈍くなるため短く保ちます。")]
-    [Min(0.05f)]
-    [SerializeField] private float missileBoundaryRecoveryMaximumDuration = 0.24f;
-
-    [Tooltip("予測衝突時刻に対してRecovery完了をどれだけ前倒しするか。0.6ならimpactInの60%を目安にします。")]
-    [Range(0.2f, 1.0f)]
-    [SerializeField] private float missileBoundaryRecoveryImpactFraction = 0.60f;
 
     [Header("Terminal Rejoin")]
     [Tooltip("Terminal開始から完全同期までの時間予算[s]")]
@@ -355,10 +249,6 @@ public class BallVisualSlopeDrive : MonoBehaviour
     private bool ballFlatCaptured;
     private float ballFlatTime = -1f;
 
-    // ---------- Missile landing prediction / boundary recovery runtime ----------
-    private MissileLandingPrediction missileLandingPrediction;
-    private float missileLandingPredictionNextTime = -1f;
-
     // ---------- Terminal runtime ----------
     private float terminalStartTime = -1f;
     private float terminalElapsed;
@@ -371,55 +261,54 @@ public class BallVisualSlopeDrive : MonoBehaviour
     private bool terminalExtendedRecoveryActive;
     private int terminalRecoveryExtensionCount;
 
-    // ---------- Shared Relative Hermite Rejoin runtime ----------
+    // ---------- Continuous Relative Rejoin runtime ----------
     // Recovery中はWorld終点を追いかけない。
     // VisualPlayerRoot座標系で「Subjectからの相対差」だけをHermiteで0へ収束させる。
-    private float relativeRejoinStartTime = -1f;
-    private float relativeRejoinDuration;
+    private float continuousRejoinStartTime = -1f;
+    private float continuousRejoinDuration;
 
-    private Vector3 relativeRejoinStartLocalOffset;
-    private Vector3 relativeRejoinStartLocalVelocity;
-    private Quaternion relativeRejoinStartRelativeRotation = Quaternion.identity;
+    private Vector3 continuousRejoinStartLocalOffset;
+    private Vector3 continuousRejoinStartLocalVelocity;
+    private Quaternion continuousRejoinStartRelativeRotation = Quaternion.identity;
 
-    private Vector3 relativeRejoinCurrentLocalOffset;
-    private Vector3 relativeRejoinCurrentLocalVelocity;
-    private Vector3 relativeRejoinCurrentWorldPosition;
-    private Vector3 relativeRejoinCurrentWorldVelocity;
-    private Quaternion relativeRejoinCurrentWorldRotation = Quaternion.identity;
+    private Vector3 continuousRejoinCurrentLocalOffset;
+    private Vector3 continuousRejoinCurrentLocalVelocity;
+    private Vector3 continuousRejoinCurrentWorldPosition;
+    private Vector3 continuousRejoinCurrentWorldVelocity;
+    private Quaternion continuousRejoinCurrentWorldRotation = Quaternion.identity;
 
     // VisualPlayerRoot自体が回転しているときの輸送速度 omega x r を復元するためのsample。
     private bool hasContinuousFrameSample;
     private Vector3 previousContinuousFramePosition;
     private Quaternion previousContinuousFrameRotation = Quaternion.identity;
-    private Vector3 relativeRejoinFrameLinearVelocityWorld;
-    private Vector3 relativeRejoinFrameAngularVelocityWorld;
+    private Vector3 continuousFrameLinearVelocityWorld;
+    private Vector3 continuousFrameAngularVelocityWorld;
 
     // 1コマ不連続を数値で検出するための診断値。
-    private bool hasRelativeTrajectorySample;
-    private Vector3 previousRelativeWorldPosition;
-    private Vector3 previousRelativeWorldVelocity;
-    private float previousRelativeSampleTime = -1f;
+    private bool hasContinuousTrajectorySample;
+    private Vector3 previousContinuousWorldPosition;
+    private Vector3 previousContinuousWorldVelocity;
+    private float previousContinuousSampleTime = -1f;
     private float currentContinuityResidualMeters;
     private float maximumContinuityResidualMeters;
 
-    private bool relativeRejoinWaitingForFrameStableLogged;
+    private bool continuousRejoinWaitingForTurnEndLogged;
 
     public enum BallVisualPoseAuthority
     {
         Synchronized,
         PhysicalDrive,
-        RelativeHermiteRejoin
+        ContinuousRejoin
     }
 
     public BallVisualPoseAuthority PoseAuthority
     {
         get
         {
-            if (motionPhase == MotionPhase.MissileBoundaryRecovery ||
-                motionPhase == MotionPhase.ContinuousRejoin ||
+            if (motionPhase == MotionPhase.ContinuousRejoin ||
                 motionPhase == MotionPhase.TurnHandoffRejoin)
             {
-                return BallVisualPoseAuthority.RelativeHermiteRejoin;
+                return BallVisualPoseAuthority.ContinuousRejoin;
             }
 
             if (motionPhase == MotionPhase.Waiting ||
@@ -441,7 +330,6 @@ public class BallVisualSlopeDrive : MonoBehaviour
         motionPhase == MotionPhase.ContinuousRejoin;
 
     private bool IsRelativeHermiteRejoining =>
-        motionPhase == MotionPhase.MissileBoundaryRecovery ||
         motionPhase == MotionPhase.ContinuousRejoin ||
         motionPhase == MotionPhase.TurnHandoffRejoin;
 
@@ -549,7 +437,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
             Vector3 subjectVelocity = ReadMappedInSubjectVelocity();
             Vector3 shadowTarget =
                 respondSubject.MappedPosition +
-                subjectVelocity * ResolveMissileChaseLeadSeconds();
+                subjectVelocity * missileChaseLeadSeconds;
 
             if (IsFinite(shadowTarget))
             {
@@ -601,20 +489,6 @@ public class BallVisualSlopeDrive : MonoBehaviour
         // 実行中のファイル世代をログだけで確認できる識別子。
         Debug.Log($"[BALL VISUAL DRIVE BUILD] {RuntimeBuildId}", this);
 
-        if (enableMissileOvershootValidation)
-        {
-            float effectiveLead = ResolveMissileChaseLeadSeconds();
-            bool active = IsMissileOvershootValidationActive();
-
-            Debug.LogWarning(
-                $"[MISSILE OVERSHOOT VALIDATION] " +
-                $"requested=True active={active} " +
-                $"baseLead={missileChaseLeadSeconds:F3}s " +
-                $"validationLead={missileOvershootValidationLeadSeconds:F3}s " +
-                $"effectiveLead={effectiveLead:F3}s",
-                this);
-        }
-
         if (BallVisualEqualizer == null)
         {
             GameObject equalizerObject =
@@ -659,7 +533,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         fixedFrameCounter++;
         UpdateControlBasis();
         UpdateVisualFrameStability();
-        UpdateRelativeRejoinFrameVelocitySample();
+        UpdateContinuousFrameAngularVelocitySample();
 
         bool isFlat = slopeCore.BallVisualIsOnFlat;
         bool isOnSlope = slopeCore.BallVisualIsOnSlope;
@@ -677,15 +551,6 @@ public class BallVisualSlopeDrive : MonoBehaviour
             {
                 BeginTurnHandoffRejoin();
             }
-        }
-
-        // Missile Boundary Recovery中は未来Stair脅威を跨いでSubjectへ相対Hermite収束する。
-        // この区間はCollider/Gravityを切り、BallVisualSlopeDriveだけがPoseを所有する。
-        if (motionPhase == MotionPhase.MissileBoundaryRecovery)
-        {
-            ProcessMissileBoundaryRecovery();
-            WriteDebugLog();
-            return;
         }
 
         // Continuous Rejoin中はBallVisualの位置権威をこのクラスだけが持つ。
@@ -765,24 +630,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (motionPhase == MotionPhase.MissileChase)
         {
-            // 未来のStair境界脅威は通常Terminalへ流さず、
-            // 衝突が起きる前にCollider-freeのSubject相対Hermiteへ直接移譲する。
-            if (TryBeginMissileBoundaryRecovery())
-            {
-                ProcessMissileBoundaryRecovery();
-                WriteDebugLog();
-                return;
-            }
-
-            if (ShouldBeginTerminalRejoin(
-                    isFlat,
-                    out float terminalEntryTimeToGo,
-                    out string terminalEntryReason))
-            {
-                BeginTerminalRejoin(
-                    terminalEntryTimeToGo,
-                    terminalEntryReason);
-            }
+            if (ShouldBeginTerminalRejoin(isFlat))
+                BeginTerminalRejoin();
 
             if (motionPhase == MotionPhase.MissileChase)
                 ProcessMissileChase();
@@ -1264,10 +1113,14 @@ public class BallVisualSlopeDrive : MonoBehaviour
             limitReferenceVelocity,
             Vector3.up);
 
+        float verticalSpeedAfter =
+            velocityBefore.y < 0f
+                ? velocityBefore.y
+                : secondPopUpSpeed;
+
         Vector3 plannedVelocityAfter =
             planarReferenceVelocity +
-            Vector3.up * secondPopUpSpeed;
-
+            Vector3.up * verticalSpeedAfter;
         Vector3 deltaVelocity = plannedVelocityAfter - velocityBefore;
         ballBody.AddForce(deltaVelocity, ForceMode.VelocityChange);
 
@@ -1281,8 +1134,6 @@ public class BallVisualSlopeDrive : MonoBehaviour
         subjectFlatTime = -1f;
         ballFlatCaptured = false;
         ballFlatTime = -1f;
-        missileLandingPrediction = default;
-        missileLandingPredictionNextTime = Time.fixedTime;
 
         motionPhase = MotionPhase.MissileAscent;
 
@@ -1372,27 +1223,6 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
-    private bool IsMissileOvershootValidationActive()
-    {
-        return enableMissileOvershootValidation &&
-               (Application.isEditor || Debug.isDebugBuild);
-    }
-
-
-    private float ResolveMissileChaseLeadSeconds()
-    {
-        float productionLead =
-            Mathf.Max(0f, missileChaseLeadSeconds);
-
-        if (!IsMissileOvershootValidationActive())
-            return productionLead;
-
-        return Mathf.Max(
-            productionLead,
-            missileOvershootValidationLeadSeconds);
-    }
-
-
     private void ProcessMissileChase()
     {
         if (motionPhase != MotionPhase.MissileChase)
@@ -1411,7 +1241,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         Vector3 shadowTargetPosition =
             subjectPosition +
             subjectVelocity *
-            ResolveMissileChaseLeadSeconds();
+            missileChaseLeadSeconds;
 
         Vector3 positionError =
             shadowTargetPosition -
@@ -1448,14 +1278,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
             ForceMode.Acceleration);
     }
 
-    private bool ShouldBeginTerminalRejoin(
-        bool isFlat,
-        out float initialTimeToGo,
-        out string reason)
+    private bool ShouldBeginTerminalRejoin(bool isFlat)
     {
-        initialTimeToGo = -1f;
-        reason = "None";
-
         if (motionPhase != MotionPhase.MissileChase)
             return false;
 
@@ -1481,729 +1305,24 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 }
             }
 
-            initialTimeToGo =
-                Mathf.Max(
-                    terminalMinimumTimeToGo,
-                    terminalTimeBudget);
-
-            reason = "SubjectFlat";
             return true;
         }
 
-        if (missileElapsed >= missileMaximumWaitForSubjectFlatSeconds)
-        {
-            initialTimeToGo =
-                Mathf.Max(
-                    terminalMinimumTimeToGo,
-                    terminalTimeBudget);
-
-            reason = "SubjectFlatTimeout";
-            return true;
-        }
-
-        return false;
-    }
-
-
-    private void RefreshMissileLandingPredictionIfDue()
-    {
-        if (!enableMissileLandingPrediction ||
-            motionPhase != MotionPhase.MissileChase ||
-            ballBody == null ||
-            ballCollider == null ||
-            respondSubject == null)
-        {
-            return;
-        }
-
-        float now = Time.fixedTime;
-        if (missileLandingPredictionNextTime >= 0f &&
-            now + 0.000001f < missileLandingPredictionNextTime)
-        {
-            return;
-        }
-
-        missileLandingPredictionNextTime =
-            now + Mathf.Max(
-                Time.fixedDeltaTime,
-                missileLandingPredictionRefreshSeconds);
-
-        MissileLandingPredictionType previousType =
-            missileLandingPrediction.type;
-        int previousRejectedFlatCount =
-            missileLandingPrediction.rejectedFlatCandidateCount;
-
-        missileLandingPrediction = PredictMissileLanding();
-
-        if (enableDebugLog &&
-            (missileLandingPrediction.type != previousType ||
-             missileLandingPrediction.type == MissileLandingPredictionType.StairBoundaryThreat ||
-             missileLandingPrediction.rejectedFlatCandidateCount != previousRejectedFlatCount))
-        {
-            Debug.Log(
-                $"[MISSILE LANDING PREDICTION] " +
-                $"time={now:F4} " +
-                $"type={missileLandingPrediction.type} " +
-                $"valid={missileLandingPrediction.valid} " +
-                $"impactIn={missileLandingPrediction.timeToImpact:F4}s " +
-                $"collider={missileLandingPrediction.colliderName} " +
-                $"point={missileLandingPrediction.hitPoint:F4} " +
-                $"rejectedFlat={missileLandingPrediction.rejectedFlatCandidateCount} " +
-                $"acceptedSupport={missileLandingPrediction.acceptedFlatSupportedProbeCount}/{MissileFlatSupportProbeTotal} " +
-                $"acceptedRatio={missileLandingPrediction.acceptedFlatSupportRatio:F3}",
-                this);
-        }
-    }
-
-
-    private bool TryBeginMissileBoundaryRecovery()
-    {
-        if (!enableMissileBoundaryRecovery ||
-            motionPhase != MotionPhase.MissileChase ||
-            ballFlatCaptured)
-        {
-            return false;
-        }
-
-        RefreshMissileLandingPredictionIfDue();
-
-        if (!TryBuildMissileBoundaryRecoveryPlan(
-                missileLandingPrediction,
-                out MissileBoundaryRecoveryPlan plan))
-        {
-            return false;
-        }
-
-        BeginMissileBoundaryRecovery(plan);
-        return motionPhase == MotionPhase.MissileBoundaryRecovery;
-    }
-
-
-    private bool TryBuildMissileBoundaryRecoveryPlan(
-        MissileLandingPrediction prediction,
-        out MissileBoundaryRecoveryPlan plan)
-    {
-        plan = default;
-
-        if (!prediction.valid ||
-            prediction.type != MissileLandingPredictionType.StairBoundaryThreat)
-        {
-            return false;
-        }
-
-        float triggerLead =
-            Mathf.Max(
-                Time.fixedDeltaTime,
-                missileBoundaryRecoveryTriggerLeadSeconds);
-
-        if (prediction.timeToImpact > triggerLead)
-            return false;
-
-        float minimumDuration =
-            Mathf.Max(
-                0.05f,
-                missileBoundaryRecoveryMinimumDuration);
-
-        float maximumDuration =
-            Mathf.Max(
-                minimumDuration,
-                missileBoundaryRecoveryMaximumDuration);
-
-        float durationFromImpact =
-            Mathf.Max(
-                Time.fixedDeltaTime,
-                prediction.timeToImpact) *
-            Mathf.Clamp(
-                missileBoundaryRecoveryImpactFraction,
-                0.2f,
-                1f);
-
-        float relativeDistance =
-            Vector3.Distance(
-                ballBody.position,
-                respondSubject.MappedPosition);
-
-        float durationFromDistance =
-            relativeDistance /
-            Mathf.Max(
-                1f,
-                emergencyVisualPreferredCatchUpSpeed);
-
-        plan.valid = true;
-        plan.recoveryDuration =
-            Mathf.Clamp(
-                Mathf.Max(
-                    durationFromImpact,
-                    durationFromDistance),
-                minimumDuration,
-                maximumDuration);
-        plan.predictedImpactTime = prediction.timeToImpact;
-        plan.predictedImpactPoint = prediction.hitPoint;
-        plan.threatenedColliderName = prediction.colliderName;
-
-        return true;
-    }
-
-
-    private void BeginMissileBoundaryRecovery(
-        MissileBoundaryRecoveryPlan plan)
-    {
-        if (motionPhase != MotionPhase.MissileChase ||
-            !plan.valid)
-        {
-            return;
-        }
-
-        if (enableDebugLog)
-        {
-            Debug.Log(
-                $"[MISSILE BOUNDARY RECOVERY PLAN] " +
-                $"time={Time.fixedTime:F4} " +
-                $"impactIn={plan.predictedImpactTime:F4}s " +
-                $"duration={plan.recoveryDuration:F4}s " +
-                $"collider={plan.threatenedColliderName} " +
-                $"impactPoint={plan.predictedImpactPoint:F4} " +
-                $"ballPos={ballBody.position:F4} " +
-                $"subjectPos={respondSubject.MappedPosition:F4}",
-                this);
-        }
-
-        BeginRelativeHermiteRejoin(
-            "FutureStairBoundaryThreat",
-            plan.recoveryDuration,
-            MotionPhase.MissileBoundaryRecovery);
-    }
-
-
-    private MissileLandingPrediction PredictMissileLanding()
-    {
-        MissileLandingPrediction result = default;
-        result.type = MissileLandingPredictionType.Unknown;
-        result.colliderName = "None";
-
-        if (ballBody == null ||
-            ballCollider == null ||
-            respondSubject == null)
-        {
-            return result;
-        }
-
-        float step =
-            Mathf.Clamp(
-                missileLandingPredictionStepSeconds,
-                0.01f,
-                0.05f);
-
-        float horizon =
-            Mathf.Max(
-                step,
-                missileLandingPredictionHorizonSeconds);
-
-        Vector3 predictedPosition = ballBody.position;
-        Vector3 predictedVelocity = ballBody.velocity;
-        Vector3 predictedArtificialAcceleration =
-            missileChaseAccelerationState;
-
-        Vector3 subjectStartPosition =
-            respondSubject.MappedPosition;
-
-        Vector3 subjectVelocity =
-            ReadMappedInSubjectVelocity();
-
-        float worldRadius = GetBallVisualWorldRadius();
-        Vector3 colliderCenterOffset =
-            ballCollider.transform.TransformVector(
-                ballCollider.center);
-
-        Vector3 predictionStartCenter =
-            predictedPosition + colliderCenterOffset;
-
-        HashSet<int> initialOverlapColliderIds =
-            CollectPredictionStartOverlapColliderIds(
-                predictionStartCenter,
-                worldRadius);
-
-        float elapsed = 0f;
-
-        while (elapsed < horizon - 0.000001f)
-        {
-            float dt =
-                Mathf.Min(
-                    step,
-                    horizon - elapsed);
-
-            float nextElapsed = elapsed + dt;
-
-            // Subjectは短い予測窓では現在速度一定とする。
-            // Chase本体と同じFuture Shadow式を使い、BallVisual側だけを未来積分する。
-            Vector3 predictedSubjectPosition =
-                subjectStartPosition +
-                subjectVelocity * nextElapsed;
-
-            Vector3 shadowTargetPosition =
-                predictedSubjectPosition +
-                subjectVelocity * ResolveMissileChaseLeadSeconds();
-
-            Vector3 positionError =
-                shadowTargetPosition - predictedPosition;
-
-            Vector3 velocityError =
-                subjectVelocity - predictedVelocity;
-
-            Vector3 desiredArtificialAcceleration =
-                positionError * missileChasePositionGain +
-                velocityError * missileChaseVelocityGain;
-
-            desiredArtificialAcceleration =
-                Vector3.ClampMagnitude(
-                    desiredArtificialAcceleration,
-                    missileChaseMaximumAcceleration);
-
-            predictedArtificialAcceleration =
-                Vector3.MoveTowards(
-                    predictedArtificialAcceleration,
-                    desiredArtificialAcceleration,
-                    missileChaseMaximumJerk * dt);
-
-            Vector3 predictedNextVelocity =
-                predictedVelocity +
-                (Physics.gravity + predictedArtificialAcceleration) * dt;
-
-            Vector3 predictedNextPosition =
-                predictedPosition +
-                predictedNextVelocity * dt;
-
-            Vector3 sweepStart =
-                predictedPosition + colliderCenterOffset;
-
-            Vector3 sweepEnd =
-                predictedNextPosition + colliderCenterOffset;
-
-            RaycastHit[] hits =
-                CollectSortedPredictedSurfaceHits(
-                    sweepStart,
-                    sweepEnd,
-                    worldRadius,
-                    initialOverlapColliderIds);
-
-            float sweepDistance =
-                Vector3.Distance(
-                    sweepStart,
-                    sweepEnd);
-
-            for (int i = 0; i < hits.Length; i++)
-            {
-                RaycastHit hit = hits[i];
-
-                if (!TryClassifyPredictedSurface(
-                        hit.collider != null
-                            ? hit.collider.transform
-                            : null,
-                        out PredictedSurfaceType surfaceType))
-                {
-                    continue;
-                }
-
-                float sweepFraction =
-                    sweepDistance > 0.000001f
-                        ? Mathf.Clamp01(hit.distance / sweepDistance)
-                        : 1f;
-
-                float timeToImpact =
-                    elapsed + dt * sweepFraction;
-
-                Vector3 sphereCenterAtImpact =
-                    sweepStart +
-                    (sweepEnd - sweepStart) * sweepFraction;
-
-                if (surfaceType == PredictedSurfaceType.Stair)
-                {
-                    result.valid = true;
-                    result.type =
-                        MissileLandingPredictionType.StairBoundaryThreat;
-                    result.timeToImpact = timeToImpact;
-                    result.hitPoint = hit.point;
-                    result.colliderName =
-                        hit.collider != null
-                            ? hit.collider.name
-                            : "Unknown";
-                    return result;
-                }
-
-                if (surfaceType != PredictedSurfaceType.FlatCandidate)
-                    continue;
-
-                if (ValidatePredictedFlatSupport(
-                        hit,
-                        sphereCenterAtImpact,
-                        predictedNextVelocity,
-                        worldRadius,
-                        out float supportRatio,
-                        out int supportedProbeCount))
-                {
-                    result.valid = true;
-                    result.type =
-                        MissileLandingPredictionType.SafeFlatLanding;
-                    result.timeToImpact = timeToImpact;
-                    result.hitPoint = hit.point;
-                    result.colliderName =
-                        hit.collider != null
-                            ? hit.collider.name
-                            : "Unknown";
-                    result.acceptedFlatSupportRatio = supportRatio;
-                    result.acceptedFlatSupportedProbeCount = supportedProbeCount;
-                    return result;
-                }
-
-                // Flat端をSphereがかすっただけなら着地確定にしない。
-                // 同じSphereCast内の後続Hitを調べ、直後のStairを見逃さない。
-                result.rejectedFlatCandidateCount++;
-
-                if (enableDebugLog)
-                {
-                    string rejectedColliderName =
-                        hit.collider != null
-                            ? hit.collider.name
-                            : "Unknown";
-
-                    Debug.Log(
-                        $"[MISSILE FLAT SUPPORT REJECTED] " +
-                        $"time={Time.fixedTime:F4} " +
-                        $"candidate={rejectedColliderName} " +
-                        $"support={supportedProbeCount}/{MissileFlatSupportProbeTotal} " +
-                        $"ratio={supportRatio:F3} " +
-                        $"point={hit.point:F4} " +
-                        $"impactIn={timeToImpact:F4}s",
-                        this);
-                }
-            }
-
-            predictedPosition = predictedNextPosition;
-            predictedVelocity = predictedNextVelocity;
-            elapsed = nextElapsed;
-        }
-
-        return result;
-    }
-
-
-    private HashSet<int> CollectPredictionStartOverlapColliderIds(
-        Vector3 center,
-        float radius)
-    {
-        HashSet<int> ids = new HashSet<int>();
-
-        Collider[] overlaps =
-            Physics.OverlapSphere(
-                center,
-                Mathf.Max(
-                    0.001f,
-                    radius +
-                    Mathf.Max(
-                        0f,
-                        missileLandingPredictionContactEpsilon)),
-                Physics.DefaultRaycastLayers,
-                QueryTriggerInteraction.Ignore);
-
-        for (int i = 0; i < overlaps.Length; i++)
-        {
-            Collider collider = overlaps[i];
-            if (collider == null || collider == ballCollider)
-                continue;
-
-            ids.Add(collider.GetInstanceID());
-        }
-
-        return ids;
-    }
-
-
-    private RaycastHit[] CollectSortedPredictedSurfaceHits(
-        Vector3 sweepStart,
-        Vector3 sweepEnd,
-        float radius,
-        HashSet<int> initialOverlapColliderIds)
-    {
-        Vector3 delta = sweepEnd - sweepStart;
-        float distance = delta.magnitude;
-
-        if (distance <= 0.000001f)
-            return System.Array.Empty<RaycastHit>();
-
-        Vector3 direction = delta / distance;
-
-        RaycastHit[] rawHits =
-            Physics.SphereCastAll(
-                sweepStart,
-                Mathf.Max(0.001f, radius),
-                direction,
-                distance,
-                Physics.DefaultRaycastLayers,
-                QueryTriggerInteraction.Ignore);
-
-        System.Array.Sort(
-            rawHits,
-            (a, b) => a.distance.CompareTo(b.distance));
-
-        List<RaycastHit> filtered =
-            new List<RaycastHit>(rawHits.Length);
-
-        for (int i = 0; i < rawHits.Length; i++)
-        {
-            RaycastHit hit = rawHits[i];
-
-            if (hit.collider == null ||
-                hit.collider == ballCollider)
-            {
-                continue;
-            }
-
-            if (initialOverlapColliderIds != null &&
-                initialOverlapColliderIds.Contains(
-                    hit.collider.GetInstanceID()))
-            {
-                continue;
-            }
-
-            if (hit.distance <=
-                Mathf.Max(
-                    0f,
-                    missileLandingPredictionContactEpsilon))
-            {
-                continue;
-            }
-
-            Transform hitTransform = hit.collider.transform;
-
-            if (hitTransform == transform ||
-                hitTransform.IsChildOf(transform))
-            {
-                continue;
-            }
-
-            filtered.Add(hit);
-        }
-
-        return filtered.ToArray();
-    }
-
-
-    private bool ValidatePredictedFlatSupport(
-        RaycastHit flatHit,
-        Vector3 sphereCenterAtImpact,
-        Vector3 predictedVelocity,
-        float worldRadius,
-        out float supportRatio,
-        out int supportedProbeCount)
-    {
-        supportRatio = 0f;
-        supportedProbeCount = 0;
-
-        if (flatHit.collider == null)
-            return false;
-
-        Vector3 planarForward =
-            Vector3.ProjectOnPlane(
-                predictedVelocity,
-                Vector3.up);
-
-        if (planarForward.sqrMagnitude <= 0.000001f)
-        {
-            planarForward =
-                Vector3.ProjectOnPlane(
-                    ReadMappedInSubjectVelocity(),
-                    Vector3.up);
-        }
-
-        if (planarForward.sqrMagnitude <= 0.000001f)
-            planarForward = Vector3.forward;
-
-        planarForward.Normalize();
-
-        Vector3 planarRight =
-            Vector3.Cross(
-                Vector3.up,
-                planarForward).normalized;
-
-        float probeRadius =
-            Mathf.Max(
-                0.001f,
-                worldRadius *
-                Mathf.Clamp(
-                    missileFlatSupportProbeRadiusFraction,
-                    0.25f,
-                    0.95f));
-
-        Vector3[] offsets =
-        {
-            Vector3.zero,
-            planarForward * probeRadius,
-            -planarForward * probeRadius,
-            planarRight * probeRadius,
-            -planarRight * probeRadius
-        };
-
-        float lift =
-            Mathf.Max(
-                0.01f,
-                missileFlatSupportProbeLift);
-
-        float depth =
-            Mathf.Max(
-                0.05f,
-                missileFlatSupportProbeDepth);
-
-        float supportSurfaceY = flatHit.point.y;
-
-        for (int i = 0; i < offsets.Length; i++)
-        {
-            Vector3 probeOrigin =
-                new Vector3(
-                    sphereCenterAtImpact.x + offsets[i].x,
-                    supportSurfaceY + lift,
-                    sphereCenterAtImpact.z + offsets[i].z);
-
-            RaycastHit[] supportHits =
-                Physics.RaycastAll(
-                    probeOrigin,
-                    Vector3.down,
-                    lift + depth,
-                    Physics.DefaultRaycastLayers,
-                    QueryTriggerInteraction.Ignore);
-
-            System.Array.Sort(
-                supportHits,
-                (a, b) => a.distance.CompareTo(b.distance));
-
-            bool probeSupported = false;
-
-            for (int h = 0; h < supportHits.Length; h++)
-            {
-                RaycastHit supportHit = supportHits[h];
-
-                if (supportHit.collider == null ||
-                    supportHit.collider == ballCollider)
-                {
-                    continue;
-                }
-
-                Transform t = supportHit.collider.transform;
-
-                if (t == transform || t.IsChildOf(transform))
-                    continue;
-
-                if (!TryClassifyPredictedSurface(
-                        t,
-                        out PredictedSurfaceType supportType))
-                {
-                    continue;
-                }
-
-                // 最上面がStairなら、このProbe位置には安全なFlat支持がない。
-                if (supportType == PredictedSurfaceType.Stair)
-                    break;
-
-                if (supportType == PredictedSurfaceType.FlatCandidate)
-                {
-                    probeSupported = true;
-                    break;
-                }
-            }
-
-            if (probeSupported)
-                supportedProbeCount++;
-        }
-
-        supportRatio =
-            supportedProbeCount / (float)MissileFlatSupportProbeTotal;
-
-        int required =
-            Mathf.Clamp(
-                missileFlatSupportRequiredProbeCount,
-                3,
-                MissileFlatSupportProbeTotal);
-
-        return supportedProbeCount >= required;
-    }
-
-
-    private static bool TryClassifyPredictedSurface(
-        Transform hitTransform,
-        out PredictedSurfaceType type)
-    {
-        type = PredictedSurfaceType.Unknown;
-
-        if (hitTransform == null)
-            return false;
-
-        for (Transform t = hitTransform; t != null; t = t.parent)
-        {
-            if (t.CompareTag("stairway"))
-            {
-                type = PredictedSurfaceType.Stair;
-                return true;
-            }
-
-            if (t.CompareTag("plane") ||
-                t.name.IndexOf(
-                    "ArcSlab",
-                    System.StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                type = PredictedSurfaceType.FlatCandidate;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-
-    private float GetBallVisualWorldRadius()
-    {
-        if (ballCollider == null)
-            return 0.5f;
-
-        Vector3 scale = ballCollider.transform.lossyScale;
-
-        float maximumScale =
-            Mathf.Max(
-                Mathf.Abs(scale.x),
-                Mathf.Abs(scale.y),
-                Mathf.Abs(scale.z));
-
-        return
-            Mathf.Max(
-                0.001f,
-                ballCollider.radius * maximumScale);
+        return missileElapsed >= missileMaximumWaitForSubjectFlatSeconds;
     }
 
     // =====================================================================
     // Terminal Rejoin / final synchronization zone
     // =====================================================================
 
-    private void BeginTerminalRejoin(
-        float initialTimeToGo,
-        string reason)
+    private void BeginTerminalRejoin()
     {
         if (motionPhase != MotionPhase.MissileChase)
             return;
 
         terminalStartTime = Time.fixedTime;
         terminalElapsed = 0f;
-
-        float defaultBudget =
-            Mathf.Max(
-                terminalTimeBudget,
-                terminalMinimumTimeToGo);
-
-        terminalActiveTimeBudget =
-            initialTimeToGo > 0f
-                ? Mathf.Clamp(
-                    initialTimeToGo,
-                    terminalMinimumTimeToGo,
-                    defaultBudget)
-                : defaultBudget;
-
+        terminalActiveTimeBudget = Mathf.Max(terminalTimeBudget, terminalMinimumTimeToGo);
         terminalTimeToGo = terminalActiveTimeBudget;
         terminalAccelerationState = missileChaseAccelerationState;
         previousTerminalAccelerationState = terminalAccelerationState;
@@ -2211,27 +1330,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         terminalExtendedRecoveryActive = false;
         terminalRecoveryExtensionCount = 0;
 
-        missileLandingPrediction = default;
-
         motionPhase = MotionPhase.TerminalRejoin;
-
-        if (enableDebugLog)
-        {
-            Vector3 subjectPosition = respondSubject.MappedPosition;
-            Vector3 subjectVelocity = ReadMappedInSubjectVelocity();
-            Vector3 naturalArrivalTarget =
-                subjectPosition +
-                subjectVelocity * terminalTimeToGo;
-
-            Debug.Log(
-                $"[TERMINAL REJOIN BEGIN] " +
-                $"reason={reason} " +
-                $"time={terminalStartTime:F4} " +
-                $"Tgo={terminalTimeToGo:F4}s " +
-                $"naturalTarget={naturalArrivalTarget:F4} " +
-                $"subjectVelocity={subjectVelocity:F4}",
-                this);
-        }
     }
 
     private void ProcessTerminalRejoin()
@@ -2552,15 +1651,15 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
-    private Transform RelativeRejoinFrame =>
+    private Transform ContinuousRejoinFrame =>
         respondSubject != null
             ? respondSubject.VisualPlayerRoot
             : null;
 
 
-    private Vector3 WorldVectorToRelativeRejoinLocal(Vector3 worldVector)
+    private Vector3 WorldVectorToContinuousLocal(Vector3 worldVector)
     {
-        Transform frame = RelativeRejoinFrame;
+        Transform frame = ContinuousRejoinFrame;
 
         if (frame != null)
             return frame.InverseTransformVector(worldVector);
@@ -2571,9 +1670,9 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
-    private Vector3 RelativeRejoinLocalVectorToWorld(Vector3 localVector)
+    private Vector3 ContinuousLocalVectorToWorld(Vector3 localVector)
     {
-        Transform frame = RelativeRejoinFrame;
+        Transform frame = ContinuousRejoinFrame;
 
         if (frame != null)
             return frame.TransformVector(localVector);
@@ -2584,15 +1683,15 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
-    private void UpdateRelativeRejoinFrameVelocitySample()
+    private void UpdateContinuousFrameAngularVelocitySample()
     {
-        Transform frame = RelativeRejoinFrame;
+        Transform frame = ContinuousRejoinFrame;
 
         if (frame == null)
         {
             hasContinuousFrameSample = false;
-            relativeRejoinFrameLinearVelocityWorld = Vector3.zero;
-            relativeRejoinFrameAngularVelocityWorld = Vector3.zero;
+            continuousFrameLinearVelocityWorld = Vector3.zero;
+            continuousFrameAngularVelocityWorld = Vector3.zero;
             return;
         }
 
@@ -2604,14 +1703,14 @@ public class BallVisualSlopeDrive : MonoBehaviour
             hasContinuousFrameSample = true;
             previousContinuousFramePosition = currentPosition;
             previousContinuousFrameRotation = currentRotation;
-            relativeRejoinFrameLinearVelocityWorld = Vector3.zero;
-            relativeRejoinFrameAngularVelocityWorld = Vector3.zero;
+            continuousFrameLinearVelocityWorld = Vector3.zero;
+            continuousFrameAngularVelocityWorld = Vector3.zero;
             return;
         }
 
         float dt = Mathf.Max(0.0001f, Time.fixedDeltaTime);
 
-        relativeRejoinFrameLinearVelocityWorld =
+        continuousFrameLinearVelocityWorld =
             (currentPosition - previousContinuousFramePosition) / dt;
 
         Quaternion delta =
@@ -2627,11 +1726,11 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (Mathf.Abs(angleDeg) <= 0.0001f ||
             axis.sqrMagnitude <= 0.000001f)
         {
-            relativeRejoinFrameAngularVelocityWorld = Vector3.zero;
+            continuousFrameAngularVelocityWorld = Vector3.zero;
         }
         else
         {
-            relativeRejoinFrameAngularVelocityWorld =
+            continuousFrameAngularVelocityWorld =
                 axis.normalized *
                 (angleDeg * Mathf.Deg2Rad / dt);
         }
@@ -2641,12 +1740,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
-    private Vector3 ReadRelativeRejoinMappedSubjectVelocity()
+    private Vector3 ReadContinuousMappedSubjectVelocity()
     {
         Vector3 directMappedVelocity =
             ReadMappedInSubjectVelocity();
 
-        Transform frame = RelativeRejoinFrame;
+        Transform frame = ContinuousRejoinFrame;
         if (frame == null || !hasContinuousFrameSample)
             return directMappedVelocity;
 
@@ -2656,9 +1755,9 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         return
             directMappedVelocity +
-            relativeRejoinFrameLinearVelocityWorld +
+            continuousFrameLinearVelocityWorld +
             Vector3.Cross(
-                relativeRejoinFrameAngularVelocityWorld,
+                continuousFrameAngularVelocityWorld,
                 radiusFromFrameOrigin);
     }
 
@@ -2739,26 +1838,26 @@ public class BallVisualSlopeDrive : MonoBehaviour
             return;
 
         Vector3 subjectPosition = respondSubject.MappedPosition;
-        Vector3 subjectVelocity = ReadRelativeRejoinMappedSubjectVelocity();
+        Vector3 subjectVelocity = ReadContinuousMappedSubjectVelocity();
         Quaternion subjectRotation = respondSubject.MappedRotation;
 
-        // Relative Hermiteを別Recoveryで横取りする場合、Kinematic Rigidbody.velocityではなく
+        // ContinuousRejoinをTurnHandoffで横取りする場合、Kinematic Rigidbody.velocityではなく
         // 直前Hermiteサンプルの実軌道速度/姿勢を連続初期条件として使う。
         bool restartingRelativeHermite = IsRelativeHermiteRejoining;
 
         Vector3 sourcePosition =
             restartingRelativeHermite
-                ? relativeRejoinCurrentWorldPosition
+                ? continuousRejoinCurrentWorldPosition
                 : ballBody.position;
 
         Vector3 sourceVelocity =
             restartingRelativeHermite
-                ? relativeRejoinCurrentWorldVelocity
+                ? continuousRejoinCurrentWorldVelocity
                 : ballBody.velocity;
 
         Quaternion sourceRotation =
             restartingRelativeHermite
-                ? relativeRejoinCurrentWorldRotation
+                ? continuousRejoinCurrentWorldRotation
                 : ballBody.rotation;
 
         Vector3 worldOffset =
@@ -2771,17 +1870,17 @@ public class BallVisualSlopeDrive : MonoBehaviour
         // VisualPlayerRootローカルにおける純粋な相対速度 dr/dt。
         Vector3 frameTransportVelocity =
             Vector3.Cross(
-                relativeRejoinFrameAngularVelocityWorld,
+                continuousFrameAngularVelocityWorld,
                 worldOffset);
 
-        relativeRejoinStartLocalOffset =
-            WorldVectorToRelativeRejoinLocal(worldOffset);
+        continuousRejoinStartLocalOffset =
+            WorldVectorToContinuousLocal(worldOffset);
 
-        relativeRejoinStartLocalVelocity =
-            WorldVectorToRelativeRejoinLocal(
+        continuousRejoinStartLocalVelocity =
+            WorldVectorToContinuousLocal(
                 worldRelativeVelocity - frameTransportVelocity);
 
-        relativeRejoinStartRelativeRotation =
+        continuousRejoinStartRelativeRotation =
             NormalizeQuaternionSafe(
                 Quaternion.Inverse(subjectRotation) *
                 sourceRotation);
@@ -2790,7 +1889,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (requestedDurationSeconds > 0f)
         {
-            relativeRejoinDuration =
+            continuousRejoinDuration =
                 Mathf.Max(0.05f, requestedDurationSeconds);
         }
         else
@@ -2803,7 +1902,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
             float durationFromDistance =
                 relativeDistance / preferredSpeed;
 
-            relativeRejoinDuration =
+            continuousRejoinDuration =
                 Mathf.Clamp(
                     Mathf.Max(
                         emergencyVisualMinimumDuration,
@@ -2814,29 +1913,29 @@ public class BallVisualSlopeDrive : MonoBehaviour
                         emergencyVisualMaximumDuration));
         }
 
-        relativeRejoinStartTime = Time.fixedTime;
-        relativeRejoinCurrentLocalOffset =
-            relativeRejoinStartLocalOffset;
-        relativeRejoinCurrentLocalVelocity =
-            relativeRejoinStartLocalVelocity;
-        relativeRejoinCurrentWorldPosition =
+        continuousRejoinStartTime = Time.fixedTime;
+        continuousRejoinCurrentLocalOffset =
+            continuousRejoinStartLocalOffset;
+        continuousRejoinCurrentLocalVelocity =
+            continuousRejoinStartLocalVelocity;
+        continuousRejoinCurrentWorldPosition =
             sourcePosition;
-        relativeRejoinCurrentWorldVelocity =
+        continuousRejoinCurrentWorldVelocity =
             sourceVelocity;
-        relativeRejoinCurrentWorldRotation =
+        continuousRejoinCurrentWorldRotation =
             sourceRotation;
 
-        hasRelativeTrajectorySample = false;
-        previousRelativeSampleTime = -1f;
+        hasContinuousTrajectorySample = false;
+        previousContinuousSampleTime = -1f;
         currentContinuityResidualMeters = 0f;
         maximumContinuityResidualMeters = 0f;
-        relativeRejoinWaitingForFrameStableLogged = false;
+        continuousRejoinWaitingForTurnEndLogged = false;
 
         // EqualizerはBallVisualの下流。Turn Handoffでも同じ短時間Recoveryへ収束させる。
         if (BallVisualEqualizer != null)
         {
             BallVisualEqualizer.BeginEmergencyVisualRecovery(
-                relativeRejoinDuration);
+                continuousRejoinDuration);
         }
 
         ballBody.useGravity = false;
@@ -2858,15 +1957,13 @@ public class BallVisualSlopeDrive : MonoBehaviour
             string label =
                 targetPhase == MotionPhase.TurnHandoffRejoin
                     ? "TURN HANDOFF BEGIN"
-                    : targetPhase == MotionPhase.MissileBoundaryRecovery
-                        ? "MISSILE BOUNDARY RECOVERY BEGIN"
-                        : "CONTINUOUS REJOIN BEGIN";
+                    : "CONTINUOUS REJOIN BEGIN";
 
             Debug.Log(
                 $"[{label}] " +
                 $"reason={reason} " +
                 $"time={Time.fixedTime:F4} " +
-                $"duration={relativeRejoinDuration:F4}s " +
+                $"duration={continuousRejoinDuration:F4}s " +
                 $"relativeDistance={relativeDistance:F4} " +
                 $"relativeSpeed={worldRelativeVelocity.magnitude:F4}",
                 this);
@@ -2874,26 +1971,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
-    private void ProcessMissileBoundaryRecovery()
-    {
-        if (motionPhase != MotionPhase.MissileBoundaryRecovery)
-            return;
-
-        ProcessRelativeHermiteRejoin(
-            MotionPhase.MissileBoundaryRecovery,
-            "MissileBoundaryRecovery",
-            clearTurnHandoffRequestOnComplete: false);
-    }
-
     private void ProcessContinuousRejoin()
     {
         if (motionPhase != MotionPhase.ContinuousRejoin)
             return;
 
-        ProcessRelativeHermiteRejoin(
-            MotionPhase.ContinuousRejoin,
-            "ContinuousRelativeHermite",
-            clearTurnHandoffRequestOnComplete: false);
+        ProcessRelativeHermiteRejoin(isTurnHandoff: false);
     }
 
     private void ProcessTurnHandoffRejoin()
@@ -2901,78 +1984,71 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (motionPhase != MotionPhase.TurnHandoffRejoin)
             return;
 
-        ProcessRelativeHermiteRejoin(
-            MotionPhase.TurnHandoffRejoin,
-            "TurnHandoffRelativeHermite",
-            clearTurnHandoffRequestOnComplete: true);
+        ProcessRelativeHermiteRejoin(isTurnHandoff: true);
     }
 
-    private void ProcessRelativeHermiteRejoin(
-        MotionPhase expectedPhase,
-        string finalizeSource,
-        bool clearTurnHandoffRequestOnComplete)
+    private void ProcessRelativeHermiteRejoin(bool isTurnHandoff)
     {
+        MotionPhase expectedPhase =
+            isTurnHandoff
+                ? MotionPhase.TurnHandoffRejoin
+                : MotionPhase.ContinuousRejoin;
+
         if (motionPhase != expectedPhase)
             return;
-
-        bool isTurnHandoff =
-            expectedPhase == MotionPhase.TurnHandoffRejoin;
-
-        bool isBoundaryRecovery =
-            expectedPhase == MotionPhase.MissileBoundaryRecovery;
 
         float duration =
             Mathf.Max(
                 0.0001f,
-                relativeRejoinDuration);
+                continuousRejoinDuration);
 
         float elapsed =
             Mathf.Max(
                 0f,
-                Time.fixedTime - relativeRejoinStartTime);
+                Time.fixedTime - continuousRejoinStartTime);
 
         float t = Mathf.Clamp01(elapsed / duration);
 
-        relativeRejoinCurrentLocalOffset =
+        continuousRejoinCurrentLocalOffset =
             EvaluateHermitePosition(
-                relativeRejoinStartLocalOffset,
-                relativeRejoinStartLocalVelocity,
+                continuousRejoinStartLocalOffset,
+                continuousRejoinStartLocalVelocity,
                 Vector3.zero,
                 Vector3.zero,
                 duration,
                 t);
 
-        relativeRejoinCurrentLocalVelocity =
+        continuousRejoinCurrentLocalVelocity =
             EvaluateHermiteVelocity(
-                relativeRejoinStartLocalOffset,
-                relativeRejoinStartLocalVelocity,
+                continuousRejoinStartLocalOffset,
+                continuousRejoinStartLocalVelocity,
                 Vector3.zero,
                 Vector3.zero,
                 duration,
                 t);
 
         Vector3 subjectPosition = respondSubject.MappedPosition;
-        Vector3 subjectVelocity = ReadRelativeRejoinMappedSubjectVelocity();
+        Vector3 subjectVelocity = ReadContinuousMappedSubjectVelocity();
         Quaternion subjectRotation = respondSubject.MappedRotation;
 
         Vector3 worldOffset =
-            RelativeRejoinLocalVectorToWorld(
-                relativeRejoinCurrentLocalOffset);
+            ContinuousLocalVectorToWorld(
+                continuousRejoinCurrentLocalOffset);
 
         Vector3 worldLocalDerivative =
-            RelativeRejoinLocalVectorToWorld(
-                relativeRejoinCurrentLocalVelocity);
+            ContinuousLocalVectorToWorld(
+                continuousRejoinCurrentLocalVelocity);
 
         // d(Rr)/dt = omega x (Rr) + R dr/dt
         Vector3 frameTransportVelocity =
             Vector3.Cross(
-                relativeRejoinFrameAngularVelocityWorld,
+                continuousFrameAngularVelocityWorld,
                 worldOffset);
 
-        relativeRejoinCurrentWorldPosition =
+        continuousRejoinCurrentWorldPosition =
             subjectPosition + worldOffset;
 
-        relativeRejoinCurrentWorldVelocity =
+        continuousRejoinCurrentWorldVelocity =
             subjectVelocity +
             frameTransportVelocity +
             worldLocalDerivative;
@@ -2982,23 +2058,23 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         Quaternion relativeRotation =
             Quaternion.Slerp(
-                relativeRejoinStartRelativeRotation,
+                continuousRejoinStartRelativeRotation,
                 Quaternion.identity,
                 rotationT);
 
-        relativeRejoinCurrentWorldRotation =
+        continuousRejoinCurrentWorldRotation =
             NormalizeQuaternionSafe(
                 subjectRotation * relativeRotation);
 
         ballBody.MovePosition(
-            relativeRejoinCurrentWorldPosition);
+            continuousRejoinCurrentWorldPosition);
 
         ballBody.MoveRotation(
-            relativeRejoinCurrentWorldRotation);
+            continuousRejoinCurrentWorldRotation);
 
-        UpdateRelativeTrajectoryDiagnostics(
-            relativeRejoinCurrentWorldPosition,
-            relativeRejoinCurrentWorldVelocity);
+        UpdateContinuousTrajectoryDiagnostics(
+            continuousRejoinCurrentWorldPosition,
+            continuousRejoinCurrentWorldVelocity);
 
         if (t < 1f)
             return;
@@ -3012,23 +2088,16 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (visualTurnActive || !visualFrameStable)
         {
             if (enableDebugLog &&
-                !relativeRejoinWaitingForFrameStableLogged)
+                !continuousRejoinWaitingForTurnEndLogged)
             {
-                relativeRejoinWaitingForFrameStableLogged = true;
-
-                string holdLabel = isTurnHandoff
-                    ? "TURN HANDOFF HOLD"
-                    : isBoundaryRecovery
-                        ? "MISSILE BOUNDARY RECOVERY HOLD"
-                        : "CONTINUOUS REJOIN TURN HOLD";
-
+                continuousRejoinWaitingForTurnEndLogged = true;
                 Debug.Log(
-                    $"[{holdLabel}] " +
+                    $"[{(isTurnHandoff ? "TURN HANDOFF HOLD" : "CONTINUOUS REJOIN TURN HOLD")}] " +
                     $"time={Time.fixedTime:F4} " +
                     $"turning={visualTurnActive} " +
                     $"frameStable={visualFrameStable} " +
-                    $"relativePos={relativeRejoinCurrentLocalOffset.magnitude:F6} " +
-                    $"relativeVel={relativeRejoinCurrentLocalVelocity.magnitude:F6}",
+                    $"relativePos={continuousRejoinCurrentLocalOffset.magnitude:F6} " +
+                    $"relativeVel={continuousRejoinCurrentLocalVelocity.magnitude:F6}",
                     this);
             }
 
@@ -3037,33 +2106,26 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         // frame停止後の最終速度は通常同期系と同じcanonical mapped velocityへ戻す。
         subjectVelocity = ReadMappedInSubjectVelocity();
-        relativeRejoinCurrentWorldVelocity = subjectVelocity;
+        continuousRejoinCurrentWorldVelocity = subjectVelocity;
 
         if (TryFinalizeRejoinMicroSync(
-                finalizeSource,
+                isTurnHandoff ? "TurnHandoffRelativeHermite" : "ContinuousRelativeHermite",
                 subjectPosition,
                 subjectVelocity,
-                relativeRejoinCurrentWorldPosition,
-                relativeRejoinCurrentWorldVelocity,
+                continuousRejoinCurrentWorldPosition,
+                continuousRejoinCurrentWorldVelocity,
                 requestedForced: false,
                 out float positionError,
                 out float velocityError,
                 out _))
         {
-            if (clearTurnHandoffRequestOnComplete)
+            if (isTurnHandoff)
                 turnHandoffRequested = false;
 
             if (enableDebugLog)
             {
-                string completionLabel =
-                    isTurnHandoff
-                        ? "TURN HANDOFF COMPLETE"
-                        : isBoundaryRecovery
-                            ? "MISSILE BOUNDARY RECOVERY COMPLETE"
-                            : "CONTINUOUS REJOIN COMPLETE";
-
                 Debug.Log(
-                    $"[{completionLabel}] " +
+                    $"[{(isTurnHandoff ? "TURN HANDOFF COMPLETE" : "CONTINUOUS REJOIN COMPLETE")}] " +
                     $"time={Time.fixedTime:F4} " +
                     $"posError={positionError:F6} " +
                     $"velError={velocityError:F6} " +
@@ -3076,14 +2138,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (enableDebugLog)
         {
-            string finalizeWaitLabel = isTurnHandoff
-                ? "TURN HANDOFF FINALIZE WAIT"
-                : isBoundaryRecovery
-                    ? "MISSILE BOUNDARY RECOVERY FINALIZE WAIT"
-                    : "CONTINUOUS REJOIN FINALIZE WAIT";
-
             Debug.LogWarning(
-                $"[{finalizeWaitLabel}] " +
+                $"[{(isTurnHandoff ? "TURN HANDOFF FINALIZE WAIT" : "CONTINUOUS REJOIN FINALIZE WAIT")}] " +
                 $"time={Time.fixedTime:F4} " +
                 $"posError={positionError:F6} " +
                 $"velError={velocityError:F6}",
@@ -3092,23 +2148,23 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
-    private void UpdateRelativeTrajectoryDiagnostics(
+    private void UpdateContinuousTrajectoryDiagnostics(
         Vector3 currentPosition,
         Vector3 currentVelocity)
     {
         float now = Time.fixedTime;
 
-        if (!hasRelativeTrajectorySample)
+        if (!hasContinuousTrajectorySample)
         {
-            hasRelativeTrajectorySample = true;
-            previousRelativeWorldPosition = currentPosition;
-            previousRelativeWorldVelocity = currentVelocity;
-            previousRelativeSampleTime = now;
+            hasContinuousTrajectorySample = true;
+            previousContinuousWorldPosition = currentPosition;
+            previousContinuousWorldVelocity = currentVelocity;
+            previousContinuousSampleTime = now;
             currentContinuityResidualMeters = 0f;
             return;
         }
 
-        float dt = now - previousRelativeSampleTime;
+        float dt = now - previousContinuousSampleTime;
 
         if (dt <= 0.000001f)
         {
@@ -3118,11 +2174,11 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         Vector3 integratedDisplacement =
             0.5f *
-            (previousRelativeWorldVelocity + currentVelocity) *
+            (previousContinuousWorldVelocity + currentVelocity) *
             dt;
 
         Vector3 actualDisplacement =
-            currentPosition - previousRelativeWorldPosition;
+            currentPosition - previousContinuousWorldPosition;
 
         currentContinuityResidualMeters =
             (actualDisplacement - integratedDisplacement).magnitude;
@@ -3132,9 +2188,9 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 maximumContinuityResidualMeters,
                 currentContinuityResidualMeters);
 
-        previousRelativeWorldPosition = currentPosition;
-        previousRelativeWorldVelocity = currentVelocity;
-        previousRelativeSampleTime = now;
+        previousContinuousWorldPosition = currentPosition;
+        previousContinuousWorldVelocity = currentVelocity;
+        previousContinuousSampleTime = now;
     }
 
 
@@ -3484,12 +2540,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         Vector3 observedBallPosition =
             IsRelativeHermiteRejoining
-                ? relativeRejoinCurrentWorldPosition
+                ? continuousRejoinCurrentWorldPosition
                 : ballBody.position;
 
         Vector3 observedBallVelocity =
             IsRelativeHermiteRejoining
-                ? relativeRejoinCurrentWorldVelocity
+                ? continuousRejoinCurrentWorldVelocity
                 : ballBody.velocity;
 
         float incidentTargetError =
