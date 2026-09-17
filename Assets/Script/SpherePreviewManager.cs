@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using System.Linq;
+using System;
 using TMPro;
 using UnityEngine.UI;
 
@@ -137,12 +138,20 @@ public class SpherePreviewManager : MonoBehaviour
         foreach (var OneLock in viewLocks)
         {
 
-            var jurge = AndroidOneOnly.LinenapItemList[lockNumber];
-            if (jurge == 1)
+            try
             {
-                OneLock.gameObject.SetActive(false);
+                var jurge = AndroidOneOnly.LinenapItemList[lockNumber];
+                if (jurge == 1)
+                {
+                    OneLock.gameObject.SetActive(false);
+                }
+
+                lockNumber++;
             }
-            lockNumber++;
+            catch (Exception e)
+            {
+                Debug.Log("");
+            }
         }
 
         RenderTexture.active = previousActive;

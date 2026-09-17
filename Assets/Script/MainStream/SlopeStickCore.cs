@@ -7,51 +7,56 @@ using System.Text.RegularExpressions;
 public sealed class SlopeStickCore : MonoBehaviour
 {
     const float Eps = 0.000001f;
+
     [Min(0f)] [SerializeField] float maxGroundSpeed = 24f;
+
     // Compactから固定値化
     const float ProbeRadius = .475f;
-    [SerializeField]public float GroundAcceleration = 35f;
+    [SerializeField] public float GroundAcceleration = 35f;
     const float MaxDeceleration = 80f;
     const float ResponseInverse = 8.333333f;
     const float AccelerationJerk = 600f;
 
     const float TargetMinDistance = .27f;
-    [SerializeField]public float TargetAccelerationLimit = 120f;
+    [SerializeField] public float TargetAccelerationLimit = 120f;
     const float PostTargetBlendWidth = .05f;
     const float PostTargetGravityRatio = .50f;
 
+    RaycastHit currentHit;
     const float StickJerk = 3000f;
     const float ReleaseHold = .02f;
     const float NaturalReleaseEnd = .90f;
 
     [SerializeField] NearestKnotDetector knotDetector;
     [SerializeField] LayerMask groundMask = ~0;
-    
-    [Header("Travel")]
-    [SerializeField] Vector3 travelDirection = Vector3.forward;
-    
+
+    [Header("Travel")] [SerializeField] Vector3 travelDirection = Vector3.forward;
+
     [Range(0f, 100f)] [SerializeField] public float targetSlopeProgressPercent = 60f;
 
-    [Header("Coordinate Mapping")]
-    [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")]
-    [SerializeField] CorrespondSubject correspondSubject;
-    [Tooltip("Energy target / POP状態をREAD ONLY参照するBallVisual軌道担当です。")]
-    [SerializeField] BallVisualSlopeDrive ballVisualSlopeDrive;
-    [Tooltip("回転させない物理座標系。InSubjectはこの配下で物理計算します。")]
-    [SerializeField] Transform physicsRoot;
+    [Header("Coordinate Mapping")] [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")] [SerializeField]
+    CorrespondSubject correspondSubject;
 
-    [Header("Map Direction Turn")]
-    [Tooltip("回転する表示座標系。InSubject/PhysicsRootは回転させません。")]
-    [SerializeField] Transform visualPlayerRoot;
-    [Tooltip("VisualPlayerRootを回すワールドPivot。未設定ならCenter1を検索します。")]
-    [SerializeField] Transform visualRotationPivot;
-    [Tooltip("ONなら入力方向と反対へVisualPlayerRootを回し、マップが逆向きに旋回して見えるようにします。")]
-    [SerializeField] bool visualRootTurnsOppositeToInput = true;
-    [Tooltip("これ未満の横フリックは旋回として扱いません。MouseUpを待たず、押下中にこの閾値を超えた瞬間にTurn Input Intentを確定します。")]
-    [Min(1f)] [SerializeField] float minimumFlickPixels = 10f;
+    [Tooltip("Energy target / POP状態をREAD ONLY参照するBallVisual軌道担当です。")] [SerializeField]
+    BallVisualSlopeDrive ballVisualSlopeDrive;
 
-    [Tooltip("Turn Input Intentを保持する最大時間[s]。古いフリックがRecovery/前回Turn終了後に突然実行されることを防ぎます。")]
-    [Min(0.05f)] [SerializeField] float turnInputBufferSeconds = 0.25f;
+    [Tooltip("回転させない物理座標系。InSubjectはこの配下で物理計算します。")] [SerializeField]
+    Transform physicsRoot;
+
+    [Header("Map Direction Turn")] [Tooltip("回転する表示座標系。InSubject/PhysicsRootは回転させません。")] [SerializeField]
+    Transform visualPlayerRoot;
+
+    [Tooltip("VisualPlayerRootを回すワールドPivot。未設定ならCenter1を検索します。")] [SerializeField]
+    Transform visualRotationPivot;
+
+    [Tooltip("ONなら入力方向と反対へVisualPlayerRootを回し、マップが逆向きに旋回して見えるようにします。")] [SerializeField]
+    bool visualRootTurnsOppositeToInput = true;
+
+    [Tooltip("これ未満の横フリックは旋回として扱いません。MouseUpを待たず、押下中にこの閾値を超えた瞬間にTurn Input Intentを確定します。")] [Min(1f)] [SerializeField]
+    float minimumFlickPixels = 10f;
+
+    [Tooltip("Turn Input Intentを保持する最大時間[s]。古いフリックがRecovery/前回Turn終了後に突然実行されることを防ぎます。")] [Min(0.05f)] [SerializeField]
+    float turnInputBufferSeconds = 0.25f;
 
     // 旋回角度は1系統だけ。入力強度や呼び出し元に関係なく必ず90度。
     const float QuarterTurnDegrees = 90f;
@@ -64,40 +69,46 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     [Header("Turn Transition / Landing Correction")]
     [Tooltip("VisualPlayerRootの90度旋回時間[s]。SlopeStickCoreからCorrespondSubjectへ明示的に渡します。")]
-    [Min(0.05f)] [SerializeField] float turnVisualDurationSeconds = 0.30f;
+    [Min(0.05f)]
+    [SerializeField]
+    float turnVisualDurationSeconds = 0.30f;
 
     [Tooltip("旋回開始後、InSubjectを完全Kinematic停止する時間[s]。この時間を過ぎたらVisual旋回中でもDynamicへ戻してCoastします。")]
-    [Min(0f)] [SerializeField] float turnHardFreezeSeconds = 0.12f;
+    [Min(0f)]
+    [SerializeField]
+    float turnHardFreezeSeconds = 0.12f;
 
-    [Tooltip("Slope/Air中の旋回後、BallVisualの着地レーン整理としてFiveLine補正を使います。Flat旋回では使いません。")]
-    [SerializeField] bool enableFiveLineAfterPop = true;
+    [Tooltip("Slope/Air中の旋回後、BallVisualの着地レーン整理としてFiveLine補正を使います。Flat旋回では使いません。")] [SerializeField]
+    bool enableFiveLineAfterPop = true;
 
-    [Tooltip("FiveLine横補正を滑らかに収束させる時間[s]。")]
-    [Min(0.02f)] [SerializeField] float fiveLineCorrectionDurationSeconds = 0.10f;
+    [Tooltip("FiveLine横補正を滑らかに収束させる時間[s]。")] [Min(0.02f)] [SerializeField]
+    float fiveLineCorrectionDurationSeconds = 0.10f;
 
-    [Tooltip("FiveLineが一度に許す最大横補正距離[m]。遠距離スナップを防ぎます。")]
-    [Min(0.05f)] [SerializeField] float fiveLineMaximumCorrectionMeters = 0.75f;
+    [Tooltip("FiveLineが一度に許す最大横補正距離[m]。遠距離スナップを防ぎます。")] [Min(0.05f)] [SerializeField]
+    float fiveLineMaximumCorrectionMeters = 0.75f;
 
-    [Tooltip("Turn Transition / FiveLineの状態をログへ出します。")]
-    [SerializeField] bool logTurnTransition = true;
+    [Tooltip("Turn Transition / FiveLineの状態をログへ出します。")] [SerializeField]
+    bool logTurnTransition = true;
 
-    [Header("Spline Support")]
-    [Min(.01f)] [SerializeField] float probeDistance = .85f;
+    [Header("Spline Support")] [Min(.01f)] [SerializeField]
+    float probeDistance = .85f;
+
     [Range(1f, 89f)] [SerializeField] float maxSlopeAngle = 75f;
 
     [Min(0f)] [SerializeField] float supportGraceSeconds = .12f;
     [Min(0f)] [SerializeField] float supportGraceMaxGuideDistance = 1.75f;
     [Min(0f)] [SerializeField] float maxGraceOutwardSpeed = 2f;
 
-    [Header("Stick")]
-    [Min(0f)] [SerializeField] float flatStick = 24.6f;
+    [Header("Stick")] [Min(0f)] [SerializeField]
+    float flatStick = 24.6f;
+
     [Min(0f)] [SerializeField] float maxStick = 1000f;
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
 
     [Header("PlayerMotivation")] [SerializeField]
     public bool BeginCommandOnTouch = false;
-    [Header("Debug")]
-    [SerializeField] bool logCore;
+
+    [Header("Debug")] [SerializeField] bool logCore;
 
     Rigidbody rb;
     Vector3 direction;
@@ -159,6 +170,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector3 fiveLineCorrectionSide;
     Vector3 fiveLineCorrectionStartPosition;
     float fiveLineCorrectionTargetOffset;
+
     NearestKnotDetector.FiveLineGroup fiveLineTargetGroup =
         NearestKnotDetector.FiveLineGroup.Center;
 
@@ -536,7 +548,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         bool plausibleProgress =
             delta >= -BallVisualAllowedReverseProgress01 &&
             Mathf.Abs(delta) <=
-                BallVisualMaximumProgressJump01;
+            BallVisualMaximumProgressJump01;
 
         if (!plausibleProgress)
         {
@@ -602,7 +614,7 @@ public sealed class SlopeStickCore : MonoBehaviour
                 targetSide,
                 targetNormal).normalized;
 
-        
+
         Vector3 currentGuideOffset = rb.position - guide.point;
 
         float sideOffset = Vector3.Dot(currentGuideOffset, surface.side);
@@ -628,7 +640,8 @@ public sealed class SlopeStickCore : MonoBehaviour
             // v^2 * curvature * stickSafety - gravitySupport <= maxStick
             // so invert the same inequality at Target Progress.
             float supportedSpeed =
-                Mathf.Sqrt(Mathf.Max(0f, (maxStick + targetGravitySupport) / Mathf.Max(Eps, targetCurvature * stickSafety)));
+                Mathf.Sqrt(Mathf.Max(0f,
+                    (maxStick + targetGravitySupport) / Mathf.Max(Eps, targetCurvature * stickSafety)));
 
             targetTangentSpeed =
                 Mathf.Min(
@@ -719,7 +732,7 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     void Start()
     {
-        
+
         FindMapFrameReferences();
         CaptureInitialVisualFramePose();
         BindCoordinateFrames();
@@ -731,10 +744,10 @@ public sealed class SlopeStickCore : MonoBehaviour
         ReadTurnFlick();
     }
 
-   
+
     public IEnumerator delayStart()
     {
-        Material activeMaterial=Resources.Load<Material>("BallCollections/"+AndroidOneOnly.activeBallMaterial);
+        Material activeMaterial = Resources.Load<Material>("BallCollections/" + AndroidOneOnly.activeBallMaterial);
         GameObject.Find("VisualPlayerRoot/BallVisualEqualizer")
             .GetComponent<MeshRenderer>()
             .material = activeMaterial;
@@ -767,9 +780,11 @@ public sealed class SlopeStickCore : MonoBehaviour
         // 無条件にここへ入れると通常起動のdirection/Controller状態まで変えてしまう。
         // FirstStepInsertSplinePathが死亡復帰時にPrepareForStageRebuild()を
         // 呼んだ場合だけ、下のrestartPreparedがtrueになる。
+       
+
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
-       
+
 
         Vector3 restart =
             startSlab.transform.position;
@@ -799,7 +814,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         // 旋回中に死亡/再構築へ入ってもKinematicを持ち越さない。
         if (rb.isKinematic)
             rb.isKinematic = false;
-        
+
         rb.position =
             new Vector3(
                 restart.x,
@@ -864,12 +879,33 @@ public sealed class SlopeStickCore : MonoBehaviour
         currentGuide = guide;
         currentGuideValid = true;
 
-        (bool grounded,RaycastHit hit)= HasGroundSupport();
+        (bool grounded, RaycastHit hit) = HasGroundSupport();
 
         if (grounded)
+        {
             graceTimer = supportGraceSeconds;
+            currentHit = hit;
+        }
         else
             graceTimer = Mathf.Max(0f, graceTimer - Time.fixedDeltaTime);
+
+        if (currentHit.transform != null)
+            if (Vector3.Distance(transform.position, currentHit.transform.position) > 12)
+            {
+
+                if (!MainGameManager.OnDead)
+                {
+                    StartCoroutine(Recover());
+                }
+
+                MainGameManager.OnDead = true;
+            }
+
+        if (hit.transform != null)
+        {
+            currentHit = hit;
+
+        }
 
         float load = grounded ? 0f : SupportLoad(guide);
         bool grace = !grounded && graceTimer > 0f && load <= 1f && CanGrace(guide);
@@ -877,14 +913,16 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (!grounded && !grace)
         {
             if (logCore)
-                Debug.Log($"[CORE SUPPORT LOST] load={load:F3} dist={guide.distanceToGuide:F3} outward={Outward(guide):F3}");
+                Debug.Log(
+                    $"[CORE SUPPORT LOST] load={load:F3} dist={guide.distanceToGuide:F3} outward={Outward(guide):F3}");
 
             LoseSupport();
             return;
         }
-        
+
+
         currentSupported = true;
-        
+
         Surface surface = BuildSplineSurface(guide);
 
         if (!surface.Valid)
@@ -924,14 +962,14 @@ public sealed class SlopeStickCore : MonoBehaviour
                     guide.tangent,
                     Vector3.up);
 
-           
+
 
             float alignment = 0f;
 
-            if (flatGuideTangent.sqrMagnitude > Eps )
+            if (flatGuideTangent.sqrMagnitude > Eps)
             {
                 flatGuideTangent.Normalize();
-               
+
 
                 alignment =
                     Mathf.Abs(
@@ -991,14 +1029,15 @@ public sealed class SlopeStickCore : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
-            MainGameManager.TopTitle.SetActive(false);
-            MainGameManager.PreviewIconRoot.SetActive(false);
-            MainGameManager.TopLiteral.SetActive(false);
-            MainGameManager.PlayButton.SetActive(false);
-            MainGameManager.Userbility.SetActive(true);
+            /* MainGameManager.TopTitle.SetActive(false);
+             MainGameManager.PreviewIconRoot.SetActive(false);
+             MainGameManager.TopLiteral.SetActive(false);
+             MainGameManager.PlayButton.SetActive(false);
+             MainGameManager.Userbility.SetActive(true);
 
-          BeginCommandOnTouch = true;
+           BeginCommandOnTouch = true;*/
         }
+
         // Build the stable read-only Spline plan used by BallVisual.
         // This runs only after turn-guide handoff has completed.
         if (BeginCommandOnTouch == true)
@@ -1099,7 +1138,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     // Collider = Support existence only
     // ================================================================
 
-    (bool ,RaycastHit)HasGroundSupport()
+    (bool, RaycastHit) HasGroundSupport()
     {
         Vector3 origin = rb.worldCenterOfMass + Vector3.up * .05f;
 
@@ -1111,9 +1150,9 @@ public sealed class SlopeStickCore : MonoBehaviour
                 probeDistance,
                 groundMask,
                 QueryTriggerInteraction.Ignore))
-            return (false,hit);
+            return (false, hit);
 
-        return (Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle,hit);
+        return (Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle, hit);
     }
 
     // ================================================================
@@ -2425,7 +2464,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         float t = Mathf.Clamp01(Mathf.InverseLerp(start, end, value));
         return t * t * t * (t * (t * 6f - 15f) + 10f);
     }
-    
+
 
 #if UNITY_EDITOR
     // ================================================================
@@ -2454,6 +2493,26 @@ public sealed class SlopeStickCore : MonoBehaviour
         }
 
         StartCoroutine(RunTurnTransitionSelfCheckCoroutine());
+    }
+
+    public void PushStart()
+    {
+        MainGameManager.TopTitle.SetActive(false);
+        MainGameManager.PreviewIconRoot.SetActive(false);
+        MainGameManager.TopLiteral.SetActive(false);
+        MainGameManager.PlayButton.SetActive(false);
+        MainGameManager.Userbility.SetActive(true);
+
+        BeginCommandOnTouch = true;
+    }
+
+    IEnumerator Recover()
+    {
+        yield return new WaitForSeconds(0.5f);
+        MainGameManager.DropOut.SetActive(true);
+        yield return new WaitForSeconds(2f);
+        MainGameManager.DropOut.SetActive(false);
+        MainGameManager.OpenChunkStage = true;
     }
 
     IEnumerator RunTurnTransitionSelfCheckCoroutine()
@@ -2636,6 +2695,9 @@ public sealed class SlopeStickCore : MonoBehaviour
                 Object.Destroy(subjectObject);
         }
     }
+
+
+
 
     void SelfCheck(
         bool condition,

@@ -168,7 +168,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (MainGameManager.OpenChunkStage)
         {
             MainGameManager.OpenChunkStage = false;
-
             rebuilding = true;
 
             Start();
@@ -314,7 +313,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (resumeOnly)
                 StartCoroutine(resumeOnly.delayStart());
 
-            MainGameManager.OnDead = false;
+           // MainGameManager.OnDead = false;
         }
 
         StartCoroutine(DelayStandOnObject());
