@@ -315,6 +315,10 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
            // MainGameManager.OnDead = false;
         }
+        if(MainGameManager.OnDead)
+        {
+            MainGameManager.LimitTouchingphase = 8;
+        }
 
         StartCoroutine(DelayStandOnObject());
     }

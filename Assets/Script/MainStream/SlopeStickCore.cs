@@ -26,7 +26,8 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     [SerializeField] NearestKnotDetector knotDetector;
     [SerializeField] LayerMask groundMask = ~0;
-    
+
+    [SerializeField] public RaycastHit currentHit;
     [Header("Travel")]
     [SerializeField] Vector3 travelDirection = Vector3.forward;
     
@@ -752,7 +753,26 @@ public sealed class SlopeStickCore : MonoBehaviour
         ReadTurnFlick();
     }
 
-   
+    public void PushStart()
+    {
+        MainGameManager.TopTitle.SetActive(false);
+        MainGameManager.PreviewIconRoot.SetActive(false);
+        MainGameManager.TopLiteral.SetActive(false);
+        MainGameManager.PlayButton.SetActive(false);
+        MainGameManager.Userbility.SetActive(true);
+
+        BeginCommandOnTouch = true;
+    }
+
+    IEnumerator Recover()
+    {
+        
+        yield return new WaitForSeconds(0.5f);
+        MainGameManager.DropOut.SetActive(true);
+        yield return new WaitForSeconds(2f);
+        MainGameManager.DropOut.SetActive(false);
+        MainGameManager.OpenChunkStage = true;
+    }
     public IEnumerator delayStart()
     {
         yield return new WaitForSeconds(0.3f);
@@ -785,6 +805,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         // 呼んだ場合だけ、下のrestartPreparedがtrueになる。
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
+        MainGameManager.OnDead = false;
 
         Vector3 restart =
             startSlab.transform.position;
@@ -912,7 +933,27 @@ public sealed class SlopeStickCore : MonoBehaviour
             graceTimer = supportGraceSeconds;
         else
             graceTimer = Mathf.Max(0f, graceTimer - Time.fixedDeltaTime);
+        
+        if (currentHit.transform != null)
+            if (Vector3.Distance(transform.position, currentHit.transform.position) > 12 && !grounded)
+            {
 
+                if (!MainGameManager.OnDead)
+                {
+                    StartCoroutine(Recover());
+                }
+
+                MainGameManager.OnDead = true;
+            }
+
+        if (hit.transform != null)
+        {
+            currentHit = hit;
+
+        }
+        
+        
+        
         float load = grounded ? 0f : SupportLoad(guide);
         bool grace = !grounded && graceTimer > 0f && load <= 1f && CanGrace(guide);
 
