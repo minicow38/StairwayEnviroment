@@ -108,6 +108,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         0, 0, 0, 0, 0, -1, 0,-1
     };
 
+    public int startDashDot = 0;
+
     List<int> startPattern =
         new List<int>(InitialStartPattern);
 
@@ -230,6 +232,15 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     [ContextMenu("RebuildSpline")]
     void Start()
     {
+        for (int i = 1; i < InitialStartPattern.Length; i++)
+        {
+            if (InitialStartPattern[i] != 0)
+            {
+                startDashDot = i;
+                break;
+            }
+           
+        }
         bool restartingFromDeath =
             MainGameManager.OnDead;
 
@@ -1597,24 +1608,26 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 continue;
             }
 
+            bool FirstCorner=i > startDashDot;
+           
             float angleY =
                 ActiveStairway1
                     .transform
                     .localEulerAngles
                     .y;
-
+            
             bool DontSeqItem =
                 GeneratePylon(
                     angleY,
                     ActiveStairway1,
-                    ActiveStairway2);
+                    ActiveStairway2,FirstCorner);
 
             if (!DontSeqItem)
             {
                 GenerateCoin(
                     angleY,
                     ActiveStairway1,
-                    ActiveStairway2);
+                    ActiveStairway2,FirstCorner);
             }
         }
 
@@ -1644,16 +1657,33 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     bool GeneratePylon(
         float angle,
         GameObject ActiveStairway1,
-        GameObject ActiveStairway2)
+        GameObject ActiveStairway2,bool FirstCorner)
     {
         bool OnPylon = false;
 
         // 10%で生成
         int value =
             UnityEngine.Random.Range(0, 10);
-        int widthObj =
-            UnityEngine.Random.Range(0, ShiftObj.Length);
-        float localX = ShiftObj[widthObj].x;
+        int widthObj = 0;
+        float localX;
+        if (FirstCorner)
+        {
+            widthObj = UnityEngine.Random.Range(0, ShiftObj.Length);
+            localX = ShiftObj[widthObj].x;
+        }
+        else
+        {
+            widthObj= UnityEngine.Random.Range(0, 2);
+            if (widthObj == 0)
+            {
+                localX = ShiftObj[0].x;
+            }
+            else
+            {
+                localX = ShiftObj[2].x;
+            }
+        }
+        
 
 
         if (value < 1)
@@ -1736,7 +1766,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         return true;
     }
 
-    bool GenerateCoin(float angle, GameObject ActiveStairway1, GameObject ActiveStairway2)
+    bool GenerateCoin(float angle, GameObject ActiveStairway1, GameObject ActiveStairway2,bool FirstConner)
     {
         // 20%で生成
         bool onCoin =
@@ -1752,10 +1782,25 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             return false;
         }
         
-        int widthObj =
-            UnityEngine.Random.Range(0, ShiftObj.Length);
-
-        float localX = ShiftObj[widthObj].x;
+        int widthObj = 0;
+        float localX;
+        if (FirstConner)
+        {
+            widthObj = UnityEngine.Random.Range(0, ShiftObj.Length);
+            localX = ShiftObj[widthObj].x;
+        }
+        else
+        {
+            widthObj= UnityEngine.Random.Range(0, 2);
+            if (widthObj == 0)
+            {
+                localX = ShiftObj[0].x;
+            }
+            else
+            {
+                localX = ShiftObj[2].x;
+            }
+        }
         
         int coinCount =
             UnityEngine.Random.Range(1, 5);
