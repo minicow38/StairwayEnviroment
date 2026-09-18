@@ -4005,4 +4005,3 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 }
-

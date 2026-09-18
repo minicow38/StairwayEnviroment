@@ -39,7 +39,7 @@ public class MainGameManager : MonoBehaviour
         Coin = AndroidOneOnly.pharseCoin;
         var width = Screen.width;
         LimitTouchingphase = 0;
-        CurrentPointToPlane = CurrentPointToPlane;
+        PointToPlane = CurrentPointToPlane;
         core = GameObject.Find("InSubject").transform.GetComponent<SlopeStickCore>();
          VisualPlayerChildCollider=GameObject.Find("VisualPlayerRoot").transform.GetComponentsInChildren<SphereCollider>();
 
@@ -85,6 +85,7 @@ public class MainGameManager : MonoBehaviour
         if (CurrentPointToPlane != PointToPlane)
         {
             displayScore.text = PointToPlane.ToString("");
+            CurrentPointToPlane=PointToPlane;
         }
     }
 }

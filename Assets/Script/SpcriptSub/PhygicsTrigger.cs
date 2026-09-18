@@ -36,7 +36,7 @@ public class PhygicsTrigger : MonoBehaviour
      
         BallOnVisual = GameObject.Find("BallVisual");
         BringActiveSlope = GameObject.Find("GameManager").GetComponent<MainGameManager>();
-
+        Debug.Log("");
 
     }
 
@@ -50,8 +50,7 @@ public class PhygicsTrigger : MonoBehaviour
     {
         //subjectがいる回転座標と一致しないとTriggerが反応しません
         //FirstInsertのステージのマップの組み方によってステージの再生成が反応しません
-        if (other.transform.CompareTag("SubjectVisual") &&
-            BallOnVisual.transform.GetComponent<SphereCollider>().isTrigger == true)
+        if (other.transform.CompareTag("SubjectVisual"))
         {
             var match = Regex.Match(transform.name, @"\d+");
 
@@ -61,7 +60,6 @@ public class PhygicsTrigger : MonoBehaviour
             }
             transform.GetComponent<MeshCollider>().isTrigger = false;
            
-            BallOnVisual.transform.GetComponent<SphereCollider>().isTrigger = false;
             i++;
         }
     }

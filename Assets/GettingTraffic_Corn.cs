@@ -64,11 +64,11 @@ public class GettingTraffic_Corn : MonoBehaviour
         {
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
-                mainGameManager.VisualRoatationPlayer = PhysicsMul.transform.rotation.eulerAngles;
-               // MainGameManager.VisualRoatationPlayer = PhysicsMul.transform.rotation.eulerAngles;
                MainGameManager.core.BeginCommandOnTouch = false;
                if (!MainGameManager.OnDead)
                {
+                   MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
+                   MainGameManager.PointToPlane = 0;
                    StartCoroutine(delayResume());
                }
 

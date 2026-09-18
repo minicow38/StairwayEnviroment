@@ -13,7 +13,8 @@ public sealed class CorrespondSubject : MonoBehaviour
 {
     private bool initialChainLogged;
     const float Epsilon = 0.000001f;
-  // public int CurrentPointToPlane = 0;
+  // public int
+  // CurrentPointToPlane = 0;
   public int PointToPlane;
 
     [Header("Inertial Physics Frame")] [Tooltip("PhysicsRoot上で物理計算を行うInSubjectのRigidbodyです。")] [SerializeField]
@@ -622,7 +623,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             .SetUpdate(UpdateType.Fixed)
             .OnComplete(() =>
             {
-                PointToPlane++;
+                MainGameManager.PointToPlane++;
                 Apply(1f);
                 turnTween = null;
                 turnCompleted?.Invoke();

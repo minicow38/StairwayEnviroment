@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 [DisallowMultipleComponent]
@@ -14,6 +15,9 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float MaxDeceleration = 80f;
     const float ResponseInverse = 8.333333f;
     const float AccelerationJerk = 600f;
+
+
+    public RectTransform[] ActiveUIAllSet;
 
     const float TargetMinDistance = .27f;
     [SerializeField]public float TargetAccelerationLimit = 120f;
@@ -112,7 +116,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(0f)] [SerializeField] float flatStick = 24.6f;
     [Min(0f)] [SerializeField] float maxStick = 1000f;
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
-
+    public bool PushStartButtonClicked = false;
     [Header("PlayerMotivation")] [SerializeField]
     public bool BeginCommandOnTouch = false;
     [Header("Debug")]
@@ -755,13 +759,9 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     public void PushStart()
     {
-        MainGameManager.TopTitle.SetActive(false);
-        MainGameManager.PreviewIconRoot.SetActive(false);
-        MainGameManager.TopLiteral.SetActive(false);
-        MainGameManager.PlayButton.SetActive(false);
-        MainGameManager.Userbility.SetActive(true);
-
+        PushStartButtonClicked = true;
         BeginCommandOnTouch = true;
+
     }
 
     IEnumerator Recover()
@@ -771,6 +771,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         MainGameManager.DropOut.SetActive(true);
         yield return new WaitForSeconds(2f);
         MainGameManager.DropOut.SetActive(false);
+        BeginCommandOnTouch = false;
         MainGameManager.OpenChunkStage = true;
     }
     public IEnumerator delayStart()
@@ -806,9 +807,16 @@ public sealed class SlopeStickCore : MonoBehaviour
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
         MainGameManager.OnDead = false;
-
-        Vector3 restart =
-            startSlab.transform.position;
+        ActiveUIAllSet = GameObject.Find("GameUI").transform.Cast<Transform>().OfType<RectTransform>().Where(x => x != null).ToArray();
+        foreach (var GameUI in ActiveUIAllSet)
+        {
+            if (GameUI.name !="DropOut")
+            {
+                GameUI.transform.gameObject.SetActive(true);
+            }
+           
+        }
+        Vector3 restart = startSlab.transform.position;
 
         if (restartPrepared)
         {
@@ -828,7 +836,7 @@ public sealed class SlopeStickCore : MonoBehaviour
             // 通常起動は従来の挙動を維持。
             direction = Vector3.forward;
         }
-
+        
         MainGameManager.LimitTouchingphase = 9;
         turnTargetDirection = direction;
 
@@ -836,11 +844,7 @@ public sealed class SlopeStickCore : MonoBehaviour
         if (rb.isKinematic)
             rb.isKinematic = false;
 
-        rb.position =
-            new Vector3(
-                restart.x,
-                restart.y + 2f,
-                restart.z);
+        rb.position = new Vector3(restart.x, restart.y + 2f, restart.z);
 
         // 位置を飛ばすのと同じ瞬間に物理速度を0へ戻す。
         rb.velocity = Vector3.zero;
@@ -935,11 +939,13 @@ public sealed class SlopeStickCore : MonoBehaviour
             graceTimer = Mathf.Max(0f, graceTimer - Time.fixedDeltaTime);
         
         if (currentHit.transform != null)
-            if (Vector3.Distance(transform.position, currentHit.transform.position) > 12 && !grounded)
+            if (Vector3.Distance(transform.position, currentHit.transform.position) > 15 && !grounded)
             {
 
                 if (!MainGameManager.OnDead)
                 {
+                    transform.GetComponent<Rigidbody>().isKinematic = true;
+
                     StartCoroutine(Recover());
                 }
 
@@ -1072,15 +1078,14 @@ public sealed class SlopeStickCore : MonoBehaviour
             return;
         }
 
-        if (Input.GetMouseButtonDown(0))
+        if ((PushStartButtonClicked && rb.velocity.x>0.125f)||((PushStartButtonClicked && rb.velocity.z>0.125f)))
         {
             MainGameManager.TopTitle.SetActive(false);
             MainGameManager.PreviewIconRoot.SetActive(false);
             MainGameManager.TopLiteral.SetActive(false);
             MainGameManager.PlayButton.SetActive(false);
             MainGameManager.Userbility.SetActive(true);
-
-          BeginCommandOnTouch = true;
+            PushStartButtonClicked = false; 
         }
         // Build the stable read-only Spline plan used by BallVisual.
         // This runs only after turn-guide handoff has completed.
@@ -2662,4 +2667,3 @@ public sealed class SlopeStickCore : MonoBehaviour
     }
     
 }
-

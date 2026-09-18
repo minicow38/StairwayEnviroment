@@ -35,7 +35,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     [Tooltip("VisualPlayerRoot/RenderStageRootを設定します。")] [SerializeField]
     Transform renderStageRoot;
-
+    
+    
     public int ModifyOverrap;
 
     public int ContinuousPattern = 0;
@@ -158,12 +159,62 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     int arcSlabCount;
     int stairwayCount;
 
+    // ============================================================
+    // Rolling stage generation
+    // ============================================================
+    // 初期ステージは InitialStartPattern から自然に生成する。
+    // 現在のパターンでは ArcSlab / StairWay とも 0～17 が生成される。
+    // プレイヤーが 8, 16, 24... に到達するたび、次チャンクを先行生成する。
+    const int ChunkTriggerStep = 8;
+
+    // 名前は startPattern.Count ではなく、実際に生成した次番号を保持して連番にする。
+    int nextArcSlabIndex;
+    int nextStairwayIndex;
+
+    // ============================================================
+    // Item decoration rolling window
+    // ============================================================
+    // アイテム配置は必ず 8 Stairway 単位の半開区間で進める。
+    // [0,8) -> [8,16) -> [16,24) -> ...
+    // 前回の終点が、そのまま次回の始点になる。
+    const int ItemChunkSize = 8;
+
+    int nextDecorationStartIndex;
+
+    // 同じStairwayでCoin/Pylon抽選を二度行わないための保険。
+    // アイテムが「抽選で何も出なかった」場合も処理済みとして記録する。
+    readonly HashSet<int> decoratedStairwayInstanceIds =
+        new HashSet<int>();
+
     bool rebuilding = false;
+
+    // 再生成中に旧DelayStandOnObjectが残らないように管理する。
+    Coroutine delayStandRoutine;
+    Coroutine deathRestartRoutine;
 
     void FixedUpdate()
     {
         if (rebuilding)
             return;
+
+        // MainGameManager.Start() の実行順に左右されないよう、
+        // 通常プレイ時の最初の先行生成ラインを最低8に保つ。
+        if (!MainGameManager.OnDead &&
+            MainGameManager.LimitTouchingphase < ChunkTriggerStep)
+        {
+            MainGameManager.LimitTouchingphase = ChunkTriggerStep;
+        }
+
+        // Endless-stage の一般的な先行生成。
+        // 0～17を保持した状態で8へ到達したら18以降を生成し、
+        // 以後も16,24,32...で次チャンクを足していく。
+        if (!MainGameManager.OnDead &&
+            !MainGameManager.OpenChunkStage &&
+            MainGameManager.lastTouch >= MainGameManager.LimitTouchingphase)
+        {
+            MainGameManager.OpenChunkStage = true;
+            MainGameManager.LimitTouchingphase += ChunkTriggerStep;
+        }
 
         if (MainGameManager.OpenChunkStage)
         {
@@ -182,16 +233,34 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         bool restartingFromDeath =
             MainGameManager.OnDead;
 
+        // ============================================================
+        // 死亡再生成時は、旧ステージを参照する遅延処理を先に停止する。
+        // ============================================================
         if (restartingFromDeath)
         {
-            Debug.Log("");
+            if (delayStandRoutine != null)
+            {
+                StopCoroutine(delayStandRoutine);
+                delayStandRoutine = null;
+            }
+
+            if (deathRestartRoutine != null)
+            {
+                StopCoroutine(deathRestartRoutine);
+                deathRestartRoutine = null;
+            }
         }
-       
-        if (RogicalEntity == null || RogicalEntity.Count == 0 || restartingFromDeath)
+
+        // ============================================================
+        // 初回 / 死亡再生成時の管理データ初期化
+        // ============================================================
+        if (RogicalEntity == null ||
+            RogicalEntity.Count == 0 ||
+            restartingFromDeath)
         {
-            
-           // ActiveSlopeReciver = GameObject.Find("GameManager").transform.GetComponent<MainGameManager>();
-            RogicalEntity = new Dictionary<String, List<GameObject>>();
+            RogicalEntity =
+                new Dictionary<String, List<GameObject>>();
+
             if (StackStairway1 == null)
                 StackStairway1 = new List<GameObject>();
             else
@@ -201,35 +270,42 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 StackStairway2 = new List<GameObject>();
             else
                 StackStairway2.Clear();
+
             RogicalEntity["Physics"] = StackStairway1;
             RogicalEntity["Renderer"] = StackStairway2;
-            points = null;
-            outcount.Clear();
 
-            // ここが現在ない
+            points = null;
+
+            if (outcount == null)
+                outcount = new List<int>();
+            else
+                outcount.Clear();
+
             startPattern.Clear();
             startPattern.AddRange(InitialStartPattern);
-            //MainGameManager.LimitTouchingphase = 8;
+
             ContinuousPattern = 0;
+            FirstShift = 0;
+            nextDecorationStartIndex = 0;
+            decoratedStairwayInstanceIds.Clear();
 
             GameObject inSubjectObject =
                 GameObject.Find("InSubject");
 
             if (inSubjectObject)
+            {
                 resumeOnly =
                     inSubjectObject.GetComponent<SlopeStickCore>();
-
-            FirstShift = 0;
+            }
         }
 
-        // 死亡後の再構築では、VisualPlayerRoot/StageRootを先に初期Poseへ戻す。
-        // この後にSpline/Physics/Visual Stageを生成することで、生成時の座標基準を揃える。
+        // ============================================================
+        // 死亡後の再構築前にVisual座標系を初期Poseへ戻す。
+        // ============================================================
         if (restartingFromDeath)
         {
             if (resumeOnly)
             {
-                // Soft版: Root Pose復元 + restartFramePreparedを立てるだけ。
-                // drive/stick/Guideの破棄は、0.3秒後にRigidbodyを開始点へ戻す瞬間まで遅延する。
                 resumeOnly.PrepareForStageRebuild();
             }
             else
@@ -240,38 +316,83 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             }
         }
 
-        // Time.timeScale = 0.5f;
         if (!RootInSpiral)
             RootInSpiral = GameObject.Find("StairwaySimple");
 
         if (!Prepare() || !EnsureOutputRoots())
             return;
-        if (outcount.Count == 0)
+
+        // ============================================================
+        // 死亡時：新しいStageを作る「前」に古いStageを消す。
+        // ============================================================
+        if (restartingFromDeath)
+        {
+            // プレイヤーもステージも0から再開するため、進行側も同じ基準へ戻す。
+            // OnDead中に古いlastTouchがOpenChunkStageを誤発火させることを防ぐ。
+            MainGameManager.OpenChunkStage = false;
+            MainGameManager.lastTouch = 0;
+            MainGameManager.LimitTouchingphase = ChunkTriggerStep;
+
+            FirstShift = 0;
+            nextDecorationStartIndex = 0;
+            decoratedStairwayInstanceIds.Clear();
+
+            // 新しいステージの番号も0から振り直す。
+            nextArcSlabIndex = 0;
+            nextStairwayIndex = 0;
+
+            hasPreviousFlat = false;
+            previousFlatPosition = Vector3.zero;
+            previousFlatDirection = Vector3.zero;
+
+            ClearGeneratedStage();
+            ClearLegacyGeneratedStage();
+            ClearSplines();
+
+            CacheTransforms();
+
+            ContinuousPattern = 0;
+        }
+        // ============================================================
+        // 初回生成
+        // ============================================================
+        else if (outcount.Count == 0)
         {
             hasPreviousFlat = false;
             previousFlatPosition = Vector3.zero;
             previousFlatDirection = Vector3.zero;
+
             ClearGeneratedStage();
             ClearLegacyGeneratedStage();
-
             ClearSplines();
 
-
             CacheTransforms();
-            Debug.Log("");
+
+            ContinuousPattern = 0;
+            nextArcSlabIndex = 0;
+            nextStairwayIndex = 0;
+            nextDecorationStartIndex = 0;
+            decoratedStairwayInstanceIds.Clear();
+
+            if (MainGameManager.LimitTouchingphase < ChunkTriggerStep)
+                MainGameManager.LimitTouchingphase = ChunkTriggerStep;
         }
+        // ============================================================
+        // 通常の追加チャンク生成
+        // ============================================================
         else
         {
+            // ここから先だけEmitする。名前番号はnextArcSlabIndex /
+            // nextStairwayIndexが保持しているため、17の次は18から続く。
             ContinuousPattern = startPattern.Count;
+
             startPattern.AddRange(new int[]
             {
                 -1, 0, -1, 0, -1, 0, -1, 0, -1
             });
-            Debug.Log("");
         }
 
         EnsureWorkingBuffers();
-
 
         ActivePlane = RootStartpoint;
 
@@ -282,16 +403,33 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         arcSlabCount = 0;
         stairwayCount = 0;
 
-        if (outcount.Count == 0)
-            outcount.Clear();
-
+        // ============================================================
+        // Spline構造計算 → Stage生成
+        // ============================================================
         Build(0, 0, RootStartpoint);
 
-        for (int i = ContinuousPattern; i < startPattern.Count; i++)
+        for (int i = ContinuousPattern;
+             i < startPattern.Count;
+             i++)
+        {
             Emit(i, i > 0);
+        }
 
-        int finalOffset = (startPattern.Count - 1) * Max;
-        int finalCount = counts[startPattern.Count - 1];
+        if (restartingFromDeath)
+        {
+            Debug.Log(
+                $"[STAGE REBUILD INITIAL] " +
+                $"ArcSlab=0..{Mathf.Max(0, nextArcSlabIndex - 1)} ({arcSlabCount} generated), " +
+                $"StairWay=0..{Mathf.Max(0, nextStairwayIndex - 1)} ({stairwayCount} generated), " +
+                $"nextTrigger={MainGameManager.LimitTouchingphase}",
+                this);
+        }
+
+        int finalOffset =
+            (startPattern.Count - 1) * Max;
+
+        int finalCount =
+            counts[startPattern.Count - 1];
 
         if (PrevInclined == null)
             PrevInclined = new List<Vector3>(Max);
@@ -299,28 +437,82 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             PrevInclined.Clear();
 
         for (int i = 0; i < finalCount; i++)
-            PrevInclined.Add(points[finalOffset + i]);
-       
+        {
+            PrevInclined.Add(
+                points[finalOffset + i]);
+        }
+
         accumulatedSpline = lanes[Center];
 
-        // 再生成したSplineを先にキャッシュへ確定する。
-        // delayStart()は最初に0.3秒yieldするため、ここではRigidbody.velocityには触れない。
+        // 新しいSplineをNearestKnotDetectorへ確定する。
         if (knotDetector)
             knotDetector.RebuildCache();
 
+        // ============================================================
+        // 死亡後：新しく生成済みのArcSlab2_0_PhysicsへInSubjectを戻す。
+        // ============================================================
         if (restartingFromDeath)
         {
-            if (resumeOnly)
-                StartCoroutine(resumeOnly.delayStart());
-
-           // MainGameManager.OnDead = false;
+            deathRestartRoutine =
+                StartCoroutine(FinishDeathRestart());
         }
-        if(MainGameManager.OnDead)
+
+        // ============================================================
+        // Coin / Pylon は「今回の論理8区画」だけを処理する。
+        //
+        // 重要:
+        // Stage自体は先行生成されていても、アイテム配置カーソルは
+        // [0,8) -> [8,16) -> [16,24) ... と一方向にだけ進める。
+        // これにより新しいStage生成時に0番から再抽選しない。
+        // ============================================================
+        int availableDecorationCount =
+            Mathf.Min(
+                StackStairway1 != null ? StackStairway1.Count : 0,
+                StackStairway2 != null ? StackStairway2.Count : 0);
+
+        int decorationStart =
+            nextDecorationStartIndex + 5;
+
+        int decorationEndExclusive =
+            Mathf.Min(
+                decorationStart + ItemChunkSize,
+                availableDecorationCount);
+
+        if (decorationStart < decorationEndExclusive)
         {
-            MainGameManager.LimitTouchingphase = 8;
+            // Coroutineを開始する「前」に予約を進める。
+            // 0.1秒待機中に次のStage生成が来ても同じ区間を予約しない。
+            nextDecorationStartIndex =
+                decorationEndExclusive;
+
+            delayStandRoutine =
+                StartCoroutine(
+                    DelayStandOnObject(
+                        decorationStart,
+                        decorationEndExclusive));
+        }
+    }
+
+    IEnumerator FinishDeathRestart()
+    {
+        // この時点では新しい __GeneratedPhysics / ArcSlab2_0_Physics が
+        // すでに生成済みであることが前提。
+        if (resumeOnly)
+        {
+            yield return StartCoroutine(
+                resumeOnly.delayStart());
+        }
+        else
+        {
+            yield return null;
         }
 
-        StartCoroutine(DelayStandOnObject());
+        MainGameManager.OnDead = false;
+        deathRestartRoutine = null;
+
+        Debug.Log(
+            "[STAGE REBUILD COMPLETE] 死亡後のステージ再生成が完了しました。",
+            this);
     }
 
     void EnsureWorkingBuffers()
@@ -720,11 +912,16 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             // Plane 生成
             // ========================================================
 
+            int generatedArcSlabIndex =
+                nextArcSlabIndex++;
+
+            arcSlabCount++;
+
             BoardPair[] arcSlab =
                 TakeBoard(
                     false,
                     LayerMask.NameToLayer("Slope"),
-                    $"ArcSlab{ContinuousPattern + arcSlabCount++}",
+                    $"ArcSlab{generatedArcSlabIndex}",
                     scale);
 
             ApplyBoardPose(
@@ -771,15 +968,20 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // ============================================================
         else
         {
+            int generatedStairwayIndex =
+                nextStairwayIndex++;
+
+            stairwayCount++;
+
             BoardPair[] stairway =
                 TakeBoard(
                     true,
                     LayerMask.NameToLayer("Slope"),
-                    $"StairWay{ContinuousPattern + stairwayCount++}",
+                    $"StairWay{generatedStairwayIndex}",
                     scale);
 
             Debug.Log(
-                $"StairWay{ContinuousPattern + stairwayCount} " +
+                $"StairWay{generatedStairwayIndex} " +
                 $"plan={plan}, " +
                 $"segment={segmentIndex}, " +
                 $"scale={scale}, " +
@@ -1310,22 +1512,98 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             Object.DestroyImmediate(target);
     }
 
-    IEnumerator DelayStandOnObject()
+    IEnumerator DelayStandOnObject(
+        int startIndex,
+        int endIndexExclusive)
     {
         yield return new WaitForSeconds(0.1f);
-        for (int i = MainGameManager.LimitTouchingphase + FirstShift;
-             i < MainGameManager.LimitTouchingphase + 8 + FirstShift;
+
+        int physicsCount =
+            StackStairway1 != null
+                ? StackStairway1.Count
+                : 0;
+
+        int visualCount =
+            StackStairway2 != null
+                ? StackStairway2.Count
+                : 0;
+
+        int availableCount =
+            Mathf.Min(
+                physicsCount,
+                visualCount);
+
+        // Coroutine開始後に死亡/再構築が入ってListが短くなっても
+        // 範囲外へ出ないよう、現在のCountで終端をもう一度丸める。
+        int safeStart =
+            Mathf.Clamp(
+                startIndex,
+                0,
+                availableCount);
+
+        int safeEndExclusive =
+            Mathf.Clamp(
+                endIndexExclusive,
+                safeStart,
+                availableCount);
+
+        if (safeStart >= safeEndExclusive)
+        {
+            delayStandRoutine = null;
+            yield break;
+        }
+
+        Debug.Log(
+            $"[ITEM CHUNK] range=[{safeStart},{safeEndExclusive}) " +
+            $"available={availableCount}",
+            this);
+
+        for (int i = safeStart;
+             i < safeEndExclusive;
              i++)
         {
-            bool DontSeqItem = false;
+            GameObject ActiveStairway1 =
+                StackStairway1[i];
 
-            GameObject ActiveStairway1 = StackStairway1[i];
-            GameObject ActiveStairway2 = StackStairway2[i];
+            GameObject ActiveStairway2 =
+                StackStairway2[i];
 
-            float angleY = StackStairway1[i].transform.localEulerAngles.y;
-            
+            if (!ActiveStairway1 ||
+                !ActiveStairway2)
+            {
+                continue;
+            }
 
-            DontSeqItem =
+            // ========================================================
+            // Idempotency:
+            // 同じPhysics Stairwayに対するアイテム抽選は一度だけ。
+            //
+            // GenerateCoin/GeneratePylonが「今回は生成なし」を返した場合も
+            // このStairwayは処理済みにする。再抽選すると、Stage更新のたびに
+            // 後からCoin/Pylonが増えて重複の原因になるため。
+            // ========================================================
+            int stairwayInstanceId =
+                ActiveStairway1.GetInstanceID();
+
+            if (!decoratedStairwayInstanceIds.Add(
+                    stairwayInstanceId))
+            {
+                Debug.LogWarning(
+                    $"[ITEM CHUNK SKIP] " +
+                    $"already processed index={i}, " +
+                    $"stairway={ActiveStairway1.name}",
+                    ActiveStairway1);
+
+                continue;
+            }
+
+            float angleY =
+                ActiveStairway1
+                    .transform
+                    .localEulerAngles
+                    .y;
+
+            bool DontSeqItem =
                 GeneratePylon(
                     angleY,
                     ActiveStairway1,
@@ -1338,16 +1616,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     ActiveStairway1,
                     ActiveStairway2);
             }
-
         }
 
-        if (MainGameManager.LimitTouchingphase < 8)
-        {
-            FirstShift = 2;
-            MainGameManager.LimitTouchingphase = 8;
-        }
-
-        Debug.Log("");
+        delayStandRoutine = null;
     }
 
     static string GetRotationType(float angleY)
@@ -1538,3 +1809,4 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
 
 }
+
