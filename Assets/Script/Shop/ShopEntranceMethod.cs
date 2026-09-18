@@ -20,9 +20,8 @@ public class ShopEntranceMethod : MonoBehaviour
     public void OnClick()
     {
         int stageNumber = SceneManager.GetActiveScene().buildIndex;
-        if(stageNumber==1)
-        SceneManager.LoadScene(2);
-        else if(stageNumber==2)
+        
+        if(stageNumber==0)
         {
             SceneManager.LoadScene(1);
         }

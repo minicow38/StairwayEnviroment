@@ -101,7 +101,7 @@ public class AndroidOneOnly : MonoBehaviour
         }
         PlayerPrefs.SetString(itemList,stringPlus);
         PlayerPrefs.SetString(ArchiveBallItem,activeBallMaterial);
-        PlayerPrefs.SetInt(CallForCurrrentCoin, pharseCoin);
+        PlayerPrefs.SetInt(CallForCurrrentCoin, 1000);
         //PlayerPrefs.SetInt(BallNumber,UsingBallNow);
         
 
