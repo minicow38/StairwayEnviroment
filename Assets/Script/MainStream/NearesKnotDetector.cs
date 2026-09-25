@@ -8,8 +8,10 @@ public sealed class NearestKnotDetector : MonoBehaviour
     const float Eps = 0.000001f, MinSlopeAngle = 2f, MinCurvature = 0.0005f, MaxCurvature = 1f;
 
     [SerializeField] SplineContainer splineContainer;
-    [Header("Search")]
-    [Min(1)] [SerializeField] int localSearchWindow = 4;
+
+    [Header("Search")] [Min(1)] [SerializeField]
+    int localSearchWindow = 4;
+
     [Min(.1f)] [SerializeField] float fullSearchDistance = 3f, teleportDistance = 5f;
 
     public int NearestSplineIndex { get; private set; } = -1;
@@ -226,7 +228,8 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
                     slopeAngle = angle,
 
-                    isSlope = angle >= MinSlopeAngle });
+                    isSlope = angle >= MinSlopeAngle
+                });
             }
 
             int last = segments.Count - 1;
@@ -255,17 +258,23 @@ public sealed class NearestKnotDetector : MonoBehaviour
         if (!teleported && sqr > fullSearchDistance * fullSearchDistance)
             index = FindGlobal(position, out t, out point, out sqr);
 
-        currentSegment = index; lastPosition = position; hasLastPosition = true;
+        currentSegment = index;
+        lastPosition = position;
+        hasLastPosition = true;
         SegmentInfo seg = segments[index];
         float sectionDistance = seg.distanceFromSectionStart + t * seg.length;
-        float progress = seg.isSlope && seg.sectionLength > Eps ? Mathf.Clamp01(sectionDistance / seg.sectionLength) : 0f;
+        float progress = seg.isSlope && seg.sectionLength > Eps
+            ? Mathf.Clamp01(sectionDistance / seg.sectionLength)
+            : 0f;
 
         UpdateNearestKnot(seg, t, position);
         ReadNextSlope(index, t, out bool nextSlope, out float nextDistance,
             out Vector3 nextTangent, out Vector3 nextNormal, out float nextAngle, out float nextCurvature);
 
-        return CurrentGuide = new GuideFrame {
-            valid = true, splineIndex = seg.splineIndex, segmentIndex = seg.segmentIndex, sectionIndex = seg.sectionIndex,
+        return CurrentGuide = new GuideFrame
+        {
+            valid = true, splineIndex = seg.splineIndex, segmentIndex = seg.segmentIndex,
+            sectionIndex = seg.sectionIndex,
             point = point, tangent = seg.tangent, normal = seg.normal, distanceToGuide = Mathf.Sqrt(sqr), segmentT = t,
             isSlope = seg.isSlope, slopeAngle = seg.slopeAngle, curvature = seg.curvature,
             entryCurvature = seg.entryCurvature, exitCurvature = seg.exitCurvature,
@@ -352,9 +361,9 @@ public sealed class NearestKnotDetector : MonoBehaviour
             sectionLength = sectionLength,
             distanceFromSectionStart = targetDistance,
             distanceToSectionEnd =
-            Mathf.Max(
-            0f,
-            sectionLength - targetDistance)
+                Mathf.Max(
+                    0f,
+                    sectionLength - targetDistance)
         };
 
         return true;
@@ -466,10 +475,9 @@ public sealed class NearestKnotDetector : MonoBehaviour
             return false;
 
         // 3本より多いSplineがある場合は、anchorと同じ横断面に最も近い3本を採用する。
-        candidates.Sort(
-            (a, b) =>
-                a.frameDistanceSqr.CompareTo(
-                    b.frameDistanceSqr));
+        candidates.Sort((a, b) =>
+            a.frameDistanceSqr.CompareTo(
+                b.frameDistanceSqr));
 
         if (candidates.Count > 3)
         {
@@ -479,10 +487,9 @@ public sealed class NearestKnotDetector : MonoBehaviour
         }
 
         // travel方向から見たside軸の小さい順を Left -> Center -> Right とする。
-        candidates.Sort(
-            (a, b) =>
-                a.lateral.CompareTo(
-                    b.lateral));
+        candidates.Sort((a, b) =>
+            a.lateral.CompareTo(
+                b.lateral));
 
         LateralCandidate left = candidates[0];
         LateralCandidate center = candidates[1];
@@ -532,7 +539,8 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
     // sectionProgress01 is arc-length normalized in this detector's cached
     // piecewise-linear section, so this is the exact cached-path distance.
-    public bool TryGetDistanceAlongSameSection(GuideFrame anchor, float fromProgress01, float toProgress01, out float distance)
+    public bool TryGetDistanceAlongSameSection(GuideFrame anchor, float fromProgress01, float toProgress01,
+        out float distance)
     {
         distance = 0f;
 
@@ -549,32 +557,46 @@ public sealed class NearestKnotDetector : MonoBehaviour
     int FindLocal(Vector3 p, out float t, out Vector3 point, out float sqr)
     {
         SegmentInfo current = segments[currentSegment];
-        int from = Mathf.Max(0, currentSegment - localSearchWindow), to = Mathf.Min(segments.Count - 1, currentSegment + localSearchWindow);
-        int best = -1; t = 0f; point = default; sqr = float.PositiveInfinity;
+        int from = Mathf.Max(0, currentSegment - localSearchWindow),
+            to = Mathf.Min(segments.Count - 1, currentSegment + localSearchWindow);
+        int best = -1;
+        t = 0f;
+        point = default;
+        sqr = float.PositiveInfinity;
         for (int i = from; i <= to; i++)
-            if (segments[i].splineIndex == current.splineIndex) Test(i, p, ref best, ref t, ref point, ref sqr);
+            if (segments[i].splineIndex == current.splineIndex)
+                Test(i, p, ref best, ref t, ref point, ref sqr);
         return best;
     }
 
     int FindGlobal(Vector3 p, out float t, out Vector3 point, out float sqr)
     {
-        int best = -1; t = 0f; point = default; sqr = float.PositiveInfinity;
+        int best = -1;
+        t = 0f;
+        point = default;
+        sqr = float.PositiveInfinity;
         for (int i = 0; i < segments.Count; i++) Test(i, p, ref best, ref t, ref point, ref sqr);
         return best;
     }
 
     void Test(int index, Vector3 p, ref int best, ref float bestT, ref Vector3 bestPoint, ref float bestSqr)
     {
-        SegmentInfo s = segments[index]; Project(p, s.start, s.end, out float t, out Vector3 point, out float sqr);
+        SegmentInfo s = segments[index];
+        Project(p, s.start, s.end, out float t, out Vector3 point, out float sqr);
         if (sqr >= bestSqr) return;
-        best = index; bestT = t; bestPoint = point; bestSqr = sqr;
+        best = index;
+        bestT = t;
+        bestPoint = point;
+        bestSqr = sqr;
     }
 
     static void Project(Vector3 p, Vector3 a, Vector3 b, out float t, out Vector3 point, out float sqr)
     {
-        Vector3 ab = b - a; float d = ab.sqrMagnitude;
+        Vector3 ab = b - a;
+        float d = ab.sqrMagnitude;
         t = d > Eps ? Mathf.Clamp01(Vector3.Dot(p - a, ab) / d) : 0f;
-        point = a + ab * t; sqr = (p - point).sqrMagnitude;
+        point = a + ab * t;
+        sqr = (p - point).sqrMagnitude;
     }
 
     void PopulateCurvature(int first, int last)
@@ -584,7 +606,8 @@ public sealed class NearestKnotDetector : MonoBehaviour
             SegmentInfo s = segments[i];
             s.entryCurvature = i > first ? BoundaryCurvature(segments[i - 1], s) : 0f;
             s.exitCurvature = i < last ? BoundaryCurvature(s, segments[i + 1]) : 0f;
-            s.curvature = Mathf.Clamp(Mathf.Max(MinCurvature, Mathf.Max(s.entryCurvature, s.exitCurvature)), MinCurvature, MaxCurvature);
+            s.curvature = Mathf.Clamp(Mathf.Max(MinCurvature, Mathf.Max(s.entryCurvature, s.exitCurvature)),
+                MinCurvature, MaxCurvature);
         }
     }
 
@@ -598,13 +621,28 @@ public sealed class NearestKnotDetector : MonoBehaviour
     {
         for (int i = first; i <= last;)
         {
-            if (!segments[i].isSlope) { i++; continue; }
-            int start = i; float length = 0f;
-            while (i <= last && segments[i].isSlope) { length += segments[i].length; i++; }
-            int section = nextSectionIndex++; float distance = 0f;
-            for (int j = start; j < i; j++) {
-                segments[j].sectionIndex = section; segments[j].sectionLength = length;
-                segments[j].distanceFromSectionStart = distance; distance += segments[j].length;
+            if (!segments[i].isSlope)
+            {
+                i++;
+                continue;
+            }
+
+            int start = i;
+            float length = 0f;
+            while (i <= last && segments[i].isSlope)
+            {
+                length += segments[i].length;
+                i++;
+            }
+
+            int section = nextSectionIndex++;
+            float distance = 0f;
+            for (int j = start; j < i; j++)
+            {
+                segments[j].sectionIndex = section;
+                segments[j].sectionLength = length;
+                segments[j].distanceFromSectionStart = distance;
+                distance += segments[j].length;
             }
         }
     }
@@ -612,12 +650,29 @@ public sealed class NearestKnotDetector : MonoBehaviour
     void ReadNextSlope(int index, float t, out bool found, out float distance, out Vector3 tangent,
         out Vector3 normal, out float angle, out float curvature)
     {
-        found = false; distance = float.PositiveInfinity; tangent = default; normal = Vector3.up; angle = 0f; curvature = MinCurvature;
-        SegmentInfo current = segments[index]; if (current.isSlope) return;
+        found = false;
+        distance = float.PositiveInfinity;
+        tangent = default;
+        normal = Vector3.up;
+        angle = 0f;
+        curvature = MinCurvature;
+        SegmentInfo current = segments[index];
+        if (current.isSlope) return;
         float d = current.length * (1f - t);
-        for (int i = index + 1; i < segments.Count && segments[i].splineIndex == current.splineIndex; i++) {
+        for (int i = index + 1; i < segments.Count && segments[i].splineIndex == current.splineIndex; i++)
+        {
             SegmentInfo s = segments[i];
-            if (s.isSlope) { found = true; distance = d; tangent = s.tangent; normal = s.normal; angle = s.slopeAngle; curvature = s.curvature; return; }
+            if (s.isSlope)
+            {
+                found = true;
+                distance = d;
+                tangent = s.tangent;
+                normal = s.normal;
+                angle = s.slopeAngle;
+                curvature = s.curvature;
+                return;
+            }
+
             d += s.length;
         }
     }
@@ -625,15 +680,177 @@ public sealed class NearestKnotDetector : MonoBehaviour
     void UpdateNearestKnot(SegmentInfo s, float t, Vector3 p)
     {
         bool start = t <= .5f;
-        NearestSplineIndex = s.splineIndex; NearestKnotIndex = start ? s.startKnotIndex : s.endKnotIndex;
-        NearestKnotPosition = start ? s.start : s.end; NearestKnotDistance = Vector3.Distance(p, NearestKnotPosition);
+        NearestSplineIndex = s.splineIndex;
+        NearestKnotIndex = start ? s.startKnotIndex : s.endKnotIndex;
+        NearestKnotPosition = start ? s.start : s.end;
+        NearestKnotDistance = Vector3.Distance(p, NearestKnotPosition);
     }
 
     static Vector3 BuildUnbankedNormal(Vector3 tangent)
     {
-        Vector3 flat = Vector3.ProjectOnPlane(tangent, Vector3.up); if (flat.sqrMagnitude <= Eps) return Vector3.up;
+        Vector3 flat = Vector3.ProjectOnPlane(tangent, Vector3.up);
+        if (flat.sqrMagnitude <= Eps) return Vector3.up;
         Vector3 side = Vector3.Cross(Vector3.up, flat.normalized).normalized;
         Vector3 normal = Vector3.Cross(tangent.normalized, side).normalized;
         return Vector3.Dot(normal, Vector3.up) < 0f ? -normal : normal;
     }
+
+    public bool TryEvaluateForwardSlopeSection(
+        GuideFrame from,
+        float progress01,
+        out GuideSample sample)
+    {
+        sample = default;
+
+        if (!from.valid ||
+            from.splineIndex < 0 ||
+            !splineContainer)
+        {
+            return false;
+        }
+
+        if (segments.Count == 0 ||
+            cachedSplineCount != splineContainer.Splines.Count)
+        {
+            RebuildCache();
+        }
+
+        if (segments.Count == 0)
+            return false;
+
+        int sourceListIndex = -1;
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            SegmentInfo segment = segments[i];
+
+            if (segment.splineIndex == from.splineIndex &&
+                segment.segmentIndex == from.segmentIndex)
+            {
+                sourceListIndex = i;
+                break;
+            }
+        }
+
+        if (sourceListIndex < 0)
+            return false;
+
+        int targetSectionIndex = -1;
+
+        if (from.isSlope && from.sectionIndex >= 0)
+        {
+            targetSectionIndex = from.sectionIndex;
+        }
+        else
+        {
+            for (int i = sourceListIndex + 1; i < segments.Count; i++)
+            {
+                SegmentInfo segment = segments[i];
+
+                if (segment.splineIndex != from.splineIndex)
+                    break;
+
+                if (segment.isSlope && segment.sectionIndex >= 0)
+                {
+                    targetSectionIndex = segment.sectionIndex;
+                    break;
+                }
+            }
+        }
+
+        if (targetSectionIndex < 0)
+            return false;
+
+        SegmentInfo first = null;
+        SegmentInfo selected = null;
+        SegmentInfo last = null;
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            SegmentInfo segment = segments[i];
+
+            if (segment.splineIndex != from.splineIndex ||
+                segment.sectionIndex != targetSectionIndex ||
+                !segment.isSlope)
+            {
+                continue;
+            }
+
+            if (first == null)
+                first = segment;
+
+            last = segment;
+        }
+
+        if (first == null || last == null)
+            return false;
+
+        float sectionLength = Mathf.Max(Eps, first.sectionLength);
+        float clampedProgress = Mathf.Clamp01(progress01);
+        float targetDistance = clampedProgress * sectionLength;
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            SegmentInfo segment = segments[i];
+
+            if (segment.splineIndex != from.splineIndex ||
+                segment.sectionIndex != targetSectionIndex ||
+                !segment.isSlope)
+            {
+                continue;
+            }
+
+            float segmentEnd =
+                segment.distanceFromSectionStart +
+                segment.length;
+
+            if (targetDistance <= segmentEnd + Eps)
+            {
+                selected = segment;
+                break;
+            }
+        }
+
+        if (selected == null)
+            selected = last;
+
+        float localDistance = Mathf.Clamp(
+            targetDistance - selected.distanceFromSectionStart,
+            0f,
+            Mathf.Max(0f, selected.length));
+
+        float segmentT =
+            selected.length > Eps
+                ? Mathf.Clamp01(localDistance / selected.length)
+                : 0f;
+
+        Vector3 point = Vector3.Lerp(
+            selected.start,
+            selected.end,
+            segmentT);
+
+        sample = new GuideSample
+        {
+            valid = true,
+            isSlope = true,
+            splineIndex = selected.splineIndex,
+            segmentIndex = selected.segmentIndex,
+            sectionIndex = selected.sectionIndex,
+            point = point,
+            tangent = selected.tangent,
+            normal = selected.normal,
+            segmentT = segmentT,
+            slopeAngle = selected.slopeAngle,
+            curvature = selected.curvature,
+            entryCurvature = selected.entryCurvature,
+            exitCurvature = selected.exitCurvature,
+            sectionProgress01 = clampedProgress,
+            sectionLength = sectionLength,
+            distanceFromSectionStart = targetDistance,
+            distanceToSectionEnd = Mathf.Max(0f, sectionLength - targetDistance)
+        };
+
+        return true;
+    }
+
 }

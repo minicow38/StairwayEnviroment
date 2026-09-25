@@ -1,3 +1,4 @@
+
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -44,14 +45,18 @@ using UnityEditor;
 /// S(T) は以前成功した300-400m/s^2帯の中心値を基準に [2R,4R] で保持します。
 /// gammaはReleaseからExact LimitまでのSpline移動時間から一度だけ求めます。
 /// First Contact方式選択、Curved Offset、旧World-Y振幅補正は使用しません。
-/// Upper Colliderの配置調整は、形状を変えずWorld-Yへ平行移動する
-/// upperColliderCenterYOffsetY だけを唯一のAuthorityとして使用します。
+/// Build Dでは旧 -0.09m World-Y試験で有効だったNormal方向の近接量だけを
+/// Stable-N insetへ分離し、InspectorのUpper Collider Center Y Offsetは0を基準にします。
+/// 実Upper MeshColliderにはコード生成の低摩擦PhysicMaterialを適用し、
+/// 接線摩擦と反射量のAuthorityを分離します。
 /// SlopeStickCore / CorrespondSubjectはREAD ONLYです。
 /// </summary>
 [Searchable]
 [DisallowMultipleComponent]
 public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 {
+public const string RuntimeBuildId = "ContinuousNormalSupportUpperContact-20260920-D";
+
 // ================================================================
 // FLOATING RIGIDBODY ENVELOPE 2026-09-14
 // Upper is a physical impact boundary. Virtual Lower is geometry only here.
@@ -59,6 +64,12 @@ public sealed class BallVisualNegativeEnvelopeCollider : MonoBehaviour
 // Lower-specific damping/rebound controller and no physical Lower Collider.
 // Sync also keeps transport/catch-up control.
 // No master phase clock is imposed on the Rigidbody.
+// SpatialCurvatureAdaptiveHybrid does NOT alter this component's Virtual Lower,
+// canonical Energy, or exp(-gamma*t) decay authority. Physical Upper remains a real
+// MeshCollider. Build D keeps the 3.25R presentation ceiling, converts the former
+// -0.09m World-Y sweet spot into a Stable-N inset, and applies a runtime low-friction
+// PhysicMaterial to the real Upper. Reflection analysis/governing remains in Sync.
+// The selective curvature limiter still lives in BallVisualEqualizerSync only.
 // ================================================================
 
 // ================================================================
@@ -92,14 +103,42 @@ private int segmentCount = 32;
 [Tooltip("進行方向と直交するEnvelopeの全幅[m]。中心から左右へ envelopeWidth / 2 ずつ広がります。")] [Min(0.1f)] [SerializeField]
 private float envelopeWidth = 10.0f;
 
-[Header("Upper Collider Vertical Placement")]
+[Header("Upper Collider Placement - Zero Based")]
 [Tooltip(
-    "Upper Collider全体をWorld Y方向へ平行移動する距離[m]。\n" +
-    "0 = 従来位置、負値 = 下げる、正値 = 上げる。\n" +
-    "始点/終点を含む全頂点のX/Z、4R-Hn、面法線、幅は変更しません。")]
-[InspectorName("Upper Collider Center Y Offset [m]")]
+    "旧 -0.09m World-Y試験のうち、45度斜面でUpperをLowerへ近づけていたStable-N成分だけを基準化した値[m]。\n" +
+    "0.06364m ≒ 0.09 * cos(45°)。World-Y由来のTangentずれは持ち込みません。")]
+[Min(0f)]
+[SerializeField]
+private float upperColliderBaselineNormalInsetMeters = 0.06364f;
+
+[Tooltip(
+    "基準化後の追加World-Y微調整[m]。\n" +
+    "0 = 旧 -0.09m試験相当のNormal clearanceを基準状態として使用。\n" +
+    "通常は0のままにし、比較実験時だけ小さく調整します。")]
+[InspectorName("Upper Collider Center Y Offset Y [m]")]
 [SerializeField]
 private float upperColliderCenterYOffsetY = 0f;
+
+[Header("Upper Physical Contact Material")]
+[Tooltip(
+    "実Upper MeshColliderへコード生成PhysicMaterialを適用します。\n" +
+    "目的は接線摩擦を切り離すことで、反射そのものを人工的に増やすことではありません。")]
+[SerializeField]
+private bool useRuntimeUpperPhysicMaterial = true;
+
+[Range(0f, 1f)]
+[SerializeField]
+private float upperDynamicFriction = 0f;
+
+[Range(0f, 1f)]
+[SerializeField]
+private float upperStaticFriction = 0f;
+
+[Range(0f, 1f)]
+[SerializeField]
+private float upperBounciness = 0f;
+
+private PhysicMaterial runtimeUpperPhysicMaterial;
 
 // ================================================================
 // Human presentation controls
@@ -115,14 +154,23 @@ private float upperColliderCenterYOffsetY = 0f;
 private float preferredContactPeriodSeconds = 0.10f;
 
 [Tooltip(
+    "第1波から許可するLower->Upper中心移動量[R]のHard Ceiling。\n" +
+    "旧Scene/Prefabに4.0/3.8/3.3RのCurveがSerialize済みでも、この値より上へは再膨張させません。\n" +
+    "後続Waveの自然な縮小は既存のCanonical Energy / exp(-gamma*t) / Hnと、より低いCurve値へ任せます。")]
+[Min(0.01f)]
+[SerializeField]
+private float firstWavePresentationCeilingR = 3.25f;
+
+[Tooltip(
     "X=波番号(0が第1波)、Y=その波で許可するLower->Upper中心移動量[R]。\n" +
-    "これは目標値ではなくCeilingです。旧減衰モデルがこれより低ければ旧減衰を優先します。")]
+    "3.25Rより高い値はfirstWavePresentationCeilingRで無効化されます。\n" +
+    "これは目標値ではなくCeilingで、実際の縮小は既存Decay/Hnを優先します。")]
 [SerializeField, HideInInspector]
 private AnimationCurve presentationCeilingR =
     new AnimationCurve(
-        new Keyframe(0f, 4.0f),
-        new Keyframe(1f, 3.8f),
-        new Keyframe(2f, 3.3f),
+        new Keyframe(0f, 3.25f),
+        new Keyframe(1f, 3.25f),
+        new Keyframe(2f, 3.25f),
         new Keyframe(3f, 2.5f),
         new Keyframe(6f, 0.8f));
 
@@ -328,23 +376,15 @@ private MeshCollider generatedMeshCollider;
 private MeshCollider generatedMeshSensorCollider;
 private bool upperEnvelopeSolidRequested;
 
-// ------------------------------------------------------------
-// Monotonic Trigger Pulse experiment
-// ------------------------------------------------------------
-// Current Upper is normally a concave MeshCollider and therefore cannot be
-// a Trigger. For this one-FixedUpdate experiment only, recook it convex,
-// set isTrigger=true, then restore concave Solid on the following step.
-private bool monotonicTriggerPulseActive;
-private float monotonicTriggerPulseRestoreFixedTime;
-private bool monotonicTriggerPulsePreviousConvex;
-private bool monotonicTriggerPulsePreviousTrigger;
-private int monotonicTriggerPulseCount;
-private string monotonicTriggerPulseReason = "None";
+// Legacy Monotonic Trigger Pulse was removed in Build D.
+// The public method signature remains as a no-op compatibility seam.
+// The real Upper never changes convex/trigger state at runtime.
 
 // Double-buffered geometry. Build a standby Mesh first, then swap only while
 // the active Upper Solid is disabled.
 private Mesh pendingUpperEnvelopeMesh;
 private bool pendingUpperEnvelopeMeshReady;
+private float pendingUpperColliderBaselineNormalInsetMeters;
 private float pendingUpperColliderCenterYOffsetY;
 private float nextPendingUpperEnvelopeBuildRetryTime;
 
@@ -403,10 +443,13 @@ private float resolvedReleasePhaseAcceleration;
 [SerializeField, Range(0f, 1f)] private float presentationCurrentAppliedRetention01 = 1f;
 
 [Header("Upper Collider Placement Runtime - Read Only")]
-[Tooltip("実際にMeshColliderへCommit済みのWorld-Y移動量[m]。Equalizerはこの値だけをAuthorityとして読みます。")]
+[Tooltip("実際にMeshColliderへCommit済みのStable-N inset[m]。")]
+[SerializeField] private float appliedUpperColliderBaselineNormalInsetMeters;
+
+[Tooltip("基準化後に実際にCommit済みの追加World-Y trim[m]。通常0。")]
 [SerializeField] private float appliedUpperColliderCenterYOffsetY;
 
-[Tooltip("InspectorのWorld-Y移動量を現在のStable-Nへ射影した量[m]。負ならUpperが法線方向へ沈みます。")]
+[Tooltip("Baseline Stable-N inset + World-Y trimをStable-Nへ射影した実移動量[m]。負ならUpperがLower側へ沈みます。")]
 [SerializeField] private float resolvedUpperColliderNormalShiftMeters;
 
 [Tooltip("4R-HnへY移動のStable-N成分を反映した、実Upper接触面までの中心距離[m]。")]
@@ -461,6 +504,7 @@ private float lastEnvelopeWidth;
 private float lastPreferredContactPeriodSeconds;
 private float lastMinimumPresentationCeilingR;
 private float lastWaveTimeDecayInfluence;
+private float lastUpperColliderBaselineNormalInsetMeters;
 private float lastUpperColliderCenterYOffsetY;
 private int lastPresentationCeilingCurveHash;
 
@@ -477,7 +521,7 @@ private bool pausedInspectorPreviewQueued;
 
 private void Awake()
 {
-    Debug.Log("[ENVELOPE BUILD] NaturalConnect-GeometryOnly-20260915-E", this);
+    Debug.Log($"[ENVELOPE BUILD] {RuntimeBuildId}", this);
     ResolveReferences();
     CaptureLiveSettingsSnapshot();
 }
@@ -553,15 +597,6 @@ private void ApplyPausedInspectorPreviewIfNeeded()
         return;
     }
 
-    // Monotonic Trigger Pulse中のconcave/convex切替へ割り込まない。
-    // この稀な1-step状態だけは既存安全性を優先し、要求をPendingに保持する。
-    if (monotonicTriggerPulseActive)
-    {
-        pendingCanonicalGeometryRebuild = true;
-        SceneView.RepaintAll();
-        return;
-    }
-
     // Pause中はFixedUpdateが進まないためforceImmediateで現在Inspector値から
     // Standby Meshを作り直す。Commit処理自体は通常再生と完全に共通。
     PreparePendingUpperEnvelopeMesh(
@@ -578,20 +613,7 @@ private void ApplyPausedInspectorPreviewIfNeeded()
 
 private void FixedUpdate()
 {
-    // Trigger pulse is kept for one complete FixedUpdate interval.
-    // While active, do not recook/swap the same MeshCollider.
-    if (monotonicTriggerPulseActive)
-    {
-        if (Time.fixedTime + 0.000001f >=
-            monotonicTriggerPulseRestoreFixedTime)
-        {
-            RestoreCurrentEnvelopeAfterMonotonicTriggerPulse();
-        }
-        else
-        {
-            return;
-        }
-    }
+    RefreshRuntimeUpperPhysicMaterial();
 
     TryBuildEnvelopeIfReady();
 
@@ -1113,6 +1135,9 @@ private bool LiveSettingsChanged()
             waveTimeDecayInfluence -
             lastWaveTimeDecayInfluence) > 0.00001f ||
         Mathf.Abs(
+            upperColliderBaselineNormalInsetMeters -
+            lastUpperColliderBaselineNormalInsetMeters) > 0.00001f ||
+        Mathf.Abs(
             upperColliderCenterYOffsetY -
             lastUpperColliderCenterYOffsetY) > 0.00001f ||
         ComputePresentationCeilingCurveHash() !=
@@ -1130,6 +1155,8 @@ private void CaptureLiveSettingsSnapshot()
         waveTimeDecayInfluence;
     // Compare the next Inspector request against the geometry that is actually
     // active, not against an uncommitted desired value.
+    lastUpperColliderBaselineNormalInsetMeters =
+        appliedUpperColliderBaselineNormalInsetMeters;
     lastUpperColliderCenterYOffsetY =
         appliedUpperColliderCenterYOffsetY;
     lastPresentationCeilingCurveHash =
@@ -1177,6 +1204,11 @@ private void PreparePendingUpperEnvelopeMesh(
 
     // Pending meshと配置値を同じSnapshotで作る。
     // Equalizer側はCommit前のInspector値を先読みしない。
+    float requestedUpperNormalInsetMeters =
+        Mathf.Max(
+            0f,
+            upperColliderBaselineNormalInsetMeters);
+
     float requestedUpperYOffsetY =
         upperColliderCenterYOffsetY;
 
@@ -1186,6 +1218,7 @@ private void PreparePendingUpperEnvelopeMesh(
             cachedA0,
             cachedGamma,
             cachedEqualizerRadius,
+            requestedUpperNormalInsetMeters,
             requestedUpperYOffsetY);
 
     if (!newMesh)
@@ -1206,6 +1239,8 @@ private void PreparePendingUpperEnvelopeMesh(
     }
 
     pendingUpperEnvelopeMesh = newMesh;
+    pendingUpperColliderBaselineNormalInsetMeters =
+        requestedUpperNormalInsetMeters;
     pendingUpperColliderCenterYOffsetY =
         requestedUpperYOffsetY;
     pendingUpperEnvelopeMeshReady = true;
@@ -1248,6 +1283,8 @@ private void TryCommitPendingUpperEnvelopeMesh()
         pendingUpperEnvelopeMesh;
 
     // Geometry and tracking authority switch on the exact same commit.
+    appliedUpperColliderBaselineNormalInsetMeters =
+        pendingUpperColliderBaselineNormalInsetMeters;
     appliedUpperColliderCenterYOffsetY =
         pendingUpperColliderCenterYOffsetY;
 
@@ -1287,6 +1324,7 @@ private void TryCommitPendingUpperEnvelopeMesh()
         $"ceiling={presentationCurrentCeilingR:F3}R " +
         $"resolved={presentationCurrentResolvedTravelR:F3}R " +
         $"Hn={presentationCurrentLossHnR:F3}R " +
+        $"upperNormalInset={appliedUpperColliderBaselineNormalInsetMeters:F4}m " +
         $"upperYOffsetY={appliedUpperColliderCenterYOffsetY:F4}m " +
         $"solidEnabled={generatedMeshCollider.enabled}",
         this);
@@ -1483,17 +1521,38 @@ private float EvaluatePresentationCeilingR(
     float safeMinimum =
         Mathf.Max(0.01f, minimumPresentationCeilingR);
 
+    float wave1CeilingR =
+        Mathf.Max(
+            safeMinimum,
+            firstWavePresentationCeilingR);
+
     if (presentationCeilingR == null ||
         presentationCeilingR.length == 0)
     {
-        return safeMinimum;
+        return wave1CeilingR;
     }
 
-    return
+    float curveCeilingR =
         Mathf.Max(
             safeMinimum,
             presentationCeilingR.Evaluate(
                 Mathf.Max(0f, waveCoordinate)));
+
+    // One-way presentation ceiling:
+    // - Wave1 starts at no more than 3.25R.
+    // - Old serialized 4.0/3.8/3.3R keys can no longer re-expand Wave2/3.
+    // - Lower later Curve values (2.5R, 0.8R, etc.) still apply normally.
+    // - Canonical Energy / exp(-gamma*t) / Hn remain the actual continuous
+    //   shrink authority inside EvaluatePresentationCenterTravelAtTime().
+    //
+    // This is intentionally stateless. A "previous resolved height" latch was
+    // not added because this evaluator is also used while building/predicting
+    // mesh samples at arbitrary times; stateful clamping would make geometry
+    // depend on evaluation order rather than physics state.
+    return
+        Mathf.Min(
+            wave1CeilingR,
+            curveCeilingR);
 }
 
 
@@ -1953,6 +2012,11 @@ private bool CreateFullSplineEnvelopeMesh(
     generatedMeshTransform.localRotation = Quaternion.identity;
     generatedMeshTransform.localScale = Vector3.one;
 
+    float initialUpperNormalInsetMeters =
+        Mathf.Max(
+            0f,
+            upperColliderBaselineNormalInsetMeters);
+
     float initialUpperYOffsetY =
         upperColliderCenterYOffsetY;
 
@@ -1962,6 +2026,7 @@ private bool CreateFullSplineEnvelopeMesh(
             A0,
             decayRatePerSecondValue,
             equalizerRadius,
+            initialUpperNormalInsetMeters,
             initialUpperYOffsetY);
 
     if (!mesh)
@@ -1989,6 +2054,9 @@ private bool CreateFullSplineEnvelopeMesh(
     generatedMeshCollider.isTrigger =
         false;
 
+    ApplyRuntimeUpperPhysicMaterial(
+        generatedMeshCollider);
+
     meshObject.AddComponent<BallVisualEnvelopeSurfaceMarker>();
 
     // Floating Rigidbody版ではconcave MeshCollider Trigger Sensorを作りません。
@@ -2011,6 +2079,8 @@ private bool CreateFullSplineEnvelopeMesh(
 
     generatedMesh = mesh;
 
+    appliedUpperColliderBaselineNormalInsetMeters =
+        initialUpperNormalInsetMeters;
     appliedUpperColliderCenterYOffsetY =
         initialUpperYOffsetY;
 
@@ -2020,6 +2090,7 @@ private bool CreateFullSplineEnvelopeMesh(
         $"[ENVELOPE FLOATING RIDE READY] " +
         $"wave={presentationWaveIndex + 1} " +
         $"centerTravel={presentationCurrentResolvedTravelR:F3}R " +
+        $"upperNormalInset={appliedUpperColliderBaselineNormalInsetMeters:F4}m " +
         $"upperYOffsetY={appliedUpperColliderCenterYOffsetY:F4}m " +
         $"ceiling={presentationCurrentCeilingR:F3}R " +
         $"Hn={presentationCurrentLossHnR:F3}R " +
@@ -2828,17 +2899,39 @@ public bool SpatialWaveAuthorityActive =>
 public float SpatialWaveAuthorityProgress01 =>
     spatialWaveAuthorityProgress01;
 
+public float RequestedUpperColliderBaselineNormalInsetMeters =>
+    Mathf.Max(0f, upperColliderBaselineNormalInsetMeters);
+
 public float RequestedUpperColliderCenterYOffsetY =>
     upperColliderCenterYOffsetY;
+
+public float AppliedUpperColliderBaselineNormalInsetMeters =>
+    appliedUpperColliderBaselineNormalInsetMeters;
 
 public float AppliedUpperColliderCenterYOffsetY =>
     appliedUpperColliderCenterYOffsetY;
 
-private Vector3 ResolveUpperColliderWorldYOffset()
+private Vector3 ResolveUpperColliderWorldOffset(
+    Vector3 normalVisual)
 {
-    // Equalizer/追跡側は実MeshColliderと同時にCommitされた値だけを見る。
-    // World-Yだけを動かすためX/Zへは一切成分を入れない。
-    return Vector3.up * appliedUpperColliderCenterYOffsetY;
+    if (normalVisual.sqrMagnitude <= 0.000001f)
+        return Vector3.up * appliedUpperColliderCenterYOffsetY;
+
+    normalVisual.Normalize();
+
+    Vector3 stableNormalInset =
+        -normalVisual *
+        Mathf.Max(
+            0f,
+            appliedUpperColliderBaselineNormalInsetMeters);
+
+    Vector3 residualWorldYTrim =
+        Vector3.up *
+        appliedUpperColliderCenterYOffsetY;
+
+    return
+        stableNormalInset +
+        residualWorldYTrim;
 }
 
 
@@ -2910,7 +3003,8 @@ public bool TryGetFloatingRideFrame(
     // 4R-Hn自体は変えず、そのUpper接触中心だけをWorld-Yへ平行移動する。
     // 平面を平行移動しても面法線は変わらないため、Stable-Nは回転させない。
     Vector3 upperWorldYOffset =
-        ResolveUpperColliderWorldYOffset();
+        ResolveUpperColliderWorldOffset(
+            normalVisual);
 
     Vector3 unshiftedUpperCenterVisual =
         lowerCenterVisual +
@@ -3145,108 +3239,89 @@ public void SetUpperEnvelopeSensorOccupied(
 
 
 /// <summary>
-/// Spatial Monotonic Holdへ入った瞬間の実験用。
-/// 現在のUpper Envelope MeshColliderを1 FixedUpdateだけ
-/// convex Triggerへ変更し、次のFixedUpdateで元のconcave Solidへ戻します。
+/// 旧Monotonic Trigger Pulse API互換。
+/// Build Dでは実Upperをconvex Triggerへ一時変換しません。
+/// Mesh recook由来の副作用に対して効果が薄かったためno-opです。
 /// </summary>
 public bool PulseCurrentEnvelopeTriggerOneFixedStep(
     string reason = "SpatialMonotonicBackstep")
 {
-    if (!Application.isPlaying ||
-        !envelopeBuilt ||
-        !generatedMeshCollider ||
-        !generatedMeshCollider.sharedMesh)
-    {
-        return false;
-    }
-
-    // 同じMonotonic episode中の多重pulseは作らない。
-    if (monotonicTriggerPulseActive)
-        return true;
-
-    monotonicTriggerPulsePreviousConvex =
-        generatedMeshCollider.convex;
-    monotonicTriggerPulsePreviousTrigger =
-        generatedMeshCollider.isTrigger;
-    monotonicTriggerPulseReason =
-        string.IsNullOrEmpty(reason)
-            ? "SpatialMonotonicBackstep"
-            : reason;
-
-    bool shouldBeEnabled =
-        upperEnvelopeSolidRequested;
-
-    // MeshColliderはisTrigger=trueにするにはconvexが必須。
-    // いったん無効化してからConvex recook -> Trigger化する。
-    generatedMeshCollider.enabled = false;
-    generatedMeshCollider.isTrigger = false;
-    generatedMeshCollider.convex = true;
-    generatedMeshCollider.isTrigger = true;
-    generatedMeshCollider.enabled = shouldBeEnabled;
-
-    upperEnvelopeSolidEnabled = false;
-    monotonicTriggerPulseActive = true;
-    monotonicTriggerPulseRestoreFixedTime =
-        Time.fixedTime +
-        Mathf.Max(Time.fixedDeltaTime, 0.000001f) * 0.5f;
-    monotonicTriggerPulseCount++;
-
-    Physics.SyncTransforms();
-
-    Debug.Log(
-        $"[ENVELOPE MONOTONIC TRIGGER PULSE] " +
-        $"trigger=True convex=True " +
-        $"enabled={generatedMeshCollider.enabled} " +
-        $"restoreAt={monotonicTriggerPulseRestoreFixedTime:F4} " +
-        $"reason={monotonicTriggerPulseReason} " +
-        $"count={monotonicTriggerPulseCount}",
-        this);
-
-    return
-        generatedMeshCollider.convex &&
-        generatedMeshCollider.isTrigger;
+    return false;
 }
 
 
-private void RestoreCurrentEnvelopeAfterMonotonicTriggerPulse()
+private PhysicMaterial GetOrCreateRuntimeUpperPhysicMaterial()
 {
-    if (!monotonicTriggerPulseActive)
+    if (!runtimeUpperPhysicMaterial)
+    {
+        runtimeUpperPhysicMaterial =
+            new PhysicMaterial(
+                "Runtime_EqualizerUpper_Frictionless");
+    }
+
+    runtimeUpperPhysicMaterial.dynamicFriction =
+        Mathf.Clamp01(
+            upperDynamicFriction);
+
+    runtimeUpperPhysicMaterial.staticFriction =
+        Mathf.Clamp01(
+            upperStaticFriction);
+
+    runtimeUpperPhysicMaterial.bounciness =
+        Mathf.Clamp01(
+            upperBounciness);
+
+    runtimeUpperPhysicMaterial.frictionCombine =
+        PhysicMaterialCombine.Minimum;
+
+    runtimeUpperPhysicMaterial.bounceCombine =
+        PhysicMaterialCombine.Minimum;
+
+    return runtimeUpperPhysicMaterial;
+}
+
+
+private void ApplyRuntimeUpperPhysicMaterial(
+    Collider upperCollider)
+{
+    if (!upperCollider)
         return;
 
-    monotonicTriggerPulseActive = false;
+    if (!useRuntimeUpperPhysicMaterial)
+    {
+        if (upperCollider.sharedMaterial ==
+            runtimeUpperPhysicMaterial)
+        {
+            upperCollider.sharedMaterial = null;
+        }
 
+        return;
+    }
+
+    upperCollider.sharedMaterial =
+        GetOrCreateRuntimeUpperPhysicMaterial();
+}
+
+
+private void RefreshRuntimeUpperPhysicMaterial()
+{
     if (!generatedMeshCollider)
         return;
 
-    generatedMeshCollider.enabled = false;
-    generatedMeshCollider.isTrigger = false;
-    generatedMeshCollider.convex =
-        monotonicTriggerPulsePreviousConvex;
-    generatedMeshCollider.isTrigger =
-        monotonicTriggerPulsePreviousTrigger;
-    generatedMeshCollider.enabled =
-        upperEnvelopeSolidRequested;
-
-    upperEnvelopeSolidEnabled =
-        generatedMeshCollider.enabled &&
-        !generatedMeshCollider.isTrigger;
-
-    // 通常仕様へ戻ったのでEqualizer境界ownershipも復元する。
-    ConfigureEqualizerOnlyBoundaryCollider(
+    ApplyRuntimeUpperPhysicMaterial(
         generatedMeshCollider);
-    ForceEnableEqualizerBoundaryCollision(
-        generatedMeshCollider,
-        "MonotonicTriggerPulseRestore");
+}
 
-    Physics.SyncTransforms();
 
-    Debug.Log(
-        $"[ENVELOPE MONOTONIC TRIGGER RESTORE] " +
-        $"trigger={generatedMeshCollider.isTrigger} " +
-        $"convex={generatedMeshCollider.convex} " +
-        $"solid={upperEnvelopeSolidEnabled} " +
-        $"reason={monotonicTriggerPulseReason}",
-        this);
+private void OnDestroy()
+{
+    if (runtimeUpperPhysicMaterial)
+    {
+        Destroy(
+            runtimeUpperPhysicMaterial);
+
+        runtimeUpperPhysicMaterial = null;
+    }
 }
 
 
@@ -3258,15 +3333,9 @@ public void SetUpperEnvelopeSolidEnabled(
 
     if (!generatedMeshCollider)
         return;
-    if (monotonicTriggerPulseActive)
-    {
-        // Pulse中はTrigger状態を維持し、次のrestore時にrequested状態へ戻す。
-        generatedMeshCollider.enabled = enabled;
-        upperEnvelopeSolidEnabled = false;
-        return;
-    }
-
     generatedMeshCollider.isTrigger = false;
+    ApplyRuntimeUpperPhysicMaterial(
+        generatedMeshCollider);
     generatedMeshCollider.enabled = enabled;
     upperEnvelopeSolidEnabled = enabled;
 
@@ -3625,6 +3694,7 @@ private Mesh BuildFullSplineEnvelopeMeshAsset(
     float A0,
     float decayRatePerSecondValue,
     float equalizerRadius,
+    float upperColliderNormalInsetMeters,
     float upperColliderYOffsetY)
 {
     if (!meshTransform ||
@@ -3738,15 +3808,28 @@ private Mesh BuildFullSplineEnvelopeMeshAsset(
         Vector3 rightWorld =
             correspondSubject.MapPoint(rightPhysics);
 
-        // Upper Colliderの唯一の配置補正。
-        // すべての頂点へ同じWorld-Yを足すため、始点/終点を含むX/Z、
-        // 4R-Hnの形状、面法線、幅、Spline progressは一切変化しない。
-        Vector3 upperWorldYOffset =
-            Vector3.up * upperColliderYOffsetY;
+        Vector3 normalWorld =
+            correspondSubject.MapDirection(
+                normalPhysics);
 
-        centerWorld += upperWorldYOffset;
-        leftWorld += upperWorldYOffset;
-        rightWorld += upperWorldYOffset;
+        if (normalWorld.sqrMagnitude <= 0.000001f)
+            return null;
+
+        normalWorld.Normalize();
+
+        // 旧 -0.09m World-Yの有効なNormal clearanceだけを残す。
+        // Tangent方向への不要な前後シフトは作らない。
+        Vector3 upperWorldOffset =
+            -normalWorld *
+                Mathf.Max(
+                    0f,
+                    upperColliderNormalInsetMeters) +
+            Vector3.up *
+                upperColliderYOffsetY;
+
+        centerWorld += upperWorldOffset;
+        leftWorld += upperWorldOffset;
+        rightWorld += upperWorldOffset;
 
         if (hasPreviousCenter)
         {
@@ -3918,6 +4001,9 @@ public void ClearEnvelope()
     presentationCurrentLegacyTimeRetention01 = 1f;
     presentationCurrentRawLegacyRetention01 = 1f;
     presentationCurrentAppliedRetention01 = 1f;
+
+    appliedUpperColliderBaselineNormalInsetMeters = 0f;
+    appliedUpperColliderCenterYOffsetY = 0f;
 
     pendingCanonicalGeometryRebuild = false;
     ResetHybridWaveFeasibilityProfile();
@@ -4818,5 +4904,3 @@ internal sealed class BallVisualEnvelopeSurfaceMarker
 /* */
 
 }
-
-

@@ -82,34 +82,37 @@ public class AndroidOneOnly : MonoBehaviour
 
     }*/
     
-    void OnApplicationQuit()
+    void OnApplicationFocus(bool hasFocus)
     {
-       
-        PlayerPrefs.SetInt(CallForCurrrentScore, MainGameManager.PointToPlane);
-        PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
-
-
-        if (MainGameManager.PointToPlane >bestScore)
+        if (!hasFocus)
         {
-            PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
+            PlayerPrefs.SetInt(CallForCurrrentScore, MainGameManager.PointToPlane);
+            PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
+
+
+            if (MainGameManager.PointToPlane > bestScore)
+            {
+                PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
+            }
+
+            string stringPlus = "";
+            for (int i = 0; i < LinenapItemList.Count; i++)
+            {
+                stringPlus += LinenapItemList[i].ToString();
+            }
+
+            PlayerPrefs.SetString(itemList, stringPlus);
+            PlayerPrefs.SetString(ArchiveBallItem, activeBallMaterial);
+            PlayerPrefs.SetInt(CallForCurrrentCoin, pharseCoin);
+            //PlayerPrefs.SetInt(BallNumber,UsingBallNow);
+
+
+
+            PlayerPrefs.Save();
+
+            Debug.Log(
+                $"Pause時に保存: PointToPlane={MainGameManager.PointToPlane}"
+            );
         }
-
-        string stringPlus = "";
-        for (int i = 0; i < LinenapItemList.Count; i++)
-        {
-            stringPlus += LinenapItemList[i].ToString();
-        }
-        PlayerPrefs.SetString(itemList,stringPlus);
-        PlayerPrefs.SetString(ArchiveBallItem,activeBallMaterial);
-        PlayerPrefs.SetInt(CallForCurrrentCoin, 1000);
-        //PlayerPrefs.SetInt(BallNumber,UsingBallNow);
-        
-
-
-        PlayerPrefs.Save();
-
-        Debug.Log(
-            $"Pause時に保存: PointToPlane={MainGameManager.PointToPlane}"
-        );
     }
 }

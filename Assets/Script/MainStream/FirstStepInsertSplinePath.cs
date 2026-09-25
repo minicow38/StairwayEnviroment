@@ -104,8 +104,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     static readonly int[] InitialStartPattern =
     {
-        -1, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, -1, 0,-1
+        -1, 0, 0, -1, 0, -1, 0, -1, 0,
+        -1, 0, -1, 0, -1, 0, -1,0
     };
 
     public int startDashDot = 0;
@@ -220,12 +220,28 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         if (MainGameManager.OpenChunkStage)
         {
+            
+
             MainGameManager.OpenChunkStage = false;
             rebuilding = true;
 
             Start();
 
             rebuilding = false;
+        }
+
+        if (MainGameManager.OnDead)
+        {
+            resumeOnly.BeginCommandOnTouch = false;
+
+            MainGameManager.TopTitle.SetActive(true);
+            MainGameManager.PreviewIconRoot.SetActive(true);
+            MainGameManager.TopLiteral.SetActive(true);
+            MainGameManager.PlayButton.SetActive(true);
+            MainGameManager.Userbility.SetActive(false);
+            Start();
+            rebuilding = false;
+
         }
     }
 
@@ -1854,4 +1870,3 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
 
 }
-

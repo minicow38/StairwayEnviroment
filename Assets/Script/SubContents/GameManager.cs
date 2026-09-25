@@ -1,3 +1,4 @@
+using System.Linq;
 using UnityEngine;
 using TMPro;
 public class MainGameManager : MonoBehaviour
@@ -41,8 +42,10 @@ public class MainGameManager : MonoBehaviour
         LimitTouchingphase = 0;
         PointToPlane = CurrentPointToPlane;
         core = GameObject.Find("InSubject").transform.GetComponent<SlopeStickCore>();
-         VisualPlayerChildCollider=GameObject.Find("VisualPlayerRoot").transform.GetComponentsInChildren<SphereCollider>();
-
+        var array=GameObject.Find("VisualPlayerRoot").transform.GetComponentsInChildren<SphereCollider>();
+        VisualPlayerChildCollider = array
+             .Where(x => x != null && x.transform.name != "subject")
+             .ToArray();
         mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();
         
@@ -63,6 +66,15 @@ public class MainGameManager : MonoBehaviour
         displayCoin = GameObject.Find("StairwayUserbility/Coin/").transform.GetComponent<TextMeshProUGUI>();
         Userbility = GameObject.Find("GameUI/StairwayUserbility").transform.gameObject;
         Userbility.transform.gameObject.SetActive(false);
+        Material activeMaterial =
+            Resources.Load<Material>(
+                "BallCollections/" + AndroidOneOnly.activeBallMaterial
+            );
+
+        GameObject.Find("VisualPlayerRoot/BallVisualEqualizer")
+            .GetComponent<MeshRenderer>()
+            .material = new Material(activeMaterial);
+
     }
 
     // Update is called once per frame

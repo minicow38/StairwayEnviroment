@@ -307,6 +307,11 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 13
       objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 77043b2f0dd5c96489adab4860045405,
+        type: 3}
+      propertyPath: m_TagString
+      value: TyEnemy
+      objectReference: {fileID: 0}
     - target: {fileID: 1082271958561512970, guid: 77043b2f0dd5c96489adab4860045405,
         type: 3}
       propertyPath: m_Layer
@@ -585,6 +590,7 @@ MonoBehaviour:
   rb: {fileID: 0}
   ContactNum: 
   AroundStairway: []
+  ExpendScopePlayer: []
   resouceY: []
   AroundStairwayPhysics: []
   knockBackPower: 60

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.Text.RegularExpressions;
+using Unity.Mathematics;
 using Unity.VisualScripting;
 using UnityEditor.Rendering;
 
@@ -11,15 +12,19 @@ public class ActionDall : MonoBehaviour
 {
     public Rigidbody rb;
     public string ContactNum = "";
-    public  Collider[] AroundStairway;
+    public Collider[] AroundStairway;
+    public Collider[] ExpendScopePlayer;
     public float[] resouceY;
+    public Transform DollAttachGrond;
     public List<GameObject> AroundStairwayPhysics;
-    
+    public Vector3 angle;
     [Header("KnockBack")]
     public float knockBackPower = 60f;
     public float knockUpPower = 25f;
     public float knockTorque = 3f;
 
+    public bool StimulateSeekingAnimation = false;
+    public bool NonComeBackPhysicX = false;
     private bool knockedBack = false;
     
     
@@ -41,46 +46,58 @@ public class ActionDall : MonoBehaviour
             AroundStairway = Physics.OverlapSphere(transform.position, 6f);
             for (int i = 0; i < AroundStairway.Length; i++)
             {
-                if (Regex.Match(AroundStairway[i].name, @"([a-zA-Z]+)(\d*)_(\d*)_(Physics)").Success)
+                if (Regex.Match(AroundStairway[i].name, @"([a-zA-Z]+)(\d*)_(\d*)_(Render)").Success)
                 {
-                    Match match = Regex.Match(AroundStairway[i].name, @"([a-zA-Z]+)(\d*)_(\d*)_(Physics)");
+                    Match match = Regex.Match(AroundStairway[i].name, @"([a-zA-Z]+)(\d*)_(\d*)_(Render)");
                     AroundStairwayPhysics.Add(AroundStairway[i].transform.gameObject);
-                    
+                    var turn_name=""+ match.Groups[1] + match.Groups[2] + "_" + match.Groups[3] + "_" + "Physics";
+                    var obj=GameObject.Find("" + turn_name).transform.gameObject;
+                   angle=obj.transform.localEulerAngles;
+                   transform.rotation = Quaternion.Euler(0, angle.y, 0);
+                   //rb.constraints = RigidbodyConstraints.FreezePositionY;
+                    Debug.Log("");
+
                 }
+                
             }
-
-
-           /* if (AroundStairwayRenderer.Count== 1)
-            {
-                Physics.IgnoreCollision(transform.GetComponent<CapsuleCollider>(),
-                    AroundStairwayRenderer[0].transform.GetComponent<MeshCollider>());
-            }
-            else
-            {
-                Physics.IgnoreCollision(transform.GetComponent<CapsuleCollider>(),
-                    AroundStairwayRenderer[1].transform.GetComponent<MeshCollider>());
-            }*/
             
-            /*Physics.IgnoreCollision(transform.GetComponent<CapsuleCollider>(), 
-                GameObject.Find("InSubject").transform.GetComponent<SphereCollider>());*/
             for (int incentBall = 0;  incentBall<MainGameManager.VisualPlayerChildCollider.Length; incentBall++)
             {
                 Physics.IgnoreCollision(transform.GetComponent<CapsuleCollider>(),
                     MainGameManager.VisualPlayerChildCollider[incentBall].GetComponent<SphereCollider>());
             }
-            /*rb=PhyOnMob.transform.AddComponent<Rigidbody>();
-            rb.isKinematic = true;
-            PhyOnMob.transform.SetParent(AroundStairwayPhysics[1].transform);*/
+        }
+        else
+        {
+            ExpendScopePlayer = Physics.OverlapSphere(transform.position, 12f);
 
-            Debug.Log(""); 
-            //transform.GetComponent<CapsuleCollider>().isTrigger = true;
+            foreach (Collider AnotherNascent in ExpendScopePlayer)
+            {
+                if (AnotherNascent.transform.CompareTag("SubjectVisual"))
+                {
+                    transform.rotation = Quaternion.Euler(0, angle.y, 0);
+                    if (!StimulateSeekingAnimation)
+                    {
+
+                        DollAttachGrond.transform.GetComponent<MeshCollider>().enabled = true;
+                        
+                        StimulateSeekingAnimation = true;
+                    }
+
+                }
+            }
+
         }
     }
+     
+   
 
+    
     void OnTriggerEnter(Collider other)
     {
-        if (other.transform.name == "InSubject")
+        if (other.transform.name == "subject")
         {
+
             if (knockedBack)
                 return;
 
@@ -121,17 +138,16 @@ public class ActionDall : MonoBehaviour
                 ForceMode.Impulse
             );
         }
-    }
-    // Update is called once per frame
-    void OnCollisionEnter(Collision col)
+    }void OnCollisionEnter(Collision col)
     {
-        if (col.transform.name != "InSubject")
+        if (col.transform.CompareTag("plane")&&!NonComeBackPhysicX)
         {
+
             Match match;
             int currrentArcHit = 0;
 
             match = Regex.Match(AroundStairwayPhysics[1].transform.name, @"^([a-zA-Z]+)(\d*)_(\d*)_(Physics)");
-
+            
 
             for (int arcHit = 0; arcHit < AroundStairwayPhysics.Count; arcHit++)
             {
@@ -141,17 +157,19 @@ public class ActionDall : MonoBehaviour
                     break;
                 }
             }
-
+            transform.GetComponent<CapsuleCollider>().isTrigger = true;
             var localAngle = col.transform.localEulerAngles;
             transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y + 180, localAngle.z);
-            transform.GetComponent<CapsuleCollider>().isTrigger = true;
-            rb.constraints = RigidbodyConstraints.FreezePositionY;
+            DollAttachGrond = col.transform;
+
+            NonComeBackPhysicX = true;
 
 
             int fit = 0;
         }
-
-        Debug.Log("");
+        rb.constraints = RigidbodyConstraints.FreezePositionY;
     }
+    // Update is called once per frame
+    
     
 }

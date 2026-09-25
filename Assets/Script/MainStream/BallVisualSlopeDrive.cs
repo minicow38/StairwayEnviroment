@@ -6,7 +6,7 @@ using Sirenix.OdinInspector;
 [RequireComponent(typeof(Rigidbody), typeof(SphereCollider))]
 public class BallVisualSlopeDrive : MonoBehaviour
 {
-    public const string RuntimeBuildId = "BallVisualSlopeDrive-TurnHandoff-v7";
+    public const string RuntimeBuildId = "BallVisualSlopeDrive-SelectiveNormalFlightGuard-v14";
 
     private enum MotionPhase
     {
@@ -49,12 +49,62 @@ public class BallVisualSlopeDrive : MonoBehaviour
     [Min(0.01f)]
     [SerializeField] private float oscillationReferenceHeight = 0.45f;
 
+    [Header("Selective Normal Flight Guard")]
+    [Tooltip(
+        "ON: 旧v7の位置差/Tangent/Side/回転/Collider反射は残し、" +
+        "Subject相対Normal方向の明確な飛翔だけを選択的に抑えます。" +
+        "4R付近の小さな超過にはSoft Kneeで触れず、巨大Impulseだけ強く止めます。")]
+    [SerializeField] private bool enableNormalFlightGuard = true;
+
+    [Tooltip("Normal方向の基準上限[球半径R]。この値を少し越えただけでは即Clampしません。")]
+    [Min(1f)]
+    [SerializeField] private float normalFlightCeilingR = 4f;
+
+    [Tooltip(
+        "飛翔判定の短期予測時間[s]。完全Apexではなく、画面上で飛翔へ移る直前だけを先読みします。")]
+    [Range(0.02f, 0.15f)]
+    [SerializeField] private float normalFlightPredictionHorizonSeconds = 0.08f;
+
+    [Tooltip("4Rをこの量だけ越えるまでは荒さとして許容し、速度Clampを開始しません[R]。")]
+    [Range(0f, 0.50f)]
+    [SerializeField] private float normalFlightSoftOvershootStartR = 0.15f;
+
+    [Tooltip("4Rからこの量を越えるとNormal余剰速度を100%制限します[R]。Soft開始値より大きくします。")]
+    [Range(0.10f, 2.00f)]
+    [SerializeField] private float normalFlightFullOvershootR = 0.75f;
+
+    [Tooltip(
+        "Missile中は毎FixedUpdateの細かなClampを行わず、予測高さがこの値以上の逃走だけEmergency Clampします[R]。")]
+    [Min(4f)]
+    [SerializeField] private float normalFlightMissileEmergencyR = 5f;
+
+    [Tooltip("この値以下のNormal速度補正量は数値ノイズとして無視します[m/s]。")]
+    [Range(0f, 0.25f)]
+    [SerializeField] private float normalFlightVelocityDeadBand = 0.05f;
+
+    [Header("Selective Normal Flight Guard - Runtime Read Only")]
+    [SerializeField] private bool normalFlightGuardApplied;
+    [SerializeField] private string normalFlightLastSource = "";
+    [SerializeField] private float normalFlightHeightR;
+    [SerializeField] private float normalFlightOutwardVN;
+    [SerializeField] private float normalFlightSafeVN;
+    [SerializeField] private float normalFlightPredictedHeightR;
+    [SerializeField] private float normalFlightResponseStrength01;
+    [SerializeField] private float normalFlightRemovedVN;
+    [SerializeField] private int normalFlightClampCount;
+    [SerializeField] private int normalFlightContactClampCount;
+    [SerializeField] private int normalFlightMissileClampCount;
+    [SerializeField] private int normalFlightEmergencyClampCount;
+    [SerializeField] private int normalFlightArtificialSuppressionCount;
+    [SerializeField] private float normalFlightLastArtificialNormalAcceleration;
+    [SerializeField] private Vector3 normalFlightStableNormal = Vector3.up;
+
     [Header("Terminal Compatibility")]
     [Tooltip("Legacy terminal timing override. Keep false during normal play.")]
     public bool RawTimeJurge = false;
 
-    [Header("2nd POP - Missile Method")]
-    [Tooltip("Limitでミサイル降下法へ渡す上向きY速度[m/s]")]
+    [Header("Missile Method - Legacy Expressive Handoff")]
+    [Tooltip("旧v7の荒さ/ゲーム表現を維持するMissile上向きY速度[m/s]。Normal Flight Guard通過後も従来Handoffを維持します。")]
     [Min(0f)]
     [SerializeField] private float secondPopUpSpeed = 3f;
 
@@ -211,6 +261,11 @@ public class BallVisualSlopeDrive : MonoBehaviour
     private Vector3 currentSurfaceNormal = Vector3.up;
     private Vector3 currentSlopeTangent = Vector3.forward;
 
+    // Incident開始時の安定Slope Normalを、同じIncident～Missile初期まで固定して使う。
+    // 途中のSpline/section更新でGuard基準が瞬間的に切り替わることを防ぐ。
+    private Vector3 flightGuardNormal = Vector3.up;
+    private bool flightGuardNormalValid;
+
     // ---------- Natural entry runtime ----------
     // Plane -> Stair入口は軌道を計画しない。
     // この状態はTarget Progress crossingを観測するための最小情報だけを保持する。
@@ -233,6 +288,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
     private float limitCrossingTime = -1f;
     private float limitCrossingAlpha;
     private Vector3 limitCrossingPosition;
+    private Vector3 limitCrossingSubjectPosition;
     private Vector3 limitIncomingVelocity;
     private Vector3 limitReferencePosition;
     private Vector3 limitReferenceVelocity;
@@ -603,9 +659,16 @@ public class BallVisualSlopeDrive : MonoBehaviour
             return;
         }
 
-        // Natural Entry区間。位置/速度のSubject hard syncは禁止。
+        // Natural Entry区間。
+        // 旧v7の位置差/Tangent/Side/回転/Collider反射の荒さは維持する。
+        // 4R付近の微小超過には触れず、短期予測が明確な飛翔へ入った場合だけSoft Kneeで制限する。
         if (motionPhase == MotionPhase.Incident)
         {
+            ApplyCurrentBodyNormalFlightGuard(
+                "IncidentFixedUpdate",
+                countContact: false,
+                countMissile: false);
+
             ObserveIncidentLimitCrossing();
 
             if (motionPhase == MotionPhase.MissileAscent)
@@ -858,6 +921,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         incidentPlanValid = true;
         incidentMaximumObservedPlanarSeparation = 0f;
+        ResetNormalFlightGuardRuntime(clearCounters: false);
+        CaptureFlightGuardNormal();
 
         hasPreviousIncidentSample = true;
         previousIncidentTime = Time.fixedTime;
@@ -951,6 +1016,345 @@ public class BallVisualSlopeDrive : MonoBehaviour
     }
 
 
+    // =====================================================================
+    // Selective Normal Flight Guard
+    // =====================================================================
+    // 旧v7の「荒さ」は位置差/Tangent/Side/回転/Collider反射として残す。
+    // ここでは短期予測で明確なNormal飛翔だけをSoft Kneeで抑え、
+    // Missileの人工加速度は後から速度Clampするのではなく、外向きNormal成分を最初から作らない。
+
+    private void CaptureFlightGuardNormal()
+    {
+        Vector3 normal = currentSurfaceNormal;
+
+        if (normal.sqrMagnitude <= 0.000001f || !IsFinite(normal))
+        {
+            flightGuardNormalValid = false;
+            return;
+        }
+
+        flightGuardNormal = normal.normalized;
+        normalFlightStableNormal = flightGuardNormal;
+        flightGuardNormalValid = true;
+    }
+
+
+    private Vector3 ResolveFlightGuardNormal()
+    {
+        if (flightGuardNormalValid &&
+            flightGuardNormal.sqrMagnitude > 0.000001f &&
+            IsFinite(flightGuardNormal))
+        {
+            return flightGuardNormal.normalized;
+        }
+
+        Vector3 fallback = currentSurfaceNormal;
+        if (fallback.sqrMagnitude <= 0.000001f || !IsFinite(fallback))
+            return Vector3.up;
+
+        return fallback.normalized;
+    }
+
+
+    private bool ApplyCurrentBodyNormalFlightGuard(
+        string source,
+        bool countContact,
+        bool countMissile,
+        bool emergencyOnly = false)
+    {
+        if (!enableNormalFlightGuard ||
+            ballBody == null ||
+            respondSubject == null)
+        {
+            return false;
+        }
+
+        Vector3 candidateVelocity = ballBody.velocity;
+
+        bool limited = ClampNormalFlightVelocity(
+            source,
+            ballBody.position,
+            respondSubject.MappedPosition,
+            ReadMappedInSubjectVelocity(),
+            ref candidateVelocity,
+            logWhenLimited: true,
+            emergencyOnly: emergencyOnly);
+
+        if (!limited)
+            return false;
+
+        ballBody.velocity = candidateVelocity;
+
+        if (countContact)
+            normalFlightContactClampCount++;
+
+        if (countMissile)
+            normalFlightMissileClampCount++;
+
+        if (emergencyOnly)
+            normalFlightEmergencyClampCount++;
+
+        return true;
+    }
+
+
+    private bool ClampNormalFlightVelocity(
+        string source,
+        Vector3 ballPosition,
+        Vector3 subjectPosition,
+        Vector3 subjectVelocity,
+        ref Vector3 candidateVelocity,
+        bool logWhenLimited,
+        bool emergencyOnly = false,
+        bool applyCorrection = true)
+    {
+        normalFlightGuardApplied = false;
+        normalFlightLastSource = source ?? "";
+        normalFlightResponseStrength01 = 0f;
+        normalFlightRemovedVN = 0f;
+
+        if (!enableNormalFlightGuard)
+            return false;
+
+        Vector3 normal = ResolveFlightGuardNormal();
+        if (normal.sqrMagnitude <= 0.000001f ||
+            !IsFinite(normal) ||
+            !IsFinite(ballPosition) ||
+            !IsFinite(subjectPosition) ||
+            !IsFinite(subjectVelocity) ||
+            !IsFinite(candidateVelocity))
+        {
+            return false;
+        }
+
+        float radius = ResolveBallWorldRadius();
+        float ceilingR = Mathf.Max(1f, normalFlightCeilingR);
+        float ceilingMeters = ceilingR * radius;
+
+        float horizon =
+            Mathf.Max(0.001f, normalFlightPredictionHorizonSeconds);
+
+        float normalHeightMeters =
+            Mathf.Max(
+                0f,
+                Vector3.Dot(
+                    ballPosition - subjectPosition,
+                    normal));
+
+        Vector3 relativeVelocity =
+            candidateVelocity - subjectVelocity;
+
+        float outwardNormalSpeed =
+            Mathf.Max(
+                0f,
+                Vector3.Dot(relativeVelocity, normal));
+
+        float gravityTowardSurface =
+            Mathf.Max(
+                0.5f,
+                -Vector3.Dot(Physics.gravity, normal));
+
+        float predictedHeightMeters =
+            normalHeightMeters +
+            outwardNormalSpeed * horizon -
+            0.5f * gravityTowardSurface * horizon * horizon;
+
+        float predictedHeightR = predictedHeightMeters / radius;
+
+        float safeOutwardNormalSpeed;
+
+        if (normalHeightMeters >= ceilingMeters)
+        {
+            safeOutwardNormalSpeed = 0f;
+        }
+        else
+        {
+            safeOutwardNormalSpeed =
+                Mathf.Max(
+                    0f,
+                    (ceilingMeters -
+                     normalHeightMeters +
+                     0.5f * gravityTowardSurface * horizon * horizon) /
+                    horizon);
+        }
+
+        normalFlightHeightR = normalHeightMeters / radius;
+        normalFlightOutwardVN = outwardNormalSpeed;
+        normalFlightSafeVN = safeOutwardNormalSpeed;
+        normalFlightPredictedHeightR = predictedHeightR;
+        normalFlightStableNormal = normal;
+
+        float excessNormalSpeed =
+            outwardNormalSpeed - safeOutwardNormalSpeed;
+
+        if (excessNormalSpeed <= Mathf.Max(0f, normalFlightVelocityDeadBand))
+            return false;
+
+        float responseStrength01;
+
+        if (emergencyOnly)
+        {
+            float emergencyR =
+                Mathf.Max(
+                    ceilingR,
+                    normalFlightMissileEmergencyR);
+
+            if (predictedHeightR < emergencyR)
+                return false;
+
+            responseStrength01 = 1f;
+        }
+        else
+        {
+            float overshootR = predictedHeightR - ceilingR;
+            float softStartR = Mathf.Max(0f, normalFlightSoftOvershootStartR);
+            float fullOvershootR = Mathf.Max(
+                softStartR + 0.001f,
+                normalFlightFullOvershootR);
+
+            if (overshootR <= softStartR)
+                return false;
+
+            float t = Mathf.InverseLerp(
+                softStartR,
+                fullOvershootR,
+                overshootR);
+
+            // SmoothStep: 小さな超過はほぼ触らず、明確な飛翔だけ急速に強くする。
+            responseStrength01 =
+                t * t * (3f - 2f * t);
+        }
+
+        float removedNormalSpeed =
+            excessNormalSpeed * responseStrength01;
+
+        if (removedNormalSpeed <= Mathf.Max(0f, normalFlightVelocityDeadBand))
+            return false;
+
+        normalFlightResponseStrength01 = responseStrength01;
+        normalFlightRemovedVN = removedNormalSpeed;
+
+        if (!applyCorrection)
+            return true;
+
+        candidateVelocity -=
+            normal * removedNormalSpeed;
+
+        normalFlightGuardApplied = true;
+        normalFlightClampCount++;
+
+        if (logWhenLimited && enableDebugLog)
+        {
+            Debug.Log(
+                $"[SELECTIVE NORMAL FLIGHT LIMIT] " +
+                $"source={source} " +
+                $"time={Time.fixedTime:F4} " +
+                $"height={normalFlightHeightR:F3}R " +
+                $"outwardVN={outwardNormalSpeed:F4}m/s " +
+                $"safeVN={safeOutwardNormalSpeed:F4}m/s " +
+                $"removedVN={removedNormalSpeed:F4}m/s " +
+                $"strength={responseStrength01:F3} " +
+                $"predictedHeight={predictedHeightR:F3}R " +
+                $"ceiling={ceilingR:F3}R " +
+                $"emergencyOnly={emergencyOnly} " +
+                $"horizon={horizon:F3}s " +
+                $"normal={normal:F4}",
+                this);
+        }
+
+        return true;
+    }
+
+
+    private Vector3 SuppressOutwardArtificialNormalAcceleration(
+        string source,
+        Vector3 candidateAcceleration)
+    {
+        if (!enableNormalFlightGuard || !IsFinite(candidateAcceleration))
+            return candidateAcceleration;
+
+        Vector3 normal = ResolveFlightGuardNormal();
+        if (normal.sqrMagnitude <= 0.000001f || !IsFinite(normal))
+            return candidateAcceleration;
+
+        float outwardNormalAcceleration =
+            Vector3.Dot(candidateAcceleration, normal);
+
+        if (outwardNormalAcceleration <= 0f)
+            return candidateAcceleration;
+
+        Vector3 corrected =
+            candidateAcceleration -
+            normal * outwardNormalAcceleration;
+
+        normalFlightArtificialSuppressionCount++;
+        normalFlightLastArtificialNormalAcceleration = outwardNormalAcceleration;
+        normalFlightLastSource = source ?? "";
+        normalFlightStableNormal = normal;
+
+        if (enableDebugLog &&
+            fixedFrameCounter % Mathf.Max(1, logEveryFixedFrames) == 0)
+        {
+            Debug.Log(
+                $"[MISSILE ARTIFICIAL NORMAL SUPPRESSED] " +
+                $"source={source} " +
+                $"time={Time.fixedTime:F4} " +
+                $"removedA={outwardNormalAcceleration:F4}m/s2 " +
+                $"normal={normal:F4}",
+                this);
+        }
+
+        return corrected;
+    }
+
+
+    private float ResolveBallWorldRadius()
+    {
+        if (ballCollider == null)
+            return 0.5f;
+
+        Vector3 scale =
+            ballCollider.transform.lossyScale;
+
+        float maximumScale =
+            Mathf.Max(
+                Mathf.Abs(scale.x),
+                Mathf.Abs(scale.y),
+                Mathf.Abs(scale.z));
+
+        return Mathf.Max(
+            0.0001f,
+            ballCollider.radius *
+            Mathf.Max(
+                0.0001f,
+                maximumScale));
+    }
+
+
+    private void ResetNormalFlightGuardRuntime(
+        bool clearCounters)
+    {
+        normalFlightGuardApplied = false;
+        normalFlightLastSource = "";
+        normalFlightHeightR = 0f;
+        normalFlightOutwardVN = 0f;
+        normalFlightSafeVN = 0f;
+        normalFlightPredictedHeightR = 0f;
+        normalFlightResponseStrength01 = 0f;
+        normalFlightRemovedVN = 0f;
+        normalFlightLastArtificialNormalAcceleration = 0f;
+
+        if (!clearCounters)
+            return;
+
+        normalFlightClampCount = 0;
+        normalFlightContactClampCount = 0;
+        normalFlightMissileClampCount = 0;
+        normalFlightEmergencyClampCount = 0;
+        normalFlightArtificialSuppressionCount = 0;
+    }
+
+
     private void ObserveIncidentLimitCrossing()
     {
         if (!incidentPlanValid)
@@ -1030,13 +1434,28 @@ public class BallVisualSlopeDrive : MonoBehaviour
             currentSubjectPosition,
             limitCrossingAlpha);
 
+        limitCrossingSubjectPosition = crossingSubjectPosition;
+
         limitReferencePosition = incidentTargetPosition;
         limitReferenceVelocity = Vector3.Lerp(
             previousIncidentSubjectVelocity,
             currentSubjectVelocity,
             limitCrossingAlpha);
 
-        // FixedUpdate内の真のcrossing位置へ戻すだけで、SubjectへTeleportしない。
+        // Target crossingでは速度を書き換えない。
+        // v13ではBoundary Clampが実ログ上ほぼ発火せず、直後のMissileEntry Clampと役割が重複したため、
+        // ここは診断だけにして最終速度制御をMissileEntryへ一本化する。
+        Vector3 boundaryDiagnosticVelocity = limitIncomingVelocity;
+        bool boundaryWouldLimit = ClampNormalFlightVelocity(
+            "TargetCrossingDiagnostic",
+            limitCrossingPosition,
+            crossingSubjectPosition,
+            limitReferenceVelocity,
+            ref boundaryDiagnosticVelocity,
+            logWhenLimited: false,
+            emergencyOnly: false,
+            applyCorrection: false);
+
         ballBody.position = limitCrossingPosition;
         ballBody.velocity = limitIncomingVelocity;
 
@@ -1068,6 +1487,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 $"verticalError={verticalError:F4} " +
                 $"relativeHeightAtLimit={relativeHeightAtLimit:F4} " +
                 $"relativeVelocityAtLimit={relativeVelocityAtLimit:F4} " +
+                $"normalHeight={normalFlightHeightR:F3}R " +
+                $"outwardVN={normalFlightOutwardVN:F4}m/s " +
+                $"safeVN={normalFlightSafeVN:F4}m/s " +
+                $"predictedHeight={normalFlightPredictedHeightR:F3}R " +
+                $"removedVN={normalFlightRemovedVN:F4}m/s " +
+                $"normalWouldLimit={boundaryWouldLimit} " +
                 $"maxObservedXZSeparation={incidentMaximumObservedPlanarSeparation:F4}m " +
                 $"incomingVelocity={limitIncomingVelocity:F4} " +
                 $"naturalEntryCost={(limitCrossingTime - incidentStartTime):F4}s",
@@ -1121,6 +1546,18 @@ public class BallVisualSlopeDrive : MonoBehaviour
         Vector3 plannedVelocityAfter =
             planarReferenceVelocity +
             Vector3.up * verticalSpeedAfter;
+
+        bool missileEntryLimited = ClampNormalFlightVelocity(
+            "MissileEntry",
+            limitCrossingPosition,
+            limitCrossingSubjectPosition,
+            limitReferenceVelocity,
+            ref plannedVelocityAfter,
+            logWhenLimited: true);
+
+        if (missileEntryLimited)
+            normalFlightMissileClampCount++;
+
         Vector3 deltaVelocity = plannedVelocityAfter - velocityBefore;
         ballBody.AddForce(deltaVelocity, ForceMode.VelocityChange);
 
@@ -1169,6 +1606,14 @@ public class BallVisualSlopeDrive : MonoBehaviour
         float dt = Mathf.Max(Time.fixedDeltaTime, 0.000001f);
         missileElapsed = Mathf.Max(0f, Time.fixedTime - missileStartTime);
 
+        // Missile中は4R付近の小さな揺れを毎FixedUpdateで削らない。
+        // 5R級の明確な逃走だけEmergencyとして止める。
+        ApplyCurrentBodyNormalFlightGuard(
+            "MissileAscentEmergency",
+            countContact: false,
+            countMissile: true,
+            emergencyOnly: true);
+
         Vector3 subjectPosition = respondSubject.MappedPosition;
         Vector3 subjectVelocity = ReadMappedInSubjectVelocity();
 
@@ -1187,6 +1632,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
         desiredAcceleration = Vector3.ClampMagnitude(
             desiredAcceleration,
             missileAscentMaximumAcceleration);
+
+        // World XZ追従が45度Slope Normalへ人工飛翔を再注入しないよう、
+        // outward Normal加速度だけ生成前に除去する。
+        desiredAcceleration = SuppressOutwardArtificialNormalAcceleration(
+            "MissileAscentDesiredAcceleration",
+            desiredAcceleration);
 
         missileAscentAccelerationState = Vector3.MoveTowards(
             missileAscentAccelerationState,
@@ -1231,7 +1682,13 @@ public class BallVisualSlopeDrive : MonoBehaviour
         float dt = Mathf.Max(Time.fixedDeltaTime, 0.000001f);
         missileElapsed = Mathf.Max(0f, Time.fixedTime - missileStartTime);
 
-        // Keep the successful BallVisual motion formula unchanged.
+        ApplyCurrentBodyNormalFlightGuard(
+            "MissileChaseEmergency",
+            countContact: false,
+            countMissile: true,
+            emergencyOnly: true);
+
+        // 旧v7系のChase式は維持し、外向きSlope Normal人工加速度だけ後段で除去する。
         Vector3 subjectPosition =
             respondSubject.MappedPosition;
 
@@ -1262,6 +1719,10 @@ public class BallVisualSlopeDrive : MonoBehaviour
         desiredAcceleration = Vector3.ClampMagnitude(
             desiredAcceleration,
             missileChaseMaximumAcceleration);
+
+        desiredAcceleration = SuppressOutwardArtificialNormalAcceleration(
+            "MissileChaseDesiredAcceleration",
+            desiredAcceleration);
 
         missileChaseAccelerationState = Vector3.MoveTowards(
             missileChaseAccelerationState,
@@ -1976,7 +2437,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (motionPhase != MotionPhase.ContinuousRejoin)
             return;
 
-        ProcessRelativeHermiteRejoin(isTurnHandoff: false);
+        ProcessRelativeHermiteRejoin(
+            MotionPhase.ContinuousRejoin);
     }
 
     private void ProcessTurnHandoffRejoin()
@@ -1984,18 +2446,19 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (motionPhase != MotionPhase.TurnHandoffRejoin)
             return;
 
-        ProcessRelativeHermiteRejoin(isTurnHandoff: true);
+        ProcessRelativeHermiteRejoin(
+            MotionPhase.TurnHandoffRejoin);
     }
 
-    private void ProcessRelativeHermiteRejoin(bool isTurnHandoff)
+    private void ProcessRelativeHermiteRejoin(
+        MotionPhase expectedPhase)
     {
-        MotionPhase expectedPhase =
-            isTurnHandoff
-                ? MotionPhase.TurnHandoffRejoin
-                : MotionPhase.ContinuousRejoin;
-
         if (motionPhase != expectedPhase)
             return;
+
+        bool isTurnHandoff =
+            expectedPhase ==
+            MotionPhase.TurnHandoffRejoin;
 
         float duration =
             Mathf.Max(
@@ -2091,13 +2554,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 !continuousRejoinWaitingForTurnEndLogged)
             {
                 continuousRejoinWaitingForTurnEndLogged = true;
-                Debug.Log(
-                    $"[{(isTurnHandoff ? "TURN HANDOFF HOLD" : "CONTINUOUS REJOIN TURN HOLD")}] " +
-                    $"time={Time.fixedTime:F4} " +
-                    $"turning={visualTurnActive} " +
-                    $"frameStable={visualFrameStable} " +
-                    $"relativePos={continuousRejoinCurrentLocalOffset.magnitude:F6} " +
-                    $"relativeVel={continuousRejoinCurrentLocalVelocity.magnitude:F6}",
+                Debug.Log($"[{(isTurnHandoff ? "TURN HANDOFF HOLD" : "CONTINUOUS REJOIN TURN HOLD")}] " +
+                          $"time={Time.fixedTime:F4} " +
+                          $"turning={visualTurnActive} " +
+                          $"frameStable={visualFrameStable} " +
+                          $"relativePos={continuousRejoinCurrentLocalOffset.magnitude:F6} " +
+                          $"relativeVel={continuousRejoinCurrentLocalVelocity.magnitude:F6}",
                     this);
             }
 
@@ -2108,8 +2570,13 @@ public class BallVisualSlopeDrive : MonoBehaviour
         subjectVelocity = ReadMappedInSubjectVelocity();
         continuousRejoinCurrentWorldVelocity = subjectVelocity;
 
+        string finalizeSource =
+            isTurnHandoff
+                ? "TurnHandoffRelativeHermite"
+                : "ContinuousRelativeHermite";
+
         if (TryFinalizeRejoinMicroSync(
-                isTurnHandoff ? "TurnHandoffRelativeHermite" : "ContinuousRelativeHermite",
+                finalizeSource,
                 subjectPosition,
                 subjectVelocity,
                 continuousRejoinCurrentWorldPosition,
@@ -2122,10 +2589,16 @@ public class BallVisualSlopeDrive : MonoBehaviour
             if (isTurnHandoff)
                 turnHandoffRequested = false;
 
+
             if (enableDebugLog)
             {
+                string completeLabel =
+                    isTurnHandoff
+                        ? "TURN HANDOFF COMPLETE"
+                        : "CONTINUOUS REJOIN COMPLETE";
+
                 Debug.Log(
-                    $"[{(isTurnHandoff ? "TURN HANDOFF COMPLETE" : "CONTINUOUS REJOIN COMPLETE")}] " +
+                    $"[{completeLabel}] " +
                     $"time={Time.fixedTime:F4} " +
                     $"posError={positionError:F6} " +
                     $"velError={velocityError:F6} " +
@@ -2138,8 +2611,13 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (enableDebugLog)
         {
+            string waitLabel =
+                isTurnHandoff
+                    ? "TURN HANDOFF FINALIZE WAIT"
+                    : "CONTINUOUS REJOIN FINALIZE WAIT";
+
             Debug.LogWarning(
-                $"[{(isTurnHandoff ? "TURN HANDOFF FINALIZE WAIT" : "CONTINUOUS REJOIN FINALIZE WAIT")}] " +
+                $"[{waitLabel}] " +
                 $"time={Time.fixedTime:F4} " +
                 $"posError={positionError:F6} " +
                 $"velError={velocityError:F6}",
@@ -2397,13 +2875,57 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
+        TryApplyCollisionNormalFlightGuard(
+            collision,
+            "CollisionEnter");
+
         TryRegisterLandingContact(collision, "OnCollisionEnter");
     }
 
     private void OnCollisionStay(Collision collision)
     {
+        // PhysXの衝突応答で巨大Normal impulseが出た場合だけ、その物理ステップで余剰を除去する。
+        TryApplyCollisionNormalFlightGuard(
+            collision,
+            "CollisionStay");
+
         // Enterが方式切替と同FixedUpdateで取りこぼされた場合の保険。
         TryRegisterLandingContact(collision, "OnCollisionStay");
+    }
+
+    private void TryApplyCollisionNormalFlightGuard(
+        Collision collision,
+        string source)
+    {
+        if (!enableNormalFlightGuard ||
+            collision == null ||
+            collision.contactCount <= 0)
+        {
+            return;
+        }
+
+        bool incidentPhase =
+            motionPhase == MotionPhase.Incident;
+
+        bool missilePhase =
+            motionPhase == MotionPhase.MissileAscent ||
+            motionPhase == MotionPhase.MissileChase;
+
+        if (!incidentPhase && !missilePhase)
+            return;
+
+        // Contact法線ではなくIncident開始時に固定したSlope Normalを使う。
+        // 1段ごとの面法線・Upper接触・section切替でGuard方向が揺れるのを防ぐ。
+        string colliderName =
+            collision.transform != null
+                ? collision.transform.name
+                : "Unknown";
+
+        ApplyCurrentBodyNormalFlightGuard(
+            $"{source}:{colliderName}",
+            countContact: true,
+            countMissile: missilePhase,
+            emergencyOnly: missilePhase);
     }
 
     private void TryRegisterLandingContact(Collision collision, string source)
@@ -2535,7 +3057,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (!enableDebugLog || fixedFrameCounter % Mathf.Max(1, logEveryFixedFrames) != 0)
             return;
 
-        Vector3 subjectPosition = respondSubject.MappedPosition;
+       /* Vector3 subjectPosition = respondSubject.MappedPosition;
         Vector3 subjectVelocity = ReadMappedInSubjectVelocity();
 
         Vector3 observedBallPosition =
@@ -2565,6 +3087,21 @@ public class BallVisualSlopeDrive : MonoBehaviour
             $"time={Time.fixedTime:F3} " +
             $"motionPhase={motionPhase} " +
             $"authority={PoseAuthority} " +
+            $"normalGuardApplied={normalFlightGuardApplied} " +
+            $"normalGuardSource={normalFlightLastSource} " +
+            $"normalHeightR={normalFlightHeightR:F3} " +
+            $"outwardVN={normalFlightOutwardVN:F3} " +
+            $"safeVN={normalFlightSafeVN:F3} " +
+            $"predictedHeightR={normalFlightPredictedHeightR:F3} " +
+            $"guardStrength={normalFlightResponseStrength01:F3} " +
+            $"removedVN={normalFlightRemovedVN:F3} " +
+            $"stableNormal={normalFlightStableNormal:F3} " +
+            $"artificialRemovedA={normalFlightLastArtificialNormalAcceleration:F3} " +
+            $"clampCount={normalFlightClampCount} " +
+            $"contactClampCount={normalFlightContactClampCount} " +
+            $"missileClampCount={normalFlightMissileClampCount} " +
+            $"emergencyClampCount={normalFlightEmergencyClampCount} " +
+            $"artificialSuppressCount={normalFlightArtificialSuppressionCount} " +
             $"ballFlat={ballFlatCaptured} " +
             $"naturalEntryAge={incidentAge:F4} " +
             $"incidentTargetError={incidentTargetError:F4} " +
@@ -2575,7 +3112,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
             $"ballVel={observedBallVelocity:F4} " +
             $"velocityError={(subjectVelocity - observedBallVelocity).magnitude:F4} " +
             $"continuityResidual={currentContinuityResidualMeters:F6}",
-            this);
+            this);*/
     }
 
     private void OnDrawGizmosSelected()
@@ -2592,4 +3129,192 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (limitCrossingTime >= 0f)
             Gizmos.DrawWireSphere(limitCrossingPosition, 0.12f);
     }
+    // =====================================================================
+// REPLACE the previous FutureSpline READ ONLY patch INSIDE BallVisualSlopeDrive
+// Recommended location: near TryGetTurnLandingIntent().
+// Do NOT add this as a separate MonoBehaviour/class file.
+// This API never modifies BallVisual, Subject, Equalizer, SlopeStickCore,
+// Rigidbody state, Collider state, or MotionPhase.
+// =====================================================================
+
+[System.Serializable]
+public struct FutureSplineIntent
+{
+    public bool valid;
+    public Vector3 positionVisual;
+    public Vector3 velocityVisual;
+    public float timeFromNowSeconds;
+    [Range(0f, 1f)] public float confidence01;
 }
+
+/// <summary>
+/// Natural Entry / Incident の成功則を READ ONLY の未来境界へ変換する。
+///
+/// 現行 Natural Entry は、入口で位置/速度を書き換えず、Measured Rigidbody state
+/// + Gravity + real Collider を初期条件として使う。未来Spline側ではCollider反力を
+/// 捏造しないため、Slope入口までは支持状態、入口以降の短い時間だけGravityを
+/// 解析積分する。
+///
+/// futureSeconds            : 現在からPFまでの予測時間
+/// supportedBeforeSlopeSeconds : そのうちPlane支持が続く推定時間
+///
+/// これは予測値を返すだけで Rigidbody には一切書き込まない。
+/// </summary>
+public bool TryGetFutureSplineIncidentBoundary(
+    float futureSeconds,
+    float supportedBeforeSlopeSeconds,
+    out FutureSplineIntent intent)
+{
+    intent = default;
+
+    if (ballBody == null)
+        return false;
+
+    float t = Mathf.Max(0f, futureSeconds);
+    float supportedTime = Mathf.Clamp(
+        supportedBeforeSlopeSeconds,
+        0f,
+        t);
+
+    float gravityTime = Mathf.Max(
+        0f,
+        t - supportedTime);
+
+    Vector3 position0 = ballBody.position;
+    Vector3 velocity0 = ballBody.velocity;
+    Vector3 gravity = Physics.gravity;
+
+    // Plane support interval: preserve measured velocity.
+    // Post-entry interval: Natural Entry's gravity-first rule.
+    Vector3 predictedPosition =
+        position0 +
+        velocity0 * t +
+        0.5f * gravity * gravityTime * gravityTime;
+
+    Vector3 predictedVelocity =
+        velocity0 +
+        gravity * gravityTime;
+
+    if (!IsFinite(predictedPosition) ||
+        !IsFinite(predictedVelocity))
+    {
+        return false;
+    }
+
+    intent = new FutureSplineIntent
+    {
+        valid = true,
+        positionVisual = predictedPosition,
+        velocityVisual = predictedVelocity,
+        timeFromNowSeconds = t,
+        confidence01 =
+            gravityTime <= 0.0001f
+                ? 0.95f
+                : 0.85f
+    };
+
+    return true;
+}
+
+/// <summary>
+/// MissileChaseで成立している Future Shadow
+///     P_shadow = P_subject + V_subject * lead
+/// をREAD ONLYでPMへ転用する。
+/// </summary>
+public bool TryGetFutureSplineMissileShadow(
+    float baseFutureSeconds,
+    out FutureSplineIntent intent)
+{
+    intent = default;
+
+    if (respondSubject == null)
+        return false;
+
+    Vector3 subjectPosition = respondSubject.MappedPosition;
+    Vector3 subjectVelocity = ReadMappedInSubjectVelocity();
+
+    float timeFromNow =
+        Mathf.Max(0f, baseFutureSeconds) +
+        Mathf.Max(0f, missileChaseLeadSeconds);
+
+    Vector3 position =
+        subjectPosition +
+        subjectVelocity * timeFromNow;
+
+    if (!IsFinite(position) || !IsFinite(subjectVelocity))
+        return false;
+
+    intent = new FutureSplineIntent
+    {
+        valid = true,
+        positionVisual = position,
+        velocityVisual = subjectVelocity,
+        timeFromNowSeconds = timeFromNow,
+        confidence01 = 0.80f
+    };
+
+    return true;
+}
+
+/// <summary>
+/// 論理的着弾 / Terminal Rejoin の
+///     P_terminal = P_subject + V_subject * T_go
+/// をREAD ONLYの真の終端予測PLとして公開する。
+/// </summary>
+public bool TryGetFutureSplineTerminalLanding(
+    float terminalBeginsInSeconds,
+    out FutureSplineIntent intent)
+{
+    intent = default;
+
+    if (respondSubject == null)
+        return false;
+
+    Vector3 subjectPosition = respondSubject.MappedPosition;
+    Vector3 subjectVelocity = ReadMappedInSubjectVelocity();
+
+    float terminalHorizon;
+
+    if (motionPhase == MotionPhase.TerminalRejoin)
+    {
+        terminalHorizon =
+            Mathf.Max(
+                terminalMinimumTimeToGo,
+                terminalTimeToGo);
+    }
+    else
+    {
+        terminalHorizon =
+            Mathf.Max(
+                terminalMinimumTimeToGo,
+                terminalTimeBudget);
+    }
+
+    float timeFromNow =
+        Mathf.Max(0f, terminalBeginsInSeconds) +
+        terminalHorizon;
+
+    Vector3 terminalPosition =
+        subjectPosition +
+        subjectVelocity * timeFromNow;
+
+    if (!IsFinite(terminalPosition) || !IsFinite(subjectVelocity))
+        return false;
+
+    intent = new FutureSplineIntent
+    {
+        valid = true,
+        positionVisual = terminalPosition,
+        velocityVisual = subjectVelocity,
+        timeFromNowSeconds = timeFromNow,
+        confidence01 =
+            motionPhase == MotionPhase.TerminalRejoin
+                ? 0.95f
+                : 0.85f
+    };
+
+    return true;
+}
+
+}
+
