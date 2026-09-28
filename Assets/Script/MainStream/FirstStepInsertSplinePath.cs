@@ -4,6 +4,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Splines;
 using System.Collections;
+using System.Text.RegularExpressions;
 using Object = UnityEngine.Object;
 
 //using System;
@@ -80,11 +81,16 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     public bool twistReturn;
 
     public Dictionary<String, List<GameObject>> RogicalEntity;
+    
+    public List<GameObject> ArcSlab1;
+    public List<GameObject> ArcSlab2;
     public List<GameObject> StackStairway1;
     public List<GameObject> StackStairway2;
+    
+    public GameObject CoinPrefab;
+    public GameObject EnemyPrefab;
 
     public GameObject PylonPrefab;
-    public GameObject CoinPrefab;
 
     public int FirstShift = 0;
 
@@ -104,8 +110,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     static readonly int[] InitialStartPattern =
     {
-        -1, 0, 0, -1, 0, -1, 0, -1, 0,
-        -1, 0, -1, 0, -1, 0, -1,0
+        -1, 0, -1, 0, -1, 0, -1, 0, -1,
+        0, -1, 0, -1, 0, -1, 0,0
     };
 
     public int startDashDot = 0;
@@ -234,11 +240,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         {
             resumeOnly.BeginCommandOnTouch = false;
 
-            MainGameManager.TopTitle.SetActive(true);
+           /* MainGameManager.TopTitle.SetActive(true);
             MainGameManager.PreviewIconRoot.SetActive(true);
             MainGameManager.TopLiteral.SetActive(true);
             MainGameManager.PlayButton.SetActive(true);
-            MainGameManager.Userbility.SetActive(false);
+            MainGameManager.Userbility.SetActive(false);*/
             Start();
             rebuilding = false;
 
@@ -289,14 +295,29 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 new Dictionary<String, List<GameObject>>();
 
             if (StackStairway1 == null)
+            {
                 StackStairway1 = new List<GameObject>();
+                ArcSlab1= new List<GameObject>();
+            }
             else
+            {
                 StackStairway1.Clear();
+                ArcSlab1.Clear();
+            }
 
             if (StackStairway2 == null)
+            {
                 StackStairway2 = new List<GameObject>();
+                ArcSlab2= new List<GameObject>();
+
+            }
             else
+            {
                 StackStairway2.Clear();
+                ArcSlab2.Clear();
+            }
+
+
 
             RogicalEntity["Physics"] = StackStairway1;
             RogicalEntity["Renderer"] = StackStairway2;
@@ -514,7 +535,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
             delayStandRoutine =
                 StartCoroutine(
-                    DelayStandOnObject(
+                    DelayStandSlopeOnObject(
                         decorationStart,
                         decorationEndExclusive));
         }
@@ -748,12 +769,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     }
 
     void Board(
-        Vector3 worldStart,
-        Vector3 worldDirection,
-        bool slope,
-        int scale,
-        int plan,
-        int segmentIndex)
+        Vector3 worldStart, Vector3 worldDirection, 
+        bool slope, int scale, int plan, int segmentIndex)
     {
         if (PlaneTime)
             return;
@@ -1089,6 +1106,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             else
             {
                 visualObject = Instantiate(PrimitivePlane, generatedVisualRoot, false);
+                ArcSlab1.Add(physicsObject);
+                ArcSlab2.Add(visualObject);
             }
 
             physicsObject.name = $"{boardName}_{i}_Physics";
@@ -1539,7 +1558,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             Object.DestroyImmediate(target);
     }
 
-    IEnumerator DelayStandOnObject(
+    IEnumerator DelayStandSlopeOnObject(
         int startIndex,
         int endIndexExclusive)
     {
@@ -1637,7 +1656,117 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     angleY,
                     ActiveStairway1,
                     ActiveStairway2,FirstCorner);
+           
+            if (!DontSeqItem)
+            {
+                GenerateCoin(
+                    angleY,
+                    ActiveStairway1,
+                    ActiveStairway2,FirstCorner);
+            }
+        }
 
+        delayStandRoutine = null;
+    }
+    IEnumerator DelayStandPlaneOnObject(
+        int startIndex,
+        int endIndexExclusive)
+    {
+        yield return new WaitForSeconds(0.1f);
+
+        int physicsCount =
+            StackStairway1 != null
+                ? StackStairway1.Count
+                : 0;
+
+        int visualCount =
+            StackStairway2 != null
+                ? StackStairway2.Count
+                : 0;
+
+        int availableCount =
+            Mathf.Min(
+                physicsCount,
+                visualCount);
+
+        // Coroutine開始後に死亡/再構築が入ってListが短くなっても
+        // 範囲外へ出ないよう、現在のCountで終端をもう一度丸める。
+        int safeStart =
+            Mathf.Clamp(
+                startIndex,
+                0,
+                availableCount);
+
+        int safeEndExclusive =
+            Mathf.Clamp(
+                endIndexExclusive,
+                safeStart,
+                availableCount);
+
+        if (safeStart >= safeEndExclusive)
+        {
+            delayStandRoutine = null;
+            yield break;
+        }
+
+        Debug.Log(
+            $"[ITEM CHUNK] range=[{safeStart},{safeEndExclusive}) " +
+            $"available={availableCount}",
+            this);
+
+        for (int i = safeStart;
+             i < safeEndExclusive;
+             i++)
+        {
+            GameObject ActiveStairway1 =
+                StackStairway1[i];
+
+            GameObject ActiveStairway2 =
+                StackStairway2[i];
+
+            if (!ActiveStairway1 ||
+                !ActiveStairway2)
+            {
+                continue;
+            }
+
+            // ========================================================
+            // Idempotency:
+            // 同じPhysics Stairwayに対するアイテム抽選は一度だけ。
+            //
+            // GenerateCoin/GeneratePylonが「今回は生成なし」を返した場合も
+            // このStairwayは処理済みにする。再抽選すると、Stage更新のたびに
+            // 後からCoin/Pylonが増えて重複の原因になるため。
+            // ========================================================
+            int stairwayInstanceId =
+                ActiveStairway1.GetInstanceID();
+
+            if (!decoratedStairwayInstanceIds.Add(
+                    stairwayInstanceId))
+            {
+                Debug.LogWarning(
+                    $"[ITEM CHUNK SKIP] " +
+                    $"already processed index={i}, " +
+                    $"stairway={ActiveStairway1.name}",
+                    ActiveStairway1);
+
+                continue;
+            }
+
+            bool FirstCorner=i > startDashDot;
+           
+            float angleY =
+                ActiveStairway1
+                    .transform
+                    .localEulerAngles
+                    .y;
+            
+            bool DontSeqItem =
+                GeneratePylon(
+                    angleY,
+                    ActiveStairway1,
+                    ActiveStairway2,FirstCorner);
+           
             if (!DontSeqItem)
             {
                 GenerateCoin(
@@ -1670,203 +1799,217 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         return $"Y={y:F2}°";
     }
 
+    // Coin / Pylon / FunCharacter の共通となる「1体分」の生成・姿勢設定。
+    // localScale == null はPrefab由来のScaleを維持する（Coin用）。
+    GameObject SpawnOne(
+        GameObject prefab,
+        GameObject parent,
+        Vector3 localPosition,
+        Quaternion localRotation,
+        Vector3? localScale,
+        string namePrefix,
+        bool disableColliders)
+    {
+        GameObject instance = Instantiate(prefab, parent.transform);
+        instance.transform.localPosition = localPosition;
+        instance.transform.localRotation = localRotation;
+
+        if (localScale.HasValue)
+            instance.transform.localScale = localScale.Value;
+
+        instance.name = $"{namePrefix}_{instance.GetInstanceID()}";
+
+        if (!Regex.Match(namePrefix, @"FunChr.*").Success)
+        {
+            if (disableColliders)
+            {
+                foreach (Collider collider in instance.GetComponentsInChildren<Collider>(true))
+                    collider.enabled = false;
+            }
+        }
+       
+
+        return instance;
+    }
+
+    // Coin / Pylon は従来どおりPhysicsとVisualの両方を生成する。
+    (GameObject physics, GameObject visual) SpawnPair(
+        GameObject prefab,
+        GameObject physicsParent,
+        GameObject visualParent,
+        Vector3 localPosition,
+        Quaternion localRotation,
+        Vector3? localScale,
+        string namePrefix,
+        bool separateVisualPhysics)
+    {
+        GameObject physics = SpawnOne(
+            prefab, physicsParent, localPosition, localRotation, localScale,
+            namePrefix + "_Physics", false);
+
+        GameObject visual = SpawnOne(
+            prefab, visualParent, localPosition, localRotation, localScale,
+            namePrefix + "_Visual", separateVisualPhysics);
+
+        if (separateVisualPhysics)
+        {
+            foreach (Renderer renderer in physics.GetComponentsInChildren<Renderer>(true))
+                renderer.enabled = false;
+        }
+
+        return (physics, visual);
+    }
+
+    // FunCharacter専用: Render側だけに生成し、Colliderを無効にする。
+    GameObject SpawnVisual(
+        GameObject prefab,
+        GameObject visualParent,
+        Vector3 localPosition,
+        Quaternion localRotation,
+        Vector3? localScale,
+        string namePrefix)
+    {
+        return SpawnOne(
+            prefab, visualParent, localPosition, localRotation, localScale,
+            namePrefix + "_Visual", true);
+    }
+
     bool GeneratePylon(
         float angle,
         GameObject ActiveStairway1,
-        GameObject ActiveStairway2,bool FirstCorner)
+        GameObject ActiveStairway2,
+        bool FirstCorner)
     {
-        bool OnPylon = false;
+        // Pylon 10%。従来の抽選順序・戻り値を維持する。
+        int value = UnityEngine.Random.Range(0, 10);
+        int widthObj = FirstCorner
+            ? UnityEngine.Random.Range(0, ShiftObj.Length)
+            : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
+        float localX = ShiftObj[widthObj].x;
+        bool onPylon = value < 1;
+        bool generated = false;
 
-        // 10%で生成
-        int value =
-            UnityEngine.Random.Range(0, 10);
-        int widthObj = 0;
-        float localX;
-        if (FirstCorner)
+        if (onPylon && PylonPrefab && ActiveStairway1 && ActiveStairway2)
         {
-            widthObj = UnityEngine.Random.Range(0, ShiftObj.Length);
-            localX = ShiftObj[widthObj].x;
+            Vector3 localPylonPosition = new Vector3(localX, 0.5f, 0f);
+            var pair = SpawnPair(
+                PylonPrefab,
+                ActiveStairway1,
+                ActiveStairway2,
+                localPylonPosition,
+                Quaternion.Euler(-135f, 0f, 0f),
+                Vector3.one * 1.5f,
+                "Thorn",
+                false);
+
+            Debug.Log(
+                $"[PYLON LOCAL] stair={ActiveStairway1.name}, " +
+                $"angleY={angle:F2}, local={localPylonPosition}, " +
+                $"physicsWorld={pair.physics.transform.position}, " +
+                $"visualWorld={pair.visual.transform.position}",
+                pair.physics);
+
+            generated = true;
         }
-        else
+
+        // 既存の入口を使用するため、Coroutineやステージ管理処理は変更しない。
+        int availableArcCount = Mathf.Min(
+            ArcSlab1 != null ? ArcSlab1.Count : 0,
+            ArcSlab2 != null ? ArcSlab2.Count : 0);
+
+        for (int i = availableArcCount - 1; i >= 0; i--)
         {
-            widthObj= UnityEngine.Random.Range(0, 2);
-            if (widthObj == 0)
-            {
-                localX = ShiftObj[0].x;
-            }
-            else
-            {
-                localX = ShiftObj[2].x;
-            }
-        }
-        
+            GameObject physicsArc = ArcSlab1[i];
+            GameObject visualArc = ArcSlab2[i];
+            if (!physicsArc || !visualArc)
+                continue;
 
+            // 抽選に外れたArcSlabも処理済みとして記録する。
+            if (!decoratedStairwayInstanceIds.Add(physicsArc.GetInstanceID()))
+                break;
 
-        if (value < 1)
-        {
-            OnPylon = true;
+            GenerateFunCharacter(
+                physicsArc.transform.localEulerAngles.y,
+                physicsArc,
+                visualArc,
+                i > startDashDot);
         }
 
-        if (!OnPylon)
-            return false;
-
-        if (!PylonPrefab || !ActiveStairway1 || !ActiveStairway2)
-        {
-            return false;
-        }
-      
-
-        Vector3 localPylonPosition =
-            new Vector3(localX, 0.5f, 0);
-
-
-        // =====================================================
-        // Physics
-        // =====================================================
-
-        GameObject StageOnPylon =
-            Instantiate(PylonPrefab, ActiveStairway1.transform);
-
-        StageOnPylon.transform.localPosition =
-            localPylonPosition;
-
-        StageOnPylon.transform.localRotation =
-            Quaternion.Euler(-135f, 0f, 0f);
-
-        StageOnPylon.transform.localScale =
-            Vector3.one * 1.5f;
-
-
-        // =====================================================
-        // Visual
-        // =====================================================
-
-        GameObject VisualStageOnPylon =
-            Instantiate(PylonPrefab, ActiveStairway2.transform);
-
-        VisualStageOnPylon.transform.localPosition =
-            localPylonPosition;
-
-        VisualStageOnPylon.transform.localRotation =
-            Quaternion.Euler(-135f, 0f, 0f);
-
-        VisualStageOnPylon.transform.localScale =
-            Vector3.one * 1.5f;
-
-
-        // =====================================================
-        // Name
-        // =====================================================
-
-        StageOnPylon.name =
-            $"Thorn_Physics_{StageOnPylon.GetInstanceID()}";
-
-        VisualStageOnPylon.name =
-            $"Thorn_Visual_{VisualStageOnPylon.GetInstanceID()}";
-
-
-        // =====================================================
-        // Debug
-        // =====================================================
-
-        Debug.Log(
-            $"[PYLON LOCAL] " +
-            $"stair={ActiveStairway1.name}, " +
-            $"angleY={angle:F2}, " +
-            $"local={localPylonPosition}, " +
-            $"physicsWorld={StageOnPylon.transform.position}, " +
-            $"visualWorld={VisualStageOnPylon.transform.position}",
-            StageOnPylon);
-
-
-        return true;
+        return generated;
     }
 
-    bool GenerateCoin(float angle, GameObject ActiveStairway1, GameObject ActiveStairway2,bool FirstConner)
+    
+    bool GenerateCoin(float angle, GameObject ActiveStairway1, GameObject ActiveStairway2, bool FirstConner)
     {
-        // 20%で生成
-        bool onCoin =
-            UnityEngine.Random.Range(0, 10) < 2;
-
+        // Pylonが配置されなかったStairwayに対し20%で抽選。
+        bool onCoin = UnityEngine.Random.Range(0, 10) < 2;
         if (!onCoin)
             return false;
 
-        if (!CoinPrefab ||
-            !ActiveStairway1 ||
-            !ActiveStairway2)
-        {
+        if (!CoinPrefab || !ActiveStairway1 || !ActiveStairway2)
             return false;
-        }
-        
-        int widthObj = 0;
-        float localX;
-        if (FirstConner)
-        {
-            widthObj = UnityEngine.Random.Range(0, ShiftObj.Length);
-            localX = ShiftObj[widthObj].x;
-        }
-        else
-        {
-            widthObj= UnityEngine.Random.Range(0, 2);
-            if (widthObj == 0)
-            {
-                localX = ShiftObj[0].x;
-            }
-            else
-            {
-                localX = ShiftObj[2].x;
-            }
-        }
-        
-        int coinCount =
-            UnityEngine.Random.Range(1, 5);
 
+        int widthObj;
+        if (FirstConner)
+            widthObj = UnityEngine.Random.Range(0, ShiftObj.Length);
+        else
+            widthObj = UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2;
+        float localX = ShiftObj[widthObj].x;
+
+        int coinCount = UnityEngine.Random.Range(1, 5);
         for (int i = 0; i < coinCount; i++)
         {
-
             float totalLength = (coinCount - 1) * coinSpacing;
-
             float startZ = -totalLength * 0.5f;
-
             float localZ = startZ + coinSpacing * i;
-            
             Vector3 localCoinPosition = new Vector3(localX, coinLocalHeight + 1.5f, localZ);
-            
-            GameObject physicsCoin =
-                Instantiate(CoinPrefab,ActiveStairway1.transform);
 
-            physicsCoin.transform.localPosition = localCoinPosition;
-
-            physicsCoin.transform.localRotation = Quaternion.identity;
-
-            GameObject visualCoin = Instantiate(CoinPrefab, ActiveStairway2.transform);
-
-            visualCoin.transform.localPosition = localCoinPosition;
-
-            visualCoin.transform.localRotation = Quaternion.identity;
-
-            physicsCoin.name =
-                $"Coin_{i}_Physics_{physicsCoin.GetInstanceID()}";
-
-            visualCoin.name =
-                $"Coin_{i}_Visual_{visualCoin.GetInstanceID()}";
-
-            foreach (Renderer renderer in
-                     physicsCoin.GetComponentsInChildren<Renderer>(true))
-            {
-                renderer.enabled = false;
-            }
-
-            foreach (Collider collider in
-                     visualCoin.GetComponentsInChildren<Collider>(true))
-            {
-                collider.enabled = false;
-            }
+            SpawnPair(
+                CoinPrefab,
+                ActiveStairway1,
+                ActiveStairway2,
+                localCoinPosition,
+                Quaternion.identity,
+                null, // Coinは従来どおりPrefab自身のScaleを使う。
+                $"Coin_{i}",
+                true);
         }
 
         return true;
     }
+    bool GenerateFunCharacter(
+        float angle,
+        GameObject physicsArc,
+        GameObject visualArc,
+        bool FirstCorner)
+    {
+        // ArcSlabごとに40%で抽選。Pylon/Coinの成否には依存しない。
+        if (UnityEngine.Random.Range(0, 10) >= 4)
+            return false;
 
+        if (!EnemyPrefab || !physicsArc || !visualArc)
+            return false;
 
+        int widthObj = FirstCorner
+            ? UnityEngine.Random.Range(0, ShiftObj.Length)
+            : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
+        Vector3 localPosition = new Vector3(ShiftObj[widthObj].x, 0.5f, 0f);
+
+        GameObject visualCharacter = SpawnVisual(
+            EnemyPrefab,
+            visualArc,
+            localPosition,
+            Quaternion.Euler(-135f, 0f, 0f),
+            Vector3.one * 1.5f,
+            "FunChr");
+
+        Debug.Log(
+            $"[FUN CHARACTER LOCAL] arc={physicsArc.name}, " +
+            $"angleY={angle:F2}, local={localPosition}, " +
+            $"visualWorld={visualCharacter.transform.position}",
+            visualCharacter);
+
+        return true;
+    }
 
 }

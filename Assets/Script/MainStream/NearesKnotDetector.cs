@@ -16,6 +16,8 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
     public int NearestSplineIndex { get; private set; } = -1;
     public int NearestKnotIndex { get; private set; } = -1;
+
+    public Vector3 nextSlopePosition;
     public Vector3 NearestKnotPosition { get; private set; }
     public float NearestKnotDistance { get; private set; } = float.PositiveInfinity;
     public GuideFrame CurrentGuide { get; private set; }
@@ -851,6 +853,35 @@ public sealed class NearestKnotDetector : MonoBehaviour
         };
 
         return true;
+    }
+    public bool TryGetNextSlopePosition()
+    {
+        nextSlopePosition = default;
+
+        if (!CurrentGuide.valid || CurrentGuide.isSlope ||
+            currentSegment < 0 || currentSegment >= segments.Count)
+            return false;
+
+        SegmentInfo current = segments[currentSegment];
+
+        if (current.splineIndex != CurrentGuide.splineIndex)
+            return false;
+
+        for (int i = currentSegment + 1; i < segments.Count; i++)
+        {
+            SegmentInfo s = segments[i];
+
+            if (s.splineIndex != current.splineIndex)
+                break;
+
+            if (!s.isSlope)
+                continue;
+
+            nextSlopePosition = s.start;
+            return true;
+        }
+
+        return false;
     }
 
 }

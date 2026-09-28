@@ -97,8 +97,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     }
 
     [Header("Turn Policy - Upper Stair / Flat / Energy Target")]
-    [Tooltip("Flat上でEnergy targetを通過したと判定する前後ヒステリシス[m]。targetがこの距離より前方ならU字。")]
-    [Min(0f)] [SerializeField] float energyTargetPassToleranceMeters = 0.08f;
+    // Flat Entry / flick位置 / 次の斜面までの距離から旋回ごとに自動計算する。
+    // Inspectorの固定m閾値は使わない（旧 energyTargetPassToleranceMeters を廃止）。
 
     [Tooltip("FiveLine横補正を滑らかに収束させる時間[s]。")]
     [Min(0.02f)] [SerializeField] float fiveLineCorrectionDurationSeconds = 0.10f;
@@ -197,6 +197,30 @@ public sealed class SlopeStickCore : MonoBehaviour
     bool capturedTurnLandingIntentValid;
     BallVisualSlopeDrive.TurnLandingIntent capturedTurnLandingIntent;
     float lastEnergyTargetForwardDistance = float.PositiveInfinity;
+
+    struct FlatEntryFrame
+    {
+        public bool valid;
+        public int splineIndex;
+        public Vector3 position;
+        public Vector3 direction;
+        public float distanceToNextSlope;
+    }
+
+    FlatEntryFrame flatEntryFrame;
+    FlatEntryFrame pendingFlatEntryFrame;
+    bool pendingTurnSnapshotValid;
+    bool pendingTurnWasFlat;
+    Vector3 pendingTurnFlickPosition;
+    Vector3 pendingTurnFlickVelocity;
+    bool pendingTurnTargetValid;
+    Vector3 pendingTurnTargetPhysics;
+    BallVisualSlopeDrive.TurnLandingIntent pendingTurnLandingIntent;
+    float dynamicEnergyTargetTolerance = float.NaN;
+    float lastFlatTurnLimitProgress = float.NaN;
+
+    public float LastDynamicEnergyTargetTolerance => dynamicEnergyTargetTolerance;
+    public float LastFlatTurnLimitProgress => lastFlatTurnLimitProgress;
 
     public bool IsPhysicsTurnPathActive => turnPathActive;
     public bool IsTurnTransitionActive => turnTransitionActive;
@@ -893,6 +917,14 @@ public float AdvancePredictedSplineDriveReadOnly(
         yield return new WaitForSeconds(2f);
         MainGameManager.DropOut.SetActive(false);
         MainGameManager.OpenChunkStage = true;
+        
+         
+        MainGameManager.TopTitle.SetActive(true);
+        MainGameManager.PreviewIconRoot.SetActive(true);
+        MainGameManager.TopLiteral.SetActive(true);
+        MainGameManager.PlayButton.SetActive(true);
+        MainGameManager.Userbility.SetActive(false);
+
     }
     public IEnumerator delayStart()
     {
@@ -1178,6 +1210,10 @@ public float AdvancePredictedSplineDriveReadOnly(
                 capturedTurnLandingIntent = default;
             }
         }
+
+        // 物理的に安定したFlatの最初のGuideからEntry基準を1回だけ保存する。
+        // Turn中は上部の早期returnで更新しない。旧Flatと新Flatを混ぜない。
+        UpdateFlatEntryFrame(guide);
 
         // FiveLineモードではVisual回転とBallVisual POP/Rejoinが終わってから、
         // 下階段側の5ラインへ短い横補正を開始する。
@@ -1550,6 +1586,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         currentSupported = false;
         currentGuideValid = false;
         currentSurfaceValid = false;
+        flatEntryFrame = default;
 
         ResetBallVisualSplineSession();
     }
@@ -1710,6 +1747,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
         lastEnergyTargetForwardDistance = float.PositiveInfinity;
+        dynamicEnergyTargetTolerance = float.NaN;
+        lastFlatTurnLimitProgress = float.NaN;
+        flatEntryFrame = default;
+        ClearPendingTurnSnapshot();
 
         waitingForTurnGuide = false;
 
@@ -1866,6 +1907,10 @@ public float AdvancePredictedSplineDriveReadOnly(
             Mathf.Sign(directionSign) * QuarterTurnDegrees;
         pendingTurnQueuedTime = Time.time;
 
+        // Updateで入力を受理した瞬間のPhysics状態を保存する。
+        // Turn Handoff後の位置・Targetで判定をすり替えない。
+        CapturePendingTurnSnapshot();
+
         // BallVisualが独立Pose Authority中なら、通常Recoveryを待たず短いTurn Handoffへ入れる。
         RequestTurnHandoffForPendingIntent();
 
@@ -1918,6 +1963,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
+        ClearPendingTurnSnapshot();
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
     }
 
@@ -1988,6 +2034,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (rb.isKinematic)
         {
+            ClearPendingTurnSnapshot();
             Debug.LogError(
                 "[CORE TURN TRANSITION FAILED] InSubject Rigidbodyは通常走行時Dynamicである必要があります。",
                 rb);
@@ -2008,14 +2055,21 @@ public float AdvancePredictedSplineDriveReadOnly(
                 fullDirectionTurn * directionBefore,
                 directionBefore);
 
-        // 基準版固有のEnergyTarget/UTurn/FiveLine方針はそのまま残す。
+        // 旋回種別の判定は一度だけ。Flatではフリック時の凍結Snapshotを使う。
         CaptureTurnLandingIntent();
         activeTurnMode = ResolveTurnResolutionMode(directionBefore);
+        ClearPendingTurnSnapshot();
+        flatEntryFrame = default; // 次のFlatで新しいEntryを採取する。
 
         bool useUTurn =
             activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
 
-        fiveLineCorrectionPending = !useUTurn;
+        // 旧UTurn仕様:
+        // UTurnが選ばれた旋回ではFiveLine補正を予約しない。
+        // FiveLine系が選ばれた場合だけ補正をPendingにする。
+        fiveLineCorrectionPending =
+            activeTurnMode == TurnResolutionMode.FiveLineAfterPop ||
+            activeTurnMode == TurnResolutionMode.FiveLineAfterEnergyTarget;
 
         if (!BeginTurnTransition(turnDegrees))
             return;
@@ -2175,13 +2229,25 @@ public float AdvancePredictedSplineDriveReadOnly(
 
             if (!BeginQuarterTurnPath(activeTurnDegrees, direction))
             {
-                // 数値的にPath開始できない場合だけFiveLine型の直進旋回へ安全退避する。
-                activeTurnMode = TurnResolutionMode.FiveLineAfterEnergyTarget;
-                fiveLineCorrectionPending = true;
+                // 旧UTurn仕様:
+                // UTurnとして確定した後はFiveLineへフォールバックしない。
+                // Pathを開始できなければ旋回モードだけ無効化し、
+                // FiveLine補正を予約せず元の物理速度を維持する。
+                Debug.LogError(
+                    "[CORE PHYSICS TURN PATH FAILED] UTurn Pathを開始できません。FiveLineへは移行しません。",
+                    this);
+
+                activeTurnMode = TurnResolutionMode.None;
+                fiveLineCorrectionPending = false;
                 rb.velocity = snapshot.velocity;
-                ApplyDirectFiveLineTurn(activeTurnDegrees);
-                rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
+                rb.angularVelocity = snapshot.angularVelocity;
+                direction = NormalizeFlat(snapshot.direction, travelDirection);
+                turnTargetDirection = direction;
+                waitingForTurnGuide = false;
+                return;
             }
+
+            fiveLineCorrectionPending = false;
         }
         else
         {
@@ -2285,6 +2351,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         fiveLineCorrectionActive = false;
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
+        flatEntryFrame = default;
+        ClearPendingTurnSnapshot();
 
         Physics.SyncTransforms();
         correspondSubject?.ResetDerivedVelocitySample();
@@ -2326,6 +2394,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
         lastEnergyTargetForwardDistance = float.PositiveInfinity;
+        dynamicEnergyTargetTolerance = float.NaN;
+        lastFlatTurnLimitProgress = float.NaN;
+        flatEntryFrame = default;
+        ClearPendingTurnSnapshot();
 
         if (rb && rb.isKinematic)
             rb.isKinematic = false;
@@ -2337,39 +2409,235 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
     }
 
+    // 同じFlat上の進行距離で「次の斜面入口へ安全に曲がり終われるか」を判定する。
+    // 従来の前後通過判定とは意味が異なるが、既存の3モードと後続の物理実行は維持。
     TurnResolutionMode ResolveTurnResolutionMode(Vector3 directionBefore)
     {
-        // 1) 上階段/斜面中の旋回はPOP後の下階段FiveLineへ委譲。
         if (BallVisualIsOnSlope || BallVisualIsAir)
             return TurnResolutionMode.FiveLineAfterPop;
 
-        // 2) 平面ではBallVisualのEnergy landing targetの前後で分岐。
-        if (BallVisualIsOnFlat && TryGetCapturedLandingIntentPhysics(out Vector3 targetPhysics))
+        if (!BallVisualIsOnFlat)
+            return TurnResolutionMode.FiveLineAfterPop;
+
+        if (!pendingTurnSnapshotValid || !pendingTurnWasFlat || !pendingTurnTargetValid)
         {
-            Vector3 flatDirection = NormalizeFlat(directionBefore, travelDirection);
-            lastEnergyTargetForwardDistance =
-                Vector3.Dot(targetPhysics - rb.position, flatDirection);
-
-            // 目標地点がまだ前方に残っている = 一歩手前側 -> 新U字仕様。
-            if (lastEnergyTargetForwardDistance > energyTargetPassToleranceMeters)
-                return TurnResolutionMode.UTurnBeforeEnergyTarget;
-
-            // 目標地点を到達/通過済み -> FiveLine。
+            if (logTurnPolicy)
+                Debug.Log("[CORE DYNAMIC TURN] Missing flick-time target/frame; FiveLine fallback.", this);
             return TurnResolutionMode.FiveLineAfterEnergyTarget;
         }
 
-        // FlatだがEnergy targetが取れない時は、誤ったU字を作らないためFiveLine側へ倒す。
-        if (BallVisualIsOnFlat)
-            return TurnResolutionMode.FiveLineAfterEnergyTarget;
+        Vector3 measuringDirection = pendingFlatEntryFrame.valid
+            ? pendingFlatEntryFrame.direction
+            : NormalizeFlat(directionBefore, travelDirection);
 
-        return TurnResolutionMode.FiveLineAfterPop;
+        lastEnergyTargetForwardDistance = Vector3.Dot(
+            pendingTurnTargetPhysics - pendingTurnFlickPosition,
+            measuringDirection);
+
+        if (!TryCalculateDynamicEnergyTolerance(out float tolerance))
+        {
+            if (logTurnPolicy)
+                Debug.Log($"[CORE DYNAMIC TURN] Invalid Flat geometry; FiveLine fallback. " +
+                    $"forward={lastEnergyTargetForwardDistance:F3}m", this);
+            return TurnResolutionMode.FiveLineAfterEnergyTarget;
+        }
+
+        // Apply時に多少進んだ場合も、実際のBezier開始位置が境界を越えていないか検査。
+        float executionProgress = Vector3.Dot(
+            rb.position - pendingFlatEntryFrame.position,
+            pendingFlatEntryFrame.direction);
+
+        float forwardSpeedAtFlick = Mathf.Max(0f, Vector3.Dot(
+            pendingTurnFlickVelocity, pendingFlatEntryFrame.direction));
+        float entryNumericalAllowance = Mathf.Max(Eps, forwardSpeedAtFlick * Time.fixedDeltaTime);
+        bool clearanceStillAvailable =
+            executionProgress >= -entryNumericalAllowance &&
+            executionProgress < lastFlatTurnLimitProgress;
+
+        bool useUTurn =
+            lastEnergyTargetForwardDistance > tolerance &&
+            clearanceStillAvailable;
+
+        if (useUTurn)
+        {
+            Debug.Log("");
+        }
+        if (logTurnPolicy)
+        {
+            Debug.Log(
+                $"[CORE DYNAMIC TURN] " +
+                $"forward={lastEnergyTargetForwardDistance:F3}m " +
+                $"tolerance={tolerance:F3}m " +
+                $"flickProgress={Vector3.Dot(pendingTurnFlickPosition - pendingFlatEntryFrame.position, pendingFlatEntryFrame.direction):F3}m " +
+                $"executionProgress={executionProgress:F3}m " +
+                $"limit={lastFlatTurnLimitProgress:F3}m " +
+                $"flatLength={pendingFlatEntryFrame.distanceToNextSlope:F3}m " +
+                $"target={pendingTurnLandingIntent.source} age={pendingTurnLandingIntent.ageSeconds:F3}s " +
+                $"mode={(useUTurn ? "UTurn" : "FiveLine")}", this);
+        }
+
+        return useUTurn
+            ? TurnResolutionMode.UTurnBeforeEnergyTarget
+            : TurnResolutionMode.FiveLineAfterEnergyTarget;
     }
+
+    bool TryCalculateDynamicEnergyTolerance(out float tolerance)
+    {
+        tolerance = float.NaN;
+        dynamicEnergyTargetTolerance = float.NaN;
+        lastFlatTurnLimitProgress = float.NaN;
+
+        FlatEntryFrame entry = pendingFlatEntryFrame;
+        if (!entry.valid || !pendingTurnTargetValid ||
+            !IsFiniteFloat(entry.distanceToNextSlope) ||
+            entry.distanceToNextSlope <= Eps ||
+            !currentGuideValid || currentGuide.splineIndex != entry.splineIndex)
+            return false;
+
+        float entryToFlick = Vector3.Dot(
+            pendingTurnFlickPosition - entry.position, entry.direction);
+        float entryToTarget = Vector3.Dot(
+            pendingTurnTargetPhysics - entry.position, entry.direction);
+
+        float forwardSpeed = Mathf.Max(0f, Vector3.Dot(
+            pendingTurnFlickVelocity, entry.direction));
+        float motionAllowance = forwardSpeed * Time.fixedDeltaTime;
+
+        // 次の斜面まで90度Bezierの旧進行方向成分Rと1物理ステップ分を確保。
+        float clearance = Mathf.Max(0.10f, turnPathRadiusMeters) + motionAllowance;
+        knotDetector.TryGetNextSlopePosition();
+
+        float flatLength = Vector3.Dot(knotDetector.nextSlopePosition - entry.position, entry.direction);
+
+        float latestTurnProgress = flatLength - clearance;
+
+        if (!IsFiniteFloat(entryToFlick) ||
+            !IsFiniteFloat(entryToTarget) ||
+            latestTurnProgress <= Eps ||
+            entryToFlick < -motionAllowance ||
+            entryToFlick > flatLength + motionAllowance)
+            return false;
+
+        lastFlatTurnLimitProgress = latestTurnProgress;
+        tolerance = entryToTarget - latestTurnProgress;
+        dynamicEnergyTargetTolerance = tolerance;
+        return IsFiniteFloat(tolerance);
+    }
+   
+
+    // 同じSplineで次の斜面が確認できた最初のFlat支持フレームを基準にする。
+    void UpdateFlatEntryFrame(NearestKnotDetector.GuideFrame guide)
+    {
+        if (!guide.valid || guide.isSlope)
+        {
+            flatEntryFrame = default;
+            return;
+        }
+
+        if (flatEntryFrame.valid && flatEntryFrame.splineIndex == guide.splineIndex)
+            return;
+
+        flatEntryFrame = default;
+        if (!guide.nextIsSlope ||
+            !IsFiniteFloat(guide.distanceToNextSlope) ||
+            guide.distanceToNextSlope <= Eps)
+            return;
+
+        Vector3 entryDirection = NormalizeFlat(direction, guide.tangent);
+        Vector3 guideDirection = NormalizeFlat(guide.tangent, entryDirection);
+        // 距離はSpline沿い、投影は直線方向。非直線Flatを誤判定しないため拒否。
+        if (Vector3.Dot(entryDirection, guideDirection) < 0.95f)
+            return;
+
+        flatEntryFrame = new FlatEntryFrame
+        {
+            valid = true,
+            splineIndex = guide.splineIndex,
+            position = rb.position,
+            direction = entryDirection,
+            distanceToNextSlope = guide.distanceToNextSlope
+        };
+
+        if (logTurnPolicy)
+            Debug.Log($"[CORE FLAT ENTRY] pos={flatEntryFrame.position:F3} " +
+                $"dir={entryDirection:F3} nextSlope={guide.distanceToNextSlope:F3}m " +
+                $"spline={guide.splineIndex}", this);
+    }
+
+    void CapturePendingTurnSnapshot()
+    {
+        ClearPendingTurnSnapshot();
+        if (!rb)
+            return;
+
+        pendingTurnSnapshotValid = true;
+        pendingTurnWasFlat = BallVisualIsOnFlat;
+        pendingTurnFlickPosition = rb.position;
+        pendingTurnFlickVelocity = rb.velocity;
+        pendingFlatEntryFrame = flatEntryFrame;
+
+        if (!pendingTurnWasFlat)
+            return;
+
+        if (!ballVisualSlopeDrive)
+            ballVisualSlopeDrive = FindObjectOfType<BallVisualSlopeDrive>(true);
+        if (!ballVisualSlopeDrive)
+            return;
+
+        if (!ballVisualSlopeDrive.TryGetTurnLandingIntent(
+                out BallVisualSlopeDrive.TurnLandingIntent intent) || !intent.valid)
+            return;
+
+        // TargetはVisual座標。座標写像がなければ安全側(FiveLine)へ倒す。
+        if (!correspondSubject)
+            return;
+
+        Vector3 physicsTarget =
+            correspondSubject.InverseMapPoint(intent.positionVisual);
+
+        if (!IsFiniteVector(physicsTarget))
+            return;
+
+        pendingTurnTargetValid = true;
+        pendingTurnTargetPhysics = physicsTarget;
+        pendingTurnLandingIntent = intent;
+    }
+
+    void ClearPendingTurnSnapshot()
+    {
+        pendingTurnSnapshotValid = false;
+        pendingTurnWasFlat = false;
+        pendingFlatEntryFrame = default;
+        pendingTurnFlickPosition = default;
+        pendingTurnFlickVelocity = default;
+        pendingTurnTargetValid = false;
+        pendingTurnTargetPhysics = default;
+        pendingTurnLandingIntent = default;
+    }
+
+    static bool IsFiniteFloat(float value) =>
+        !float.IsNaN(value) && !float.IsInfinity(value);
+
+    static bool IsFiniteVector(Vector3 value) =>
+        IsFiniteFloat(value.x) && IsFiniteFloat(value.y) && IsFiniteFloat(value.z);
 
     void CaptureTurnLandingIntent()
     {
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
         lastEnergyTargetForwardDistance = float.PositiveInfinity;
+        dynamicEnergyTargetTolerance = float.NaN;
+        lastFlatTurnLimitProgress = float.NaN;
+
+        if (pendingTurnWasFlat)
+        {
+            if (pendingTurnTargetValid)
+            {
+                capturedTurnLandingIntent = pendingTurnLandingIntent;
+                capturedTurnLandingIntentValid = true;
+            }
+            return;
+        }
 
         if (!ballVisualSlopeDrive)
             ballVisualSlopeDrive = FindObjectOfType<BallVisualSlopeDrive>(true);

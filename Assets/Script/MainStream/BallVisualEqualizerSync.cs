@@ -45,6 +45,47 @@ using Sirenix.OdinInspector;
 [DisallowMultipleComponent]
 public sealed class BallVisualEqualizerSync : MonoBehaviour
 {
+    // ========================================================================
+    // MOTION PRESERVATION CONTRACT — DO NOT TRIM WITHOUT AN A/B MOTION TEST
+    // ========================================================================
+    //
+    // Baseline:
+    //   BallVisualEqualizerSync_safe_trim_02
+    //
+    // Required visual/physical behavior:
+    //   The first stair wave must begin with a strong -Stable-N response.
+    //   On the current stair frame, -N contains both DOWN and BACKWARD
+    //   components, so the ball is visibly pushed back after the first launch.
+    //
+    // The following control chain is protected:
+    //
+    //   SlopeStickCore normal support
+    //       -> CaptureContinuousNormalSupportSample()
+    //       -> ArmContinuousNormalSupportHandoff()
+    //       -> ResolveContinuousNormalSupportAcceleration()
+    //
+    //   Spatial wave phase
+    //       -> targetNormalVelocity / targetNormalAcceleration
+    //       -> spring + damper + spatial feed-forward
+    //       -> ResolveNormalAuthority()
+    //       -> normalTargetAccelerationAfterAuthority
+    //       -> rideAccelerationState
+    //       -> Rigidbody AddForce
+    //
+    //   Collision state:
+    //       Physical Upper terminates the entry support bridge.
+    //       Physical Lower rearms the next Upper and owns lower-impact retention.
+    //
+    // Protected means:
+    //   - Do not delete these fields/methods as "diagnostics".
+    //   - Do not inline or merge them merely to reduce line count.
+    //   - Do not replace persistent state with temporary locals.
+    //   - Do not change signs, authority blending, FixedUpdate ordering, or
+    //     ForceMode without an explicit motion-comparison test.
+    //   - Fine tuning of these values is allowed later, but structure/state
+    //     must remain available for tuning.
+    // ========================================================================
+
     public const string RuntimeBuildId = "ContinuousNormalSupportUpperContact-20260920-D";
     public const string ObservationTelemetryBuildId = "UpperReflectionTelemetry-v1";
 
@@ -453,6 +494,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 // Upper impact observation
 // ================================================================
 
+    [Header("Minimal Measurement")]
+    [SerializeField] private bool logMeasurements;
+
     [Header("Upper Impact Observation")]
     [Tooltip(
         "Upper->Upper実測周期として採用する最小時間[s]。\n" +
@@ -469,11 +513,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private float upperPeakRearmHeight01 = 0.35f;
 
     [Header("Upper Reflection Analysis / Governor")]
-    [Tooltip(
-        "実Upper衝突後、最初にUpperから離れるStable-N速度を測定してログへ出します。\n" +
-        "Canonical EnergyやHnをここから書き換えません。")]
-    [SerializeField]
-    private bool enableUpperReflectionDiagnostics = true;
 
     [Tooltip(
         "実Upperが作った反射が指定Restitution上限を超えた場合だけ、Stable-N成分の余剰分を削ります。\n" +
@@ -499,6 +538,171 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [Range(1, 6)]
     [SerializeField]
     private int upperReflectionResolveMaxFixedSteps = 3;
+
+    [Header("Post Upper Down-Stair Direction Memory")]
+    [Tooltip(
+        "ON: 最初の実Upper接触後、衝突Normalの跳ね返りはPhysXへ任せたまま、" +
+        "接触時に確定したWorld-spaceの階段下降Tangentだけを短時間保持します。\n" +
+        "Transform/Visual回転からは再計算しないため、Upper後の階段方向成分が回転表示に引きずられません。")]
+    [SerializeField]
+    private bool usePostUpperDirectionalMemory = true;
+
+    [Tooltip(
+        "maxGroundSpeedの何割をUpper後の最低Tangent目標速度として使うか。\n" +
+        "現在速度/Subject速度の方が大きい場合はそちらを保持するため、速度を不自然に下げません。")]
+    [Range(0f, 1f)]
+    [SerializeField]
+    private float postUpperDirectionalReferenceSpeedFraction = 0.72f;
+
+    [Tooltip(
+        "Upper後のTangent速度不足を埋める1次遅れの時定数[s]。小さいほど階段方向が強く立ち上がります。")]
+    [Min(0.02f)]
+    [SerializeField]
+    private float postUpperDirectionalResponseTime = 0.08f;
+
+    [Tooltip(
+        "Upper後に追加するWorld-space Tangent加速度の上限[m/s^2]。Normal反射には加えません。")]
+    [Min(0f)]
+    [SerializeField]
+    private float postUpperDirectionalMaximumAcceleration = 90f;
+
+    [Tooltip(
+        "方向メモリ強度が半分になる時間[s]。Physical Lowerまで完全停止条件を置かず、指数的に自然減衰します。")]
+    [Min(0.02f)]
+    [SerializeField]
+    private float postUpperDirectionalHalfLifeSeconds = 0.20f;
+
+    [Tooltip(
+        "Upper接触時World frameのLateral速度を穏やかに消す割合。0なら横方向には触れません。")]
+    [Range(0f, 1f)]
+    [SerializeField]
+    private float postUpperLateralAlignmentShare01 = 0.35f;
+
+    [Tooltip(
+        "Lateral速度を0へ寄せる1次遅れ時定数[s]。Tangent強化とは独立です。")]
+    [Min(0.02f)]
+    [SerializeField]
+    private float postUpperLateralResponseTime = 0.12f;
+
+    [Header("Hybrid Rough / Smooth Assist")]
+    [Tooltip(
+        "既存のStable-N加速度がAcceleration Budgetのこの割合を超え始めたら、" +
+        "Post Upper Smooth Assistを徐々に混ぜ始めます。\n" +
+        "低加速度域では従来の荒っぽい挙動をそのまま残します。")]
+    [Range(0f, 1f)]
+    [SerializeField]
+    private float postUpperSmoothAssistStartBudgetRatio = 0.30f;
+
+    [Tooltip(
+        "この割合付近でSmooth Assistをほぼ100%まで混ぜます。\n" +
+        "Startとの間はSmoothStepで連続的に補間し、厳しいON/OFF条件にはしません。")]
+    [Range(0.05f, 1.5f)]
+    [SerializeField]
+    private float postUpperSmoothAssistFullBudgetRatio = 0.72f;
+
+    [Tooltip(
+        "spatialSpeedRatioが1を超えたとき、Smooth Assistをどれだけ早く強めるか。\n" +
+        "0なら速度比を使わず、1なら超過分を強く反映します。")]
+    [Range(0f, 1f)]
+    [SerializeField]
+    private float postUpperSmoothAssistSpeedRatioInfluence = 0.35f;
+
+    [Header("3-Wave Micro Modal Oscillation")]
+    [Tooltip(
+        "ON: 既存3waveの頂点/谷を変更せず、その間だけ衝突励起の小振動をStable-Nへ加えます。\n" +
+        "最終的には既存Acceleration/Jerk/Authority制限を必ず通ります。")]
+    [SerializeField]
+    private bool useMicroModalOscillation = true;
+
+    [Tooltip(
+        "小振動が使える最大Normal加速度を、既存Acceleration Budgetの割合で指定します。\n" +
+        "0.08なら最大8%。3wave本体より十分小さく保つための上限です。")]
+    [Range(0f, 0.25f)]
+    [SerializeField]
+    private float microModalAccelerationShare01 = 0.08f;
+
+    [Tooltip("Plane->Stair Natural Connect直後に入れる弱い初期励起。1st wave前半の細振動用。")]
+    [Range(0f, 1.5f)]
+    [SerializeField]
+    private float microModalEntryKick = 0.22f;
+
+    [Tooltip("Physical Upperで各Modalへ入れる速度Impulse倍率。ApexそのものではGate=0なので形は壊しません。")]
+    [Range(0f, 1.5f)]
+    [SerializeField]
+    private float microModalUpperKick = 0.55f;
+
+    [Tooltip("Physical Lowerで各Modalへ入れる速度Impulse倍率。次の斜面区間へ小振動を残します。")]
+    [Range(0f, 1.5f)]
+    [SerializeField]
+    private float microModalLowerKick = 0.42f;
+
+    [Tooltip("Impact速度を無次元化する基準[m/s]。小さいほど弱い衝突でも細振動が強くなります。")]
+    [Min(0.1f)]
+    [SerializeField]
+    private float microModalImpactReferenceSpeed = 6.0f;
+
+    [Tooltip(
+        "既存3waveの targetNormalVelocity と実測 rideRelativeNormalVelocity の差を、" +
+        "Micro Modalへ連続的に戻す強さ。0なら従来のImpact励起だけです。")]
+    [Range(0f, 0.75f)]
+    [SerializeField]
+    private float microModalVelocityResidualDriveGain = 0.18f;
+
+    [Tooltip(
+        "速度残差を無次元化する基準[m/s]。残差がこの値付近になるとMicro補強が明確になります。\n" +
+        "hard thresholdではなく連続飽和なので、小さい残差でも不連続にON/OFFしません。")]
+    [Min(0.05f)]
+    [SerializeField]
+    private float microModalVelocityResidualReferenceSpeed = 2.0f;
+
+    [Tooltip("各Micro Modeの減衰比。小さいほど細振動が長く残ります。")]
+    [Range(0.02f, 0.45f)]
+    [SerializeField]
+    private float microModalDampingRatio = 0.14f;
+
+    [Tooltip(
+        "弱いDuffing硬化係数。0で線形Modal。大きくすると衝突直後だけ少し硬く/速い小振動になります。")]
+    [Range(0f, 0.30f)]
+    [SerializeField]
+    private float microModalDuffingBeta = 0.07f;
+
+    [Tooltip("Main 3wave角速度に対するMode-1の非整数比。")]
+    [Range(1f, 8f)]
+    [SerializeField]
+    private float microModalFrequencyRatio1 = 2.6f;
+
+    [Tooltip("Main 3wave角速度に対するMode-2の非整数比。")]
+    [Range(1f, 8f)]
+    [SerializeField]
+    private float microModalFrequencyRatio2 = 4.1f;
+
+    [Tooltip("Main 3wave角速度に対するMode-3の非整数比。")]
+    [Range(1f, 8f)]
+    [SerializeField]
+    private float microModalFrequencyRatio3 = 5.7f;
+
+    [Tooltip(
+        "Micro Modeの最大周波数[Hz]。FixedUpdateのサンプリング限界より高い周波数は内部でさらにSoft Compressします。")]
+    [Range(4f, 18f)]
+    [SerializeField]
+    private float microModalMaximumFrequencyHz = 10f;
+
+    [Tooltip(
+        "Upper/Lower境界へ近く、かつStable-N速度が小さいgrazing領域で細振動を少し強調する割合。\n" +
+        "Apex/LowerのゼロGateは維持するため、境界そのものへ力は追加しません。")]
+    [Range(0f, 0.5f)]
+    [SerializeField]
+    private float microModalGrazingBoost01 = 0.12f;
+
+    [Tooltip("境界から何割の距離までgrazing補強を効かせるか。")]
+    [Range(0.02f, 0.35f)]
+    [SerializeField]
+    private float microModalGrazingDistance01 = 0.14f;
+
+    [Tooltip("grazing判定のStable-N速度スケール[m/s]。")]
+    [Min(0.05f)]
+    [SerializeField]
+    private float microModalGrazingVelocityScale = 0.80f;
 
     [Header("Physical Lower Impact Observation")]
     [Tooltip(
@@ -607,27 +811,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     [SerializeField] private int waveCycleIndex;
 
-    [SerializeField] private float current4RHnMeters;
-    [SerializeField] private float current4RHnR;
-
-    [Header("Upper Placement Runtime - Read Only")]
-    [Tooltip("World-Y配置補正後の実Upper接触面までのStable-N中心距離[m]。")]
-    [SerializeField] private float currentUpperNormalSpanMeters;
-
-    [Tooltip("World-Y配置補正後の実Upper接触面までのStable-N中心距離[R]。")]
-    [SerializeField] private float currentUpperNormalSpanR;
-
-    [Tooltip("現在のEqualizer位置から実Upper接触中心へ向かう方向。診断/追跡参照用。Stable-N面法線は別Authorityとして維持します。")]
-    [SerializeField] private Vector3 currentUpperTargetDirectionVisual = Vector3.up;
-
-    [Tooltip("実Upper span / 元の4R-Hn。1未満ならColliderを下げたぶん到達Energy基準も減ります。")]
-    [SerializeField] private float upperPlacementEnergyRatio = 1f;
-
-    [Tooltip("元のLogical Launch Energyへ実Upper span/4R-Hnを掛けた配置対応Energy基準[J]。厳密な外力仕事量ではなく、初速過剰を防ぐEnergy scaleです。")]
-    [SerializeField] private float upperPlacementRequiredEnergyJoule;
-
-    [Tooltip("配置対応Energy比から得る初回上昇の速度Scale。Colliderを下げた時だけ1未満になり、上げてもEnergyは新規生成しません。")]
-    [SerializeField] private float upperPlacementInitialSpeedScale = 1f;
 
     [SerializeField] private float observedNaturalPeriodSeconds;
 
@@ -640,13 +823,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField] private float springAcceleration;
     [SerializeField] private float damperAcceleration;
     [SerializeField] private float gravityCompensationAcceleration;
-    [SerializeField] private float rideAccelerationCommand;
 
-    [SerializeField] private float transportLagMeters;
-    [SerializeField] private float subjectTangentSpeed;
-    [SerializeField] private float equalizerTangentSpeed;
     [SerializeField] private float requiredCatchUpSpeed;
-    [SerializeField] private float catchUpAccelerationCommand;
 
     [Header("Spatial Wave Runtime - Read Only")]
     [Tooltip("Equalizer実位置から求めた生の空間進捗。Collider反発で後退することがあります。")]
@@ -662,6 +840,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [Tooltip("単調進捗速度の時間微分[1/s^2]。H'(p)*pDDot feed-forwardに使います。")] [SerializeField]
     private float spatialDomainAccelerationRate01PerSecond2;
 
+    // [MOTION-PROTECTED] Spatial speed reference.
+    // Keep the explicit ratio available for later tuning/comparison.
     [Tooltip("曲率Feasibilityで使ったdesignSpeed / spatialReferenceTangentSpeed。")] [SerializeField]
     private float spatialSpeedRatio = 1f;
 
@@ -706,6 +886,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField] private float spatialSubjectTimeToGo;
     [SerializeField] private float spatialRequiredArrivalSpeed;
     [SerializeField] private float spatialArrivalFeasibility01 = 1f;
+    // [MOTION-PROTECTED] Physical Upper/Lower cycle gate.
     [SerializeField] private bool upperPeakArmed = true;
 
     [Header("Logical / Physical Authority Runtime - Read Only")] [SerializeField]
@@ -713,23 +894,17 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     [SerializeField, Range(0f, 1f)] private float normalLogicalAuthority01 = 1f;
     [SerializeField] private float normalTargetAccelerationBeforeAuthority;
+    // [MOTION-PROTECTED] Final Stable-N command after logical/physical authority.
     [SerializeField] private float normalTargetAccelerationAfterAuthority;
     [SerializeField] private float normalActiveJerkLimit;
+
+    // [MOTION-PROTECTED] Upper -> descending -> Physical Lower acceptance state.
     [SerializeField] private bool physicalUpperSeenSinceLastLower;
     [SerializeField] private bool physicalLowerContactActive;
-    [SerializeField] private int physicalLowerContactCount;
-    [SerializeField] private int rejectedAscendingStairContactCount;
-    [SerializeField] private string lastPhysicalLowerColliderName = "None";
     [SerializeField] private bool rideSupportFrameContinuous = true;
-    [SerializeField] private int rideSupportFrameResetCount;
-    [SerializeField] private float rideSupportLastCenterJumpMeters;
-    [SerializeField] private float rideSupportLastMeasuredCenterSpeed;
     [SerializeField] private float lastPhysicalLowerIncomingNormalSpeed;
     [SerializeField] private float lastPhysicalLowerOutgoingNormalSpeed;
     [SerializeField] private float lastPhysicalLowerEnergyRetention01 = 1f;
-    [SerializeField] private int physicalLowerEnergyResolveFrameCount;
-    [SerializeField] private float physicalLowerBestObservedOutgoingNormalSpeed;
-    [SerializeField] private string physicalLowerEnergyResolveReason = "None";
 
     [Header("Release Energy Runtime - Read Only")] [SerializeField]
     private float sourceCanonicalNormalSpeed;
@@ -745,6 +920,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField] private int naturalConnectSampleCount;
     [SerializeField] private float naturalConnectSamplingElapsed;
     [SerializeField] private float naturalConnectBlendElapsed;
+    // [MOTION-PROTECTED] 0 -> 1 Natural Connect authority opening.
+    // This also controls how the inherited entry support fades away.
     [SerializeField, Range(0f, 1f)] private float naturalConnectControlAuthority01 = 1f;
     [SerializeField] private Vector3 naturalConnectAveragedVelocity;
     [SerializeField] private Vector3 naturalConnectAveragedSubjectVelocity;
@@ -753,6 +930,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField] private float naturalConnectMeasuredRelativeNormalSpeed;
     [SerializeField] private float naturalConnectMeasuredEnergyJoule;
 
+    // [MOTION-PROTECTED] First-wave backward/downward entry support.
+    // Do not remove even when individual members also appear in Inspector.
     [Header("Continuous Normal Support Runtime - Read Only")]
     [SerializeField] private bool continuousNormalSupportCaptured;
     [SerializeField] private bool continuousNormalSupportActive;
@@ -761,9 +940,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField] private float continuousNormalSupportAppliedAcceleration;
     [SerializeField] private string continuousNormalSupportEndReason = "None";
 
+    // [MOTION-PROTECTED] Effective Stable-N damping gain.
     [SerializeField] private float effectiveRideSpringDamper;
 
 
+    // [MOTION-PROTECTED] Passive Stable-N damping split.
     [Header("Hybrid Damping Runtime - Read Only")]
     [SerializeField] private float activeTargetNormalDriveAcceleration;
     [SerializeField] private float totalPassiveNormalDampingAcceleration;
@@ -773,26 +954,30 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float rigidbodyPassiveDampingShareApplied01;
 
 
-    [SerializeField] private float positionErrorToBallVisual;
-    [SerializeField] private float velocityErrorToBallVisual;
-    [SerializeField] private float currentKineticEnergy;
-    [SerializeField] private float subjectTransportGap;
-    [SerializeField] private float subjectDistance;
-
-    [SerializeField] private int physicsCollisionCount;
-    [SerializeField] private int upperCollisionCount;
-
     [SerializeField] private float lastUpperIncomingNormalSpeed;
 
     [Header("Upper Reflection Observation - READ ONLY")]
     [SerializeField] private int upperReflectionCount;
     [SerializeField] private float lastUpperReflectionFixedTime = -1f;
 
-    [SerializeField] private float lastUpperRawOutgoingNormalSpeed;
     [SerializeField] private float lastUpperOutgoingNormalSpeed;
-    [SerializeField] private float lastUpperMeasuredRestitution01;
     [SerializeField] private float lastImpactEnergyRetention01 = 1f;
-    [SerializeField] private bool lastUpperReflectionGovernorApplied;
+
+    // [MOTION-PROTECTED] Post-Upper world-space directional memory.
+    [Header("Post Upper Direction Runtime - Read Only")]
+    [SerializeField] private bool postUpperDirectionalMemoryActive;
+    [SerializeField] private Vector3 postUpperCapturedTangent = Vector3.forward;
+    [SerializeField] private Vector3 postUpperCapturedNormal = Vector3.up;
+    [SerializeField] private Vector3 postUpperCapturedLateral = Vector3.right;
+    [SerializeField] private float postUpperDirectionalTargetSpeed;
+    [SerializeField, Range(0f, 1f)] private float postUpperDirectionalWeight01;
+    [SerializeField] private float postUpperDirectionalAppliedAcceleration;
+    [SerializeField] private float postUpperLateralAppliedAcceleration;
+
+    [SerializeField] private float postUpperHybridAccelerationDemand;
+    [SerializeField] private float postUpperHybridAccelerationBudget;
+    [SerializeField] private float postUpperHybridAccelerationRatio;
+    [SerializeField, Range(0f, 1f)] private float postUpperHybridSmoothAssist01;
 
     [Header("Gen3 Runtime - Read Only")]
     [SerializeField] private Gen3EventPhase gen3EventPhase = Gen3EventPhase.Synchronized;
@@ -809,15 +994,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     [SerializeField] private float gen3EnergyTankCapacityJoule;
     [SerializeField, Range(0f, 1f)] private float gen3PassivityScale01 = 1f;
 
-// Compatibility diagnostics.
-    [SerializeField] private float physicsCleanRate = 1f;
-    [SerializeField] private float gameImpactSuccessRate = 1f;
-    [SerializeField] private float releaseOverallSuccessRate = 1f;
-    [SerializeField] private float dampingFeasibility01 = 1f;
-    [SerializeField] private float subjectConvergenceFeasibility = 1f;
-    [SerializeField] private float availableTimeToLimit;
-    [SerializeField] private float averageGameImpactQuality = 1f;
-
 // ================================================================
 // Runtime state
 // ================================================================
@@ -827,9 +1003,30 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private OscillationFrame oscillationFrame;
     private ReleaseFrame releaseFrame;
 
+    // [MOTION-PROTECTED] FixedUpdate-persistent Stable-N acceleration state.
     private Vector3 rideAccelerationState;
     private Vector3 transportAccelerationState;
     private Vector3 goalPlanarVelocityState;
+
+    // 3-wave micro-modal state.
+    // q = normalized modal displacement, qDot = normalized modal velocity.
+    // These are intentionally NOT serialized diagnostics.
+    private float microMode1Q;
+    private float microMode1QDot;
+    private float microMode2Q;
+    private float microMode2QDot;
+    private float microMode3Q;
+    private float microMode3QDot;
+
+    // Exact targetNormalVelocity resolved by the existing 3-wave controller
+    // in the current FixedUpdate. This is deliberately not an independent
+    // wave authority; it only drives the subordinate Micro Modal layer.
+    private float microTargetNormalVelocityReference;
+
+    private bool microPreviousNaturalConnectBlendActive;
+    private bool microPreviousUpperSeenSinceLastLower;
+    private bool microPreviousLowerContactActive;
+    private int microImpactSerial;
 
     private float naturalConnectSamplingStartTime = -1f;
     private float naturalConnectBlendStartTime = -1f;
@@ -860,6 +1057,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     private bool pendingUpperImpactEnergyMeasurement;
     private float pendingUpperIncomingNormalSpeed;
     private int pendingUpperReflectionResolveFrames;
+
+    private float postUpperDirectionalMemoryStartFixedTime = -1f;
 
     private readonly HashSet<Collider> physicalLowerContacts =
         new HashSet<Collider>();
@@ -937,21 +1136,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             ? Mathf.Max(0.0001f, ballVisualEqualizer.mass)
             : 1f;
 
-    public float PositionErrorToBallVisual => positionErrorToBallVisual;
-    public float VelocityErrorToBallVisual => velocityErrorToBallVisual;
-    public float CurrentKineticEnergy => currentKineticEnergy;
-    public float SubjectTransportGap => subjectTransportGap;
-    public float SubjectDistance => subjectDistance;
-
-    public float CleanImpactRate => physicsCleanRate;
-    public float PhysicsCleanImpactRate => physicsCleanRate;
-    public float GameImpactSuccessRate => gameImpactSuccessRate;
-    public float ReleaseOverallSuccessRate => releaseOverallSuccessRate;
-    public float DampingFeasibility01 => dampingFeasibility01;
-    public float SubjectConvergenceFeasibility => subjectConvergenceFeasibility;
-    public float AvailableTimeToLimit => availableTimeToLimit;
-    public float AverageGameImpactQuality => averageGameImpactQuality;
-
     public float ObservedNaturalPeriodSeconds =>
         observedNaturalPeriodSeconds;
 
@@ -993,13 +1177,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
     private void Start()
     {
-        Debug.Log(
-            $"[EQUALIZER BUILD] {RuntimeBuildId}",
-            this);
 
-        Debug.Log(
-            $"[EQUALIZER OBSERVATION API] {ObservationTelemetryBuildId}",
-            this);
 
         ResolveReferences();
         RefreshVisualCollisionOwnership();
@@ -1012,9 +1190,10 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 this);
             return;
         }
+       // Physics.IgnoreCollision(ballVisualEqualizerCollider,GameObject.Find("BallVisualEqualizerTest").transform.GetComponent<SphereCollider>());
 
-        EnterSynchronizedState(
-            "Start");
+
+        EnterSynchronizedState();
     }
 
 
@@ -1028,24 +1207,28 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         if (emergencyVisualRecoveryActive)
         {
+            ResetMicroModalOscillation();
             UpdateEmergencyVisualRecovery();
-            UpdateObserver();
             return;
         }
 
         if (naturalConnectSamplingActive)
         {
+            ResetMicroModalOscillation();
             UpdateNaturalConnectSampling();
-            UpdateObserver();
             return;
         }
 
         if (synchronized)
         {
+            ResetMicroModalOscillation();
             CopyBallVisualPose();
-            UpdateObserver();
             return;
         }
+
+        // Detect entry / Upper / Lower event edges before any authority transition
+        // can close them during this FixedUpdate.
+        UpdateMicroModalImpactExcitation();
 
         UpdateNaturalConnectBlend();
         UpdateWaveTimingAuthority();
@@ -1064,9 +1247,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             UpdateFloatingRideSpring();
         }
 
+        // Upper後の階段方向成分は、衝突時に固定したWorld-space Tangentを
+        // 短時間だけ補強する。Normal反射はPhysX/既存制御へ残す。
+        ApplyPostUpperDirectionalMemory();
+
         // Tangential/transport catch-up is shared. Gen3 only replaces Normal/Lower authority.
         ApplyGoalVelocityCatchUp();
-        UpdateObserver();
     }
 
 // ================================================================
@@ -1235,8 +1421,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
-    private void EnterSynchronizedState(
-        string reason)
+    private void EnterSynchronizedState()
     {
         if (!ballVisualEqualizer ||
             !ballVisual)
@@ -1261,20 +1446,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         physicalLowerContacts.Clear();
         physicalLowerContactActive = false;
-        physicalLowerContactCount = 0;
-        rejectedAscendingStairContactCount = 0;
         rideSupportFrameContinuous = true;
-        rideSupportFrameResetCount = 0;
-        rideSupportLastCenterJumpMeters = 0f;
-        rideSupportLastMeasuredCenterSpeed = 0f;
-        lastPhysicalLowerColliderName = "None";
         pendingPhysicalLowerImpactEnergyMeasurement = false;
         pendingPhysicalLowerIncomingNormalSpeed = 0f;
         pendingPhysicalLowerEnergyFrames = 0;
         pendingPhysicalLowerBestOutgoingNormalSpeed = 0f;
-        physicalLowerEnergyResolveFrameCount = 0;
-        physicalLowerBestObservedOutgoingNormalSpeed = 0f;
-        physicalLowerEnergyResolveReason = "None";
         lastPhysicalLowerIncomingNormalSpeed = 0f;
         lastPhysicalLowerOutgoingNormalSpeed = 0f;
         lastPhysicalLowerEnergyRetention01 = 1f;
@@ -1338,6 +1514,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         pendingUpperReflectionResolveFrames = 0;
         pendingUpperIncomingNormalSpeed = 0f;
+        ResetPostUpperDirectionalMemory();
 
         rideAccelerationState = Vector3.zero;
         transportAccelerationState = Vector3.zero;
@@ -1372,9 +1549,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         CopyBallVisualPose();
 
-        Debug.Log(
-            $"[EQUALIZER SYNC] reason={reason}",
-            this);
     }
 
 // ================================================================
@@ -1395,9 +1569,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         if (postTurnHermiteBridgeActive)
         {
-            Debug.Log(
-                "[EQUALIZER NATURAL CONNECT SUPPRESSED] Hermite bridge owns visual continuity.",
-                this);
             return false;
         }
 
@@ -1471,14 +1642,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         phase = EqualizerPhase.Synchronized;
         CopyBallVisualPose();
 
-        Debug.Log(
-            $"[EQUALIZER NATURAL CONNECT BEGIN] " +
-            $"time={Time.fixedTime:F4} " +
-            $"H0={naturalConnectReferenceHeight:F4}m " +
-            $"v={ballVisual.velocity:F4} " +
-            $"N={naturalConnectPreferredNormal:F4} " +
-            $"T={naturalConnectPreferredTangent:F4}",
-            this);
 
         return true;
     }
@@ -1518,6 +1681,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
+    #region PROTECTED_01_NaturalConnectSampling
+    // [MOTION-PROTECTED] UpdateNaturalConnectSampling
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void UpdateNaturalConnectSampling()
     {
         if (!naturalConnectSamplingActive ||
@@ -1626,8 +1792,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         if ((enoughFrames && enoughTime) || maximumWaitReached)
             CommitNaturalConnectRelease();
     }
+    #endregion // PROTECTED_01_NaturalConnectSampling
 
 
+    #region PROTECTED_02_NaturalConnectRelease
+    // [MOTION-PROTECTED] CommitNaturalConnectRelease
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void CommitNaturalConnectRelease()
     {
         if (!naturalConnectSamplingActive ||
@@ -1731,7 +1901,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 this);
 
             naturalConnectSamplingActive = false;
-            EnterSynchronizedState("NaturalConnectEnvelopeArmFailed");
+            EnterSynchronizedState();
             return;
         }
 
@@ -1820,18 +1990,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         upperPeakArmed = true;
         physicalUpperSeenSinceLastLower = false;
         physicalLowerContactActive = false;
-        rejectedAscendingStairContactCount = 0;
         rideSupportFrameContinuous = true;
-        rideSupportFrameResetCount = 0;
-        rideSupportLastCenterJumpMeters = 0f;
-        rideSupportLastMeasuredCenterSpeed = 0f;
         pendingPhysicalLowerImpactEnergyMeasurement = false;
         pendingPhysicalLowerIncomingNormalSpeed = 0f;
         pendingPhysicalLowerEnergyFrames = 0;
         pendingPhysicalLowerBestOutgoingNormalSpeed = 0f;
-        physicalLowerEnergyResolveFrameCount = 0;
-        physicalLowerBestObservedOutgoingNormalSpeed = 0f;
-        physicalLowerEnergyResolveReason = "None";
         lastPhysicalLowerIncomingNormalSpeed = 0f;
         lastPhysicalLowerOutgoingNormalSpeed = 0f;
         lastPhysicalLowerEnergyRetention01 = 1f;
@@ -1867,41 +2030,22 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             RefreshGen3CollisionOwnership();
         phase = EqualizerPhase.FreeFlight;
 
-        if (negativeEnvelope.TryGetFloatingRideFrame(
-                out Vector3 releaseLowerCenter,
-                out _,
-                out Vector3 releaseUpperCenter,
-                out _,
-                out Vector3 releaseStableNormal,
-                out float releaseEffectiveSpanMeters,
-                out _,
-                out _))
+        if (logMeasurements)
         {
-            UpdateUpperPlacementDiagnostics(
-                releaseLowerCenter,
-                releaseUpperCenter,
-                releaseStableNormal,
-                releaseEffectiveSpanMeters);
+            Debug.Log(
+                $"[EQ] entry vN={measuredRelativeNormalSpeed:F3}m/s " +
+                $"E={naturalConnectMeasuredEnergyJoule:F3}J " +
+                $"H={naturalConnectReferenceHeight:F3}m",
+                this);
         }
 
-        Debug.Log(
-            $"[EQUALIZER NATURAL CONNECT COMMIT] " +
-            $"samples={naturalConnectSampleCount} " +
-            $"sampleTime={naturalConnectSamplingElapsed:F4}s " +
-            $"vAvg={measuredVelocity:F4} " +
-            $"subjectVAvg={measuredSubjectVelocity:F4} " +
-            $"vNrel={measuredRelativeNormalSpeed:F4}m/s " +
-            $"measuredE={naturalConnectMeasuredEnergyJoule:F4}J " +
-            $"envelopeArmE={envelopeEnergyJoule:F4}J " +
-            $"H0={naturalConnectReferenceHeight:F4}m " +
-            $"blend={naturalConnectBlendSeconds:F4}s " +
-            $"inheritedPress={continuousNormalSupportCapturedAcceleration:F3}m/s2 " +
-            $"pressActive={continuousNormalSupportActive} " +
-            $"hybridPassiveShare={rigidbodyPassiveDampingShare01:F2}",
-            this);
     }
+    #endregion // PROTECTED_02_NaturalConnectRelease
 
 
+    #region PROTECTED_03_NaturalConnectBlend
+    // [MOTION-PROTECTED] UpdateNaturalConnectBlend
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void UpdateNaturalConnectBlend()
     {
         if (!naturalConnectBlendActive)
@@ -1936,13 +2080,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             naturalConnectControlAuthority01 = 1f;
             CompleteContinuousNormalSupportHandoff("NaturalConnectComplete");
 
-            Debug.Log(
-                $"[EQUALIZER NATURAL CONNECT COMPLETE] " +
-                $"elapsed={naturalConnectBlendElapsed:F4}s " +
-                $"authority={naturalConnectControlAuthority01:F3}",
-                this);
         }
     }
+    #endregion // PROTECTED_03_NaturalConnectBlend
 
 
     private void ResetNaturalConnectRuntime()
@@ -1968,6 +2108,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         ResetContinuousNormalSupportHandoff();
     }
 
+    #region PROTECTED_04_ResetContinuousNormalSupport
+    // [MOTION-PROTECTED] ResetContinuousNormalSupportHandoff
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void ResetContinuousNormalSupportHandoff()
     {
         continuousNormalSupportCaptured = false;
@@ -1977,8 +2120,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         continuousNormalSupportAppliedAcceleration = 0f;
         continuousNormalSupportEndReason = "None";
     }
+    #endregion // PROTECTED_04_ResetContinuousNormalSupport
 
 
+    #region PROTECTED_05_CaptureContinuousNormalSupport
+    // [MOTION-PROTECTED] CaptureContinuousNormalSupportSample
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void CaptureContinuousNormalSupportSample()
     {
         if (!useContinuousNormalSupportHandoff || !slopeCore)
@@ -2004,8 +2151,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 sampledAcceleration);
         continuousNormalSupportCaptured = true;
     }
+    #endregion // PROTECTED_05_CaptureContinuousNormalSupport
 
 
+    #region PROTECTED_06_ArmContinuousNormalSupport
+    // [MOTION-PROTECTED] ArmContinuousNormalSupportHandoff
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void ArmContinuousNormalSupportHandoff()
     {
         continuousNormalSupportActive =
@@ -2019,8 +2170,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         continuousNormalSupportEndReason =
             continuousNormalSupportActive ? "Active" : "NoCapturedSupport";
     }
+    #endregion // PROTECTED_06_ArmContinuousNormalSupport
 
 
+    #region PROTECTED_07_CompleteContinuousNormalSupport
+    // [MOTION-PROTECTED] CompleteContinuousNormalSupportHandoff
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void CompleteContinuousNormalSupportHandoff(string reason)
     {
         continuousNormalSupportActive = false;
@@ -2029,8 +2184,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         continuousNormalSupportEndReason =
             string.IsNullOrEmpty(reason) ? "Complete" : reason;
     }
+    #endregion // PROTECTED_07_CompleteContinuousNormalSupport
 
 
+    #region PROTECTED_08_ResolveContinuousNormalSupport
+    // [MOTION-PROTECTED] ResolveContinuousNormalSupportAcceleration
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private float ResolveContinuousNormalSupportAcceleration(
         float safetyAuthority01)
     {
@@ -2058,6 +2217,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         continuousNormalSupportAppliedAcceleration = acceleration;
         return acceleration;
     }
+    #endregion // PROTECTED_08_ResolveContinuousNormalSupport
 
 
     private void ApplyContinuousNormalSupportForGen3(Vector3 normal)
@@ -2390,8 +2550,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             lateral = lateral
         };
 
-        UpdateUpperPlacementDiagnostics(lowerCenter, upperCenter, normal, spanMeters);
-        currentUpperNormalSpanR = spanR;
         if (observedPeriod > 0f)
             observedNaturalPeriodSeconds = observedPeriod;
 
@@ -2531,13 +2689,16 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         gen3CurrentCycleTargetSpanR = ComputeGen3CycleTargetSpanR(waveCycleIndex);
         gen3EventPhase = Gen3EventPhase.PhysicalUpperImpact;
 
-        Debug.Log(
-            $"[EQUALIZER GEN3 POINCARE] cycle={waveCycleIndex} " +
-            $"observed={gen3ObservedUpperSpanR:F3}R " +
-            $"targetNext={gen3CurrentCycleTargetSpanR:F3}R " +
-            $"ilc={gen3IlcCorrectionR:F3}R " +
-            $"tank={gen3EnergyTankJoule:F3}/{gen3EnergyTankCapacityJoule:F3}J",
-            this);
+        if (logMeasurements)
+        {
+            Debug.Log(
+                $"[EQ] gen3 cycle={waveCycleIndex} " +
+                $"upper={gen3ObservedUpperSpanR:F3}R " +
+                $"target={gen3CurrentCycleTargetSpanR:F3}R " +
+                $"ilc={gen3IlcCorrectionR:F3}R",
+                this);
+        }
+
     }
 
     private void RefreshGen3CollisionOwnership()
@@ -2582,6 +2743,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 // Floating Ride Spring
 // ================================================================
 
+    #region PROTECTED_09_FloatingRideSpringDamper
+    // [MOTION-PROTECTED] UpdateFloatingRideSpring
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void UpdateFloatingRideSpring()
     {
         if (!negativeEnvelope ||
@@ -2631,17 +2795,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 normal = normal,
                 lateral = lateral
             };
-
-        UpdateUpperPlacementDiagnostics(
-            lowerCenter,
-            upperCenter,
-            normal,
-            spanMeters);
-
-        // spanR is the effective shifted Upper span returned by the Envelope.
-        // Keep it in the dedicated runtime field; current4RHnR remains the
-        // unshifted 4R-Hn diagnostic from TryGetCurrentPresentationCenterTravel.
-        currentUpperNormalSpanR = spanR;
 
         if (observedPeriod > 0f)
             observedNaturalPeriodSeconds = observedPeriod;
@@ -2856,6 +3009,32 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 ? Mathf.Max(50f, spatialWaveAccelerationBudget)
                 : Mathf.Max(1f, maximumRideAcceleration);
 
+        // ------------------------------------------------------------
+        // Impact-excited micro-modal substructure.
+        //
+        // IMPORTANT:
+        // - Main 3-wave carrier is not modified.
+        // - G(phi)=sin^2(2*pi*phi) makes the added acceleration exactly
+        //   zero at Lower (0/1) and Upper/Apex (0.5).
+        // - The result still passes the EXISTING acceleration clamp,
+        //   Logical/Physical authority and jerk limiter below.
+        // ------------------------------------------------------------
+        if (spatialMode)
+        {
+            // Use the SAME targetNormalVelocity that already drives the
+            // original C(vTarget-vN) damper. Micro Modal does not invent a
+            // second target velocity; it only reacts to the residual.
+            microTargetNormalVelocityReference =
+                targetNormalVelocity;
+
+            desiredScalarAcceleration +=
+                ResolveMicroModalAcceleration(
+                    spanMeters,
+                    rideActualHeight,
+                    rideRelativeNormalVelocity,
+                    accelerationLimit);
+        }
+
 
         // Relative-coordinate controller:
         //   x_rel = xEqualizer - xSupport
@@ -2993,27 +3172,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 ForceMode.Acceleration);
         }
 
-        rideAccelerationCommand =
-            Vector3.Dot(rideAccelerationState, normal);
-
         if (normalAuthorityZone != previousNormalAuthorityZone)
         {
-            Debug.Log(
-                $"[EQUALIZER AUTHORITY] " +
-                $"{previousNormalAuthorityZone}->{normalAuthorityZone} " +
-                $"hN={rideActualHeight:F4}m " +
-                $"vN={rideRelativeNormalVelocity:F4}m/s " +
-                $"authority={normalLogicalAuthority01:F3} " +
-                $"aTarget={normalTargetAccelerationAfterAuthority:F3}m/s2 " +
-                $"passive={totalPassiveNormalDampingAcceleration:F3}m/s2 " +
-                $"rbDamp={rigidbodyPassiveDampingAppliedAcceleration:F3}m/s2 " +
-                $"rbShare={rigidbodyPassiveDampingShareApplied01:F2} " +
-                $"jerk={normalActiveJerkLimit:F1}m/s3",
-                this);
 
             previousNormalAuthorityZone = normalAuthorityZone;
         }
-
 
 
         phase =
@@ -3023,8 +3186,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                     ? EqualizerPhase.HopperFlight
                     : EqualizerPhase.FreeFlight;
     }
+    #endregion // PROTECTED_09_FloatingRideSpringDamper
 
 
+    #region PROTECTED_10_NormalAuthority
+    // [MOTION-PROTECTED] ResolveNormalAuthority
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void ResolveNormalAuthority(
         float signedHeightFromVirtualLower,
         float logicalJerkLimit,
@@ -3057,6 +3224,632 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         activeJerkLimit = Mathf.Max(1f, logicalJerkLimit);
         zone = NormalAuthorityZone.LogicalEnvelope;
     }
+    #endregion // PROTECTED_10_NormalAuthority
+
+
+// ================================================================
+// 3-Wave Micro Modal Oscillation
+// ================================================================
+
+    private void ResetMicroModalOscillation()
+    {
+        microMode1Q = 0f;
+        microMode1QDot = 0f;
+        microMode2Q = 0f;
+        microMode2QDot = 0f;
+        microMode3Q = 0f;
+        microMode3QDot = 0f;
+        microTargetNormalVelocityReference = 0f;
+        microImpactSerial = 0;
+
+        // Synchronize edge latches to the CURRENT state so a reset never
+        // fabricates a new entry/impact on the following FixedUpdate.
+        microPreviousNaturalConnectBlendActive =
+            naturalConnectBlendActive;
+        microPreviousUpperSeenSinceLastLower =
+            physicalUpperSeenSinceLastLower;
+        microPreviousLowerContactActive =
+            physicalLowerContactActive;
+    }
+
+
+    private void UpdateMicroModalImpactExcitation()
+    {
+        bool compatibleMode =
+            useMicroModalOscillation &&
+            equalizerControlMode == EqualizerControlMode.LegacyHybrid &&
+            waveTimingMode == WaveTimingMode.ThreeWavesPerStair &&
+            !postTurnHermiteBridgeActive;
+
+        if (!compatibleMode)
+        {
+            ResetMicroModalOscillation();
+            return;
+        }
+
+        bool entryActive =
+            naturalConnectBlendActive;
+
+        bool upperActive =
+            physicalUpperSeenSinceLastLower;
+
+        bool lowerActive =
+            physicalLowerContactActive;
+
+        // First-wave pre-Upper micro motion:
+        // use the already measured Natural Connect relative-N speed.
+        if (entryActive &&
+            !microPreviousNaturalConnectBlendActive)
+        {
+            ExciteMicroModalOscillation(
+                Mathf.Abs(
+                    naturalConnectMeasuredRelativeNormalSpeed),
+                microModalEntryKick,
+                1f);
+        }
+
+        // Physical Upper event.
+        // The modal state receives the impact energy, but Apex Guard will make
+        // its instantaneous output zero at phi=0.5.
+        if (upperActive &&
+            !microPreviousUpperSeenSinceLastLower)
+        {
+            float incoming =
+                Mathf.Max(
+                    Mathf.Abs(lastUpperIncomingNormalSpeed),
+                    ReadMicroRelativeNormalSpeed());
+
+            ExciteMicroModalOscillation(
+                incoming,
+                microModalUpperKick,
+                1f);
+        }
+
+        // Physical Lower event. Flip the principal polarity so the next slope
+        // does not become a repeated copy of the Upper-excited response.
+        if (lowerActive &&
+            !microPreviousLowerContactActive)
+        {
+            float incoming =
+                Mathf.Max(
+                    Mathf.Abs(lastPhysicalLowerIncomingNormalSpeed),
+                    ReadMicroRelativeNormalSpeed());
+
+            ExciteMicroModalOscillation(
+                incoming,
+                microModalLowerKick,
+                -1f);
+        }
+
+        microPreviousNaturalConnectBlendActive =
+            entryActive;
+        microPreviousUpperSeenSinceLastLower =
+            upperActive;
+        microPreviousLowerContactActive =
+            lowerActive;
+    }
+
+
+    private float ReadMicroRelativeNormalSpeed()
+    {
+        if (!ballVisualEqualizer ||
+            !oscillationFrame.valid ||
+            oscillationFrame.normal.sqrMagnitude <= Epsilon)
+        {
+            return 0f;
+        }
+
+        Vector3 normal =
+            oscillationFrame.normal.normalized;
+
+        float equalizerVN =
+            Vector3.Dot(
+                ballVisualEqualizer.velocity,
+                normal);
+
+        float supportVN =
+            Vector3.Dot(
+                ReadSubjectVelocityVisual(),
+                normal);
+
+        return
+            Mathf.Abs(
+                equalizerVN -
+                supportVN);
+    }
+
+
+    private void ExciteMicroModalOscillation(
+        float impactNormalSpeed,
+        float kickGain,
+        float eventPolarity)
+    {
+        if (!useMicroModalOscillation ||
+            impactNormalSpeed <= Epsilon ||
+            kickGain <= 0f)
+        {
+            return;
+        }
+
+        float normalizedImpact =
+            Mathf.Clamp(
+                impactNormalSpeed /
+                Mathf.Max(
+                    0.1f,
+                    microModalImpactReferenceSpeed),
+                0f,
+                1.75f);
+
+        float kick =
+            normalizedImpact *
+            Mathf.Max(
+                0f,
+                kickGain);
+
+        float dt =
+            Mathf.Max(
+                Time.fixedDeltaTime,
+                0.000001f);
+
+        float omega1 =
+            ResolveMicroModeAngularSpeed(
+                microModalFrequencyRatio1,
+                dt);
+
+        float omega2 =
+            ResolveMicroModeAngularSpeed(
+                microModalFrequencyRatio2,
+                dt);
+
+        float omega3 =
+            ResolveMicroModeAngularSpeed(
+                microModalFrequencyRatio3,
+                dt);
+
+        if (omega1 <= Epsilon &&
+            omega2 <= Epsilon &&
+            omega3 <= Epsilon)
+        {
+            return;
+        }
+
+        // Deterministic, non-integer modal mixture.
+        // Alternating the second mode prevents Upper/Lower responses from
+        // collapsing into the same repeated waveform while remaining replayable.
+        float alternating =
+            (microImpactSerial & 1) == 0
+                ? 1f
+                : -1f;
+
+        float polarity =
+            eventPolarity >= 0f
+                ? 1f
+                : -1f;
+
+        microMode1QDot +=
+            polarity *
+            kick *
+            omega1 *
+            0.55f;
+
+        microMode2QDot +=
+            -polarity *
+            alternating *
+            kick *
+            omega2 *
+            0.32f;
+
+        microMode3QDot +=
+            polarity *
+            kick *
+            omega3 *
+            0.18f;
+
+        microImpactSerial++;
+    }
+
+
+    private float ResolveMicroModalAcceleration(
+        float spanMeters,
+        float actualHeightMeters,
+        float relativeNormalVelocity,
+        float accelerationLimit)
+    {
+        if (!useMicroModalOscillation ||
+            accelerationLimit <= Epsilon)
+        {
+            return 0f;
+        }
+
+        float dt =
+            Mathf.Max(
+                Time.fixedDeltaTime,
+                0.000001f);
+
+        // ------------------------------------------------------------
+        // Main-wave phase gate.
+        //
+        // phi=0   Lower  -> 0
+        // phi=0.5 Upper  -> 0
+        // phi=1   Lower  -> 0
+        //
+        // This gate is used BOTH for Micro output and for residual drive.
+        // Therefore targetNormalVelocity coupling cannot push the apex itself.
+        // ------------------------------------------------------------
+        float phase01 =
+            Mathf.Repeat(
+                spatialWavePhase01,
+                1f);
+
+        float theta =
+            2f *
+            Mathf.PI *
+            phase01;
+
+        float apexWave =
+            Mathf.Sin(
+                theta);
+
+        float apexGuard01 =
+            apexWave *
+            apexWave;
+
+        // ------------------------------------------------------------
+        // Residual coupling to the ORIGINAL 3-wave velocity target.
+        //
+        // eV = vTarget - vActual
+        //
+        // The main controller already uses exactly this quantity through
+        // C(vTarget-vN). Here it is only a weak secondary excitation source.
+        // Smooth rational saturation avoids a hard threshold:
+        //
+        // eNorm = eV / sqrt(eV^2 + vRef^2)
+        //
+        // -> small residual : almost zero Micro drive
+        // -> large residual : smoothly approaches +/-1
+        // ------------------------------------------------------------
+        float velocityResidual =
+            microTargetNormalVelocityReference -
+            relativeNormalVelocity;
+
+        float residualReferenceSpeed =
+            Mathf.Max(
+                0.05f,
+                microModalVelocityResidualReferenceSpeed);
+
+        float residualNormalized =
+            velocityResidual /
+            Mathf.Sqrt(
+                velocityResidual *
+                velocityResidual +
+                residualReferenceSpeed *
+                residualReferenceSpeed);
+
+        float residualDrive =
+            residualNormalized *
+            Mathf.Clamp(
+                microModalVelocityResidualDriveGain,
+                0f,
+                0.75f) *
+            apexGuard01;
+
+        float omega1 =
+            ResolveMicroModeAngularSpeed(
+                microModalFrequencyRatio1,
+                dt);
+
+        float omega2 =
+            ResolveMicroModeAngularSpeed(
+                microModalFrequencyRatio2,
+                dt);
+
+        float omega3 =
+            ResolveMicroModeAngularSpeed(
+                microModalFrequencyRatio3,
+                dt);
+
+        float damping =
+            Mathf.Clamp(
+                microModalDampingRatio,
+                0.02f,
+                0.45f);
+
+        float duffingBeta =
+            Mathf.Clamp(
+                microModalDuffingBeta,
+                0f,
+                0.30f);
+
+        // Non-integer modes receive different residual-drive polarity/weight.
+        // Because targetNormalVelocity reverses naturally across the wave,
+        // this produces a smooth but less repetitive "tricky" micro response
+        // without adding random noise or a second phase clock.
+        StepMicroModalMode(
+            ref microMode1Q,
+            ref microMode1QDot,
+            omega1,
+            damping,
+            duffingBeta,
+            residualDrive * 0.42f,
+            dt);
+
+        StepMicroModalMode(
+            ref microMode2Q,
+            ref microMode2QDot,
+            omega2,
+            damping,
+            duffingBeta,
+            -residualDrive * 0.27f,
+            dt);
+
+        StepMicroModalMode(
+            ref microMode3Q,
+            ref microMode3QDot,
+            omega3,
+            damping,
+            duffingBeta,
+            residualDrive * 0.16f,
+            dt);
+
+        // Soft grazing emphasis.
+        // It does NOT inject a separate force; it only lets the already
+        // existing modal response persist slightly more near a slow boundary.
+        float height01 =
+            spanMeters > Epsilon
+                ? Mathf.Clamp01(
+                    actualHeightMeters /
+                    spanMeters)
+                : 0.5f;
+
+        float nearestBoundaryDistance01 =
+            Mathf.Min(
+                height01,
+                1f - height01);
+
+        float distanceScale =
+            Mathf.Max(
+                0.01f,
+                microModalGrazingDistance01);
+
+        float distanceRatio =
+            nearestBoundaryDistance01 /
+            distanceScale;
+
+        float distanceWeight =
+            Mathf.Exp(
+                -distanceRatio *
+                distanceRatio);
+
+        float velocityScale =
+            Mathf.Max(
+                0.05f,
+                microModalGrazingVelocityScale);
+
+        float velocityRatio =
+            Mathf.Abs(
+                relativeNormalVelocity) /
+            velocityScale;
+
+        float velocityWeight =
+            Mathf.Exp(
+                -velocityRatio *
+                velocityRatio);
+
+        float grazingWeight01 =
+            distanceWeight *
+            velocityWeight;
+
+        float grazingBoost =
+            1f +
+            grazingWeight01 *
+            Mathf.Clamp(
+                microModalGrazingBoost01,
+                0f,
+                0.5f);
+
+        float modalSignal =
+            microMode1Q * 0.55f +
+            microMode2Q * 0.30f +
+            microMode3Q * 0.15f;
+
+        modalSignal =
+            Mathf.Clamp(
+                modalSignal,
+                -1.25f,
+                1.25f);
+
+        float microBudget =
+            accelerationLimit *
+            Mathf.Clamp(
+                microModalAccelerationShare01,
+                0f,
+                0.25f);
+
+        float microAcceleration =
+            modalSignal *
+            apexGuard01 *
+            grazingBoost *
+            microBudget;
+
+        return
+            Mathf.Clamp(
+                microAcceleration,
+                -microBudget,
+                microBudget);
+    }
+
+
+    private float ResolveMicroModeAngularSpeed(
+        float frequencyRatio,
+        float dt)
+    {
+        float mainAngularSpeed =
+            Mathf.Abs(
+                spatialGuidedAngularSpeed);
+
+        if (mainAngularSpeed <= Epsilon)
+        {
+            mainAngularSpeed =
+                Mathf.Abs(
+                    spatialPathAngularSpeed);
+        }
+
+        if (mainAngularSpeed <= Epsilon &&
+            spatialReferencePeriodSeconds > Epsilon)
+        {
+            mainAngularSpeed =
+                2f *
+                Mathf.PI /
+                spatialReferencePeriodSeconds;
+        }
+
+        if (mainAngularSpeed <= Epsilon &&
+            observedNaturalPeriodSeconds > Epsilon)
+        {
+            mainAngularSpeed =
+                2f *
+                Mathf.PI /
+                observedNaturalPeriodSeconds;
+        }
+
+        // Plane->Stair first half-wave fallback, before the spatial solver has
+        // published an angular speed for the new section.
+        if (mainAngularSpeed <= Epsilon &&
+            preferredHalfPeriodSeconds > Epsilon)
+        {
+            mainAngularSpeed =
+                Mathf.PI /
+                preferredHalfPeriodSeconds;
+        }
+
+        if (mainAngularSpeed <= Epsilon)
+            return 0f;
+
+        float rawFrequencyHz =
+            mainAngularSpeed /
+            (2f * Mathf.PI) *
+            Mathf.Max(
+                1f,
+                frequencyRatio);
+
+        // FixedUpdate-safe soft compression:
+        // instead of hard-clamping several high modes to the same frequency,
+        // f = fMax * (1-exp(-fRaw/fMax)) keeps their ordering while asymptoting.
+        float fixedStepSafeHz =
+            0.18f /
+            Mathf.Max(
+                dt,
+                0.000001f);
+
+        float maximumFrequencyHz =
+            Mathf.Max(
+                1f,
+                Mathf.Min(
+                    Mathf.Max(
+                        1f,
+                        microModalMaximumFrequencyHz),
+                    fixedStepSafeHz));
+
+        float compressedFrequencyHz =
+            maximumFrequencyHz *
+            (1f -
+             Mathf.Exp(
+                 -rawFrequencyHz /
+                 maximumFrequencyHz));
+
+        return
+            2f *
+            Mathf.PI *
+            compressedFrequencyHz;
+    }
+
+
+    private static void StepMicroModalMode(
+        ref float q,
+        ref float qDot,
+        float omega,
+        float dampingRatio,
+        float duffingBeta,
+        float externalDrive,
+        float dt)
+    {
+        if (omega <= Epsilon ||
+            dt <= Epsilon)
+        {
+            q = 0f;
+            qDot = 0f;
+            return;
+        }
+
+        float q2 =
+            q *
+            q;
+
+        float nonlinearPosition =
+            q +
+            duffingBeta *
+            q *
+            q2;
+
+        float qAcceleration =
+            -2f *
+            dampingRatio *
+            omega *
+            qDot -
+            omega *
+            omega *
+            nonlinearPosition +
+            omega *
+            omega *
+            externalDrive;
+
+        // Semi-implicit Euler is intentionally used here:
+        // velocity first, then displacement. With the frequency compression
+        // above it remains well behaved at ordinary Unity FixedUpdate rates.
+        qDot +=
+            qAcceleration *
+            dt;
+
+        q +=
+            qDot *
+            dt;
+
+        if (!IsFinite(q) ||
+            !IsFinite(qDot))
+        {
+            q = 0f;
+            qDot = 0f;
+            return;
+        }
+
+        q =
+            Mathf.Clamp(
+                q,
+                -1.5f,
+                1.5f);
+
+        float maximumModalVelocity =
+            Mathf.Max(
+                1f,
+                omega *
+                2.0f);
+
+        qDot =
+            Mathf.Clamp(
+                qDot,
+                -maximumModalVelocity,
+                maximumModalVelocity);
+
+        // Kill denormally-small tails so an old section can never leave
+        // invisible residual state for many seconds.
+        if (Mathf.Abs(q) < 0.00001f &&
+            Mathf.Abs(qDot) < 0.0001f)
+        {
+            q = 0f;
+            qDot = 0f;
+        }
+    }
+
 
     private float ResolveEqualizerWorldRadius()
     {
@@ -3071,68 +3864,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         return Mathf.Max(
             0.0001f,
             ballVisualEqualizerCollider.radius * maximumScale);
-    }
-
-
-    private void UpdateUpperPlacementDiagnostics(
-        Vector3 lowerCenter,
-        Vector3 upperCenter,
-        Vector3 stableNormal,
-        float effectiveSpanMeters)
-    {
-        // 4R-Hn is kept as the unshifted canonical geometry.
-        // The moved Collider supplies a separate effective Stable-N span.
-        if (negativeEnvelope &&
-            negativeEnvelope.TryGetCurrentPresentationCenterTravel(
-                out float raw4RHnMeters,
-                out float raw4RHnR))
-        {
-            current4RHnMeters = raw4RHnMeters;
-            current4RHnR = raw4RHnR;
-        }
-
-        currentUpperNormalSpanMeters =
-            Mathf.Max(0f, effectiveSpanMeters);
-
-        float radius =
-            ResolveEqualizerWorldRadius();
-
-        currentUpperNormalSpanR =
-            radius > Epsilon
-                ? currentUpperNormalSpanMeters / radius
-                : 0f;
-
-        Vector3 toUpper =
-            upperCenter - ballVisualEqualizer.position;
-
-        currentUpperTargetDirectionVisual =
-            toUpper.sqrMagnitude > Epsilon
-                ? toUpper.normalized
-                : stableNormal;
-
-        // Placement Energy law:
-        //     E_upper = E_launch * D_effective / D_(4R-Hn)
-        //
-        // This does NOT rewrite 4R-Hn or create extra Energy. It only removes
-        // the portion of the initial normal kinetic Energy that is no longer
-        // needed when the whole Upper plane is moved downward.
-        upperPlacementEnergyRatio =
-            current4RHnMeters > Epsilon
-                ? Mathf.Max(
-                    0f,
-                    currentUpperNormalSpanMeters / current4RHnMeters)
-                : 1f;
-
-        upperPlacementRequiredEnergyJoule =
-            Mathf.Max(0f, logicalLaunchEnergyJoule) *
-            upperPlacementEnergyRatio;
-
-        // Raising Upper may require more Energy, but this class must never
-        // manufacture it. Only downward placement can reduce entry-connect speed.
-        upperPlacementInitialSpeedScale =
-            Mathf.Sqrt(
-                Mathf.Clamp01(
-                    upperPlacementEnergyRatio));
     }
 
 
@@ -3198,25 +3929,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             centerJumpMeters > maximumCenterJump ||
             apparentCenterSpeed > maximumMeasuredSpeed;
 
-        rideSupportLastCenterJumpMeters = centerJumpMeters;
-        rideSupportLastMeasuredCenterSpeed = apparentCenterSpeed;
-
         if (projectionOrFrameJump)
         {
-            rideSupportFrameResetCount++;
-
             previousRideSupportCenter = supportCenter;
             previousRideSupportVelocity = fallbackVelocity;
             previousRideSupportSampleTime = sampleTime;
 
-            Debug.Log(
-                $"[EQUALIZER SUPPORT FRAME RESET] " +
-                $"jump={centerJumpMeters:F4}m " +
-                $"apparentSpeed={apparentCenterSpeed:F2}m/s " +
-                $"fallbackSpeed={fallbackVelocity.magnitude:F2}m/s " +
-                $"maxJump={maximumCenterJump:F4}m " +
-                $"count={rideSupportFrameResetCount}",
-                this);
 
             return false;
         }
@@ -3238,6 +3956,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
+    #region PROTECTED_11_SpatialCurvatureAndWaveReference
+    // [MOTION-PROTECTED] TryResolveSpatialCurvatureAdaptiveReference
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private bool TryResolveSpatialCurvatureAdaptiveReference(
         Vector3 lowerCenter,
         float envelopeSpanMeters,
@@ -3591,11 +4312,15 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         return true;
     }
+    #endregion // PROTECTED_11_SpatialCurvatureAndWaveReference
 
 // ================================================================
 // Goal velocity catch-up
 // ================================================================
 
+    #region PROTECTED_12_TransportCatchUp
+    // [MOTION-PROTECTED] ApplyGoalVelocityCatchUp
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void ApplyGoalVelocityCatchUp()
     {
         if (!oscillationFrame.valid ||
@@ -3648,30 +4373,15 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 ballVisualEqualizer.position,
                 normal);
 
-        transportLagMeters =
-            Vector3.Dot(
-                planeGap,
-                tangent);
-
         Vector3 subjectPlanarVelocity =
             Vector3.ProjectOnPlane(
                 subjectVelocity,
                 normal);
 
-        subjectTangentSpeed =
-            Vector3.Dot(
-                subjectPlanarVelocity,
-                tangent);
-
         Vector3 equalizerPlanarVelocity =
             Vector3.ProjectOnPlane(
                 ballVisualEqualizer.velocity,
                 normal);
-
-        equalizerTangentSpeed =
-            Vector3.Dot(
-                equalizerPlanarVelocity,
-                tangent);
 
         Vector3 rawGoalVelocity =
             subjectPlanarVelocity +
@@ -3878,12 +4588,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             ballVisualEqualizer.worldCenterOfMass,
             ForceMode.Force);
 
-        catchUpAccelerationCommand =
-            Vector3.Dot(
-                transportAccelerationState,
-                tangent) *
-            connectTransportAuthority;
     }
+    #endregion // PROTECTED_12_TransportCatchUp
 
 
     private void ApplySpatialArrivalDeadlineToGoal(
@@ -4002,10 +4708,439 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             lateralGoal;
     }
 
+    #region PROTECTED_12B_PostUpperDirectionalMemory
+    // [MOTION-PROTECTED] Upper後の階段方向メモリ。
+    //
+    // Normal:
+    //   実衝突の反射はPhysX / Upper Reflection側が所有。
+    //
+    // Tangent/Lateral:
+    //   Upper接触時にWorld-spaceで確定したframeだけを使う。
+    //   Transform/Visualの回転から再計算しない。
+    //
+    // Tangent速度:
+    //   dvT/dt = (vTarget - vT) / tau
+    //
+    // Weight:
+    //   w(t) = exp(-ln(2) * t / halfLife)
+    //
+    // 厳密なphase一致や位置閾値を要求せず、Accepted Upperを起点に
+    // 徐々に効き、Physical Lowerまたは明示的Rejoinで終了する。
+    private void ResetPostUpperDirectionalMemory()
+    {
+        postUpperDirectionalMemoryActive = false;
+        postUpperDirectionalMemoryStartFixedTime = -1f;
+        postUpperDirectionalTargetSpeed = 0f;
+        postUpperDirectionalWeight01 = 0f;
+        postUpperDirectionalAppliedAcceleration = 0f;
+        postUpperLateralAppliedAcceleration = 0f;
+        postUpperHybridAccelerationDemand = 0f;
+        postUpperHybridAccelerationBudget = 0f;
+        postUpperHybridAccelerationRatio = 0f;
+        postUpperHybridSmoothAssist01 = 0f;
+        postUpperCapturedTangent = Vector3.forward;
+        postUpperCapturedNormal = Vector3.up;
+        postUpperCapturedLateral = Vector3.right;
+    }
+
+
+    private void ArmPostUpperDirectionalMemory(Collision collision)
+    {
+        if (!usePostUpperDirectionalMemory ||
+            !ballVisualEqualizer)
+        {
+            ResetPostUpperDirectionalMemory();
+            return;
+        }
+
+        Vector3 normal = Vector3.up;
+        Vector3 tangent = Vector3.zero;
+
+        if (oscillationFrame.valid)
+        {
+            normal = oscillationFrame.normal;
+            tangent = oscillationFrame.tangent;
+        }
+        else if (collision != null &&
+                 collision.contactCount > 0)
+        {
+            normal = collision.GetContact(0).normal;
+            tangent = naturalConnectAveragedTangent;
+        }
+
+        if (normal.sqrMagnitude <= Epsilon)
+            normal = Vector3.up;
+
+        normal.Normalize();
+
+        tangent =
+            Vector3.ProjectOnPlane(
+                tangent,
+                normal);
+
+        // Formal frameが瞬間的に取れなくても、現在の運動から緩くfallbackする。
+        if (tangent.sqrMagnitude <= Epsilon)
+        {
+            tangent =
+                Vector3.ProjectOnPlane(
+                    ReadSubjectVelocityVisual(),
+                    normal);
+        }
+
+        if (tangent.sqrMagnitude <= Epsilon)
+        {
+            tangent =
+                Vector3.ProjectOnPlane(
+                    ballVisualEqualizer.velocity,
+                    normal);
+        }
+
+        if (tangent.sqrMagnitude <= Epsilon)
+            return;
+
+        tangent.Normalize();
+
+        // 重力成分がある斜面では「重力と同じ向き」をdown-stairとする。
+        // ほぼ平面なら現在の進行方向と符号を合わせる。
+        float gravityDot =
+            Vector3.Dot(
+                tangent,
+                Physics.gravity);
+
+        if (gravityDot < -Epsilon)
+        {
+            tangent = -tangent;
+        }
+        else if (Mathf.Abs(gravityDot) <= Epsilon)
+        {
+            Vector3 observedPlanarVelocity =
+                Vector3.ProjectOnPlane(
+                    ReadSubjectVelocityVisual(),
+                    normal);
+
+            if (observedPlanarVelocity.sqrMagnitude <= Epsilon)
+            {
+                observedPlanarVelocity =
+                    Vector3.ProjectOnPlane(
+                        ballVisualEqualizer.velocity,
+                        normal);
+            }
+
+            if (observedPlanarVelocity.sqrMagnitude > Epsilon &&
+                Vector3.Dot(
+                    tangent,
+                    observedPlanarVelocity) < 0f)
+            {
+                tangent = -tangent;
+            }
+        }
+
+        Vector3 lateral =
+            Vector3.Cross(
+                normal,
+                tangent);
+
+        if (lateral.sqrMagnitude <= Epsilon)
+            return;
+
+        lateral.Normalize();
+
+        postUpperCapturedNormal = normal;
+        postUpperCapturedTangent = tangent;
+        postUpperCapturedLateral = lateral;
+
+        float currentTangentSpeed =
+            Mathf.Max(
+                0f,
+                Vector3.Dot(
+                    ballVisualEqualizer.velocity,
+                    tangent));
+
+        float subjectTangentSpeed =
+            Mathf.Max(
+                0f,
+                Vector3.Dot(
+                    ReadSubjectVelocityVisual(),
+                    tangent));
+
+        float sourceReferenceSpeed = 0f;
+
+        if (negativeEnvelope)
+        {
+            negativeEnvelope.TryGetSourceMaxGroundSpeedReadOnly(
+                out sourceReferenceSpeed);
+        }
+
+        float referenceFloor =
+            Mathf.Max(
+                0f,
+                sourceReferenceSpeed) *
+            Mathf.Clamp01(
+                postUpperDirectionalReferenceSpeedFraction);
+
+        // 速度を落とす制御にはしない。
+        // 現在/Subject/maxGround由来のうち最も大きい下降Tangentを保持対象にする。
+        postUpperDirectionalTargetSpeed =
+            Mathf.Max(
+                currentTangentSpeed,
+                subjectTangentSpeed,
+                referenceFloor);
+
+        postUpperDirectionalMemoryStartFixedTime =
+            Time.fixedTime;
+
+        postUpperDirectionalWeight01 = 1f;
+        postUpperDirectionalAppliedAcceleration = 0f;
+        postUpperLateralAppliedAcceleration = 0f;
+        postUpperHybridAccelerationDemand = 0f;
+        postUpperHybridAccelerationBudget = 0f;
+        postUpperHybridAccelerationRatio = 0f;
+        postUpperHybridSmoothAssist01 = 0f;
+        postUpperDirectionalMemoryActive = true;
+    }
+
+
+    private void ApplyPostUpperDirectionalMemory()
+    {
+        if (!postUpperDirectionalMemoryActive ||
+            !usePostUpperDirectionalMemory ||
+            !ballVisualEqualizer)
+        {
+            return;
+        }
+
+        Vector3 tangent =
+            postUpperCapturedTangent;
+
+        Vector3 lateral =
+            postUpperCapturedLateral;
+
+        if (tangent.sqrMagnitude <= Epsilon)
+            return;
+
+        tangent.Normalize();
+
+        float elapsed =
+            Mathf.Max(
+                0f,
+                Time.fixedTime -
+                postUpperDirectionalMemoryStartFixedTime);
+
+        float halfLife =
+            Mathf.Max(
+                0.02f,
+                postUpperDirectionalHalfLifeSeconds);
+
+        float weight01 =
+            Mathf.Exp(
+                -0.69314718056f *
+                elapsed /
+                halfLife);
+
+        postUpperDirectionalWeight01 =
+            Mathf.Clamp01(
+                weight01);
+
+        // ------------------------------------------------------------
+        // Hybrid authority:
+        //
+        // Low/medium Stable-N acceleration:
+        //   keep the original rough Equalizer response untouched.
+        //
+        // High Stable-N acceleration:
+        //   progressively add the smooth Post-Upper tangent/lateral assist.
+        //
+        // No hard phase/angle/restitution gate is added here.  The blend is
+        // driven by the already-existing protected acceleration state.
+        // ------------------------------------------------------------
+        Vector3 capturedNormal =
+            postUpperCapturedNormal.sqrMagnitude > Epsilon
+                ? postUpperCapturedNormal.normalized
+                : Vector3.up;
+
+        float commandedNormalAcceleration =
+            Mathf.Abs(
+                normalTargetAccelerationAfterAuthority);
+
+        float realizedNormalAcceleration =
+            Mathf.Abs(
+                Vector3.Dot(
+                    rideAccelerationState,
+                    capturedNormal));
+
+        float accelerationDemand =
+            Mathf.Max(
+                commandedNormalAcceleration,
+                realizedNormalAcceleration);
+
+        float accelerationBudget =
+            waveTimingMode == WaveTimingMode.ThreeWavesPerStair
+                ? Mathf.Max(
+                    50f,
+                    spatialWaveAccelerationBudget)
+                : Mathf.Max(
+                    1f,
+                    maximumRideAcceleration);
+
+        float accelerationRatio =
+            accelerationDemand /
+            Mathf.Max(
+                1f,
+                accelerationBudget);
+
+        float startRatio =
+            Mathf.Clamp(
+                postUpperSmoothAssistStartBudgetRatio,
+                0f,
+                1.45f);
+
+        float fullRatio =
+            Mathf.Clamp(
+                postUpperSmoothAssistFullBudgetRatio,
+                startRatio + 0.05f,
+                1.5f);
+
+        float blendT =
+            Mathf.InverseLerp(
+                startRatio,
+                fullRatio,
+                accelerationRatio);
+
+        // Cubic SmoothStep: 3t^2 - 2t^3.
+        // The derivative is zero at both ends, avoiding a hard switch.
+        float accelerationAssist01 =
+            blendT *
+            blendT *
+            (3f - 2f * blendT);
+
+        // Preserve the original spatialSpeedRatio calculation as a mild
+        // high-speed pressure term only.  At ratio <= 1 it does not suppress
+        // roughness; above 1 it lets the smooth safety layer arrive earlier.
+        float speedPressure =
+            Mathf.Max(
+                0f,
+                spatialSpeedRatio - 1f);
+
+        float speedGain =
+            1f +
+            speedPressure *
+            Mathf.Clamp01(
+                postUpperSmoothAssistSpeedRatioInfluence);
+
+        float smoothAssist01 =
+            Mathf.Clamp01(
+                accelerationAssist01 *
+                speedGain *
+                Mathf.Clamp01(
+                    naturalConnectControlAuthority01));
+
+        postUpperHybridAccelerationDemand =
+            accelerationDemand;
+
+        postUpperHybridAccelerationBudget =
+            accelerationBudget;
+
+        postUpperHybridAccelerationRatio =
+            accelerationRatio;
+
+        postUpperHybridSmoothAssist01 =
+            smoothAssist01;
+
+        float currentTangentSpeed =
+            Vector3.Dot(
+                ballVisualEqualizer.velocity,
+                tangent);
+
+        float speedDeficit =
+            Mathf.Max(
+                0f,
+                postUpperDirectionalTargetSpeed -
+                currentTangentSpeed);
+
+        float tangentAcceleration =
+            speedDeficit /
+            Mathf.Max(
+                0.02f,
+                postUpperDirectionalResponseTime);
+
+        tangentAcceleration =
+            Mathf.Clamp(
+                tangentAcceleration,
+                0f,
+                Mathf.Max(
+                    0f,
+                    postUpperDirectionalMaximumAcceleration));
+
+        tangentAcceleration *=
+            postUpperDirectionalWeight01 *
+            postUpperHybridSmoothAssist01;
+
+        postUpperDirectionalAppliedAcceleration =
+            tangentAcceleration;
+
+        float lateralAcceleration = 0f;
+
+        if (lateral.sqrMagnitude > Epsilon &&
+            postUpperLateralAlignmentShare01 > 0f)
+        {
+            lateral.Normalize();
+
+            float lateralSpeed =
+                Vector3.Dot(
+                    ballVisualEqualizer.velocity,
+                    lateral);
+
+            lateralAcceleration =
+                -lateralSpeed /
+                Mathf.Max(
+                    0.02f,
+                    postUpperLateralResponseTime);
+
+            lateralAcceleration *=
+                Mathf.Clamp01(
+                    postUpperLateralAlignmentShare01) *
+                postUpperDirectionalWeight01 *
+                postUpperHybridSmoothAssist01;
+
+            float lateralLimit =
+                Mathf.Max(
+                    0f,
+                    postUpperDirectionalMaximumAcceleration);
+
+            lateralAcceleration =
+                Mathf.Clamp(
+                    lateralAcceleration,
+                    -lateralLimit,
+                    lateralLimit);
+        }
+
+        postUpperLateralAppliedAcceleration =
+            lateralAcceleration;
+
+        Vector3 acceleration =
+            tangent *
+            tangentAcceleration +
+            lateral *
+            lateralAcceleration;
+
+        if (acceleration.sqrMagnitude <= Epsilon)
+            return;
+
+        // Normal成分を含めないので、Upperの反射/跳ねは既存物理へ残る。
+        ballVisualEqualizer.AddForce(
+            acceleration,
+            ForceMode.Acceleration);
+    }
+    #endregion // PROTECTED_12B_PostUpperDirectionalMemory
+
+
 // ================================================================
 // Upper collision -> measured T / measured energy loss
 // ================================================================
 
+    #region PROTECTED_13_PhysicalUpperEntry
+    // [MOTION-PROTECTED] OnCollisionEnter
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void OnCollisionEnter(
         Collision collision)
     {
@@ -4015,8 +5150,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         {
             return;
         }
-
-        physicsCollisionCount++;
 
         if (equalizerControlMode == EqualizerControlMode.LegacyHybrid &&
             enableLogicalPhysicalHandoff &&
@@ -4039,8 +5172,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         upperPeakArmed = false;
         physicalUpperSeenSinceLastLower = true;
-        upperCollisionCount++;
         phase = EqualizerPhase.UpperContact;
+
+        // Upper接触時の階段下降World frameを記憶する。
+        // 角度・Restitution・特定Wave値などの厳しい成立条件は置かない。
+        ArmPostUpperDirectionalMemory(collision);
 
         // The entry bridge must never survive a real Upper impact. From this
         // exact contact onward PhysX + the existing 4R-Hn/Virtual-Lower system
@@ -4103,6 +5239,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         // remove excess rebound, but Upper never writes Canonical Energy/Hn;
         // Stair Lower remains the decay-energy authority.
     }
+    #endregion // PROTECTED_13_PhysicalUpperEntry
 
 
     private void OnCollisionStay(Collision collision)
@@ -4120,6 +5257,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     }
 
 
+    #region PROTECTED_14_PhysicalLowerAcceptance
+    // [MOTION-PROTECTED] RegisterPhysicalLowerContact
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void RegisterPhysicalLowerContact(Collision collision)
     {
         if (collision == null ||
@@ -4148,20 +5288,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             Mathf.Max(0f, physicalLowerMinimumDescendingSpeed);
 
         if (relativeNormalVelocity >= -minimumDescendingSpeed)
-        {
-            rejectedAscendingStairContactCount++;
             return;
-        }
 
-        bool newlyAdded = physicalLowerContacts.Add(collision.collider);
+        physicalLowerContacts.Add(collision.collider);
         physicalLowerContactActive = physicalLowerContacts.Count > 0;
         phase = EqualizerPhase.LowerContact;
-
-        if (newlyAdded)
-        {
-            physicalLowerContactCount++;
-            lastPhysicalLowerColliderName = collision.collider.name;
-        }
 
         if (pendingPhysicalLowerImpactEnergyMeasurement)
             return;
@@ -4176,26 +5307,20 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         pendingPhysicalLowerImpactEnergyMeasurement = incoming > Epsilon;
         pendingPhysicalLowerEnergyFrames = 0;
         pendingPhysicalLowerBestOutgoingNormalSpeed = 0f;
-        physicalLowerEnergyResolveFrameCount = 0;
-        physicalLowerBestObservedOutgoingNormalSpeed = 0f;
-        physicalLowerEnergyResolveReason = "Pending";
 
         // This real descending Stair impact closes the current physical wave.
         // Only now may the next Physical Upper be armed.
         physicalUpperSeenSinceLastLower = false;
         upperPeakArmed = true;
+        ResetPostUpperDirectionalMemory();
 
-        Debug.Log(
-            $"[EQUALIZER PHYSICAL LOWER] " +
-            $"stair={lastPhysicalLowerColliderName} " +
-            $"incoming={incoming:F4}m/s " +
-            $"vN={relativeNormalVelocity:F4}m/s " +
-            $"hN={rideActualHeight:F4}m " +
-            $"wave={waveCycleIndex + 1}",
-            this);
     }
+    #endregion // PROTECTED_14_PhysicalLowerAcceptance
 
 
+    #region PROTECTED_15_UpperReflectionResolution
+    // [MOTION-PROTECTED] ResolvePendingUpperImpactEnergyLoss
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void ResolvePendingUpperImpactEnergyLoss()
     {
         if (!pendingUpperImpactEnergyMeasurement ||
@@ -4288,14 +5413,8 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             }
         }
 
-        lastUpperRawOutgoingNormalSpeed =
-            rawOutgoing;
-
         lastUpperOutgoingNormalSpeed =
             governedOutgoing;
-
-        lastUpperMeasuredRestitution01 =
-            rawRestitution;
 
         lastImpactEnergyRetention01 =
             Mathf.Clamp01(
@@ -4304,29 +5423,11 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 (incoming *
                  incoming));
 
-        lastUpperReflectionGovernorApplied =
-            governorApplied;
-
         // Monotonic real-physics event telemetry for FutureSpline shadow scoring.
         // Do not reset this counter during normal synchronization/rejoin; prediction
         // probes compare a frozen issue-time count with the later count.
         upperReflectionCount++;
         lastUpperReflectionFixedTime = Time.fixedTime;
-
-        if (enableUpperReflectionDiagnostics)
-        {
-            Debug.Log(
-                $"[EQUALIZER UPPER REFLECTION] " +
-                $"incoming={incoming:F4}m/s " +
-                $"rawOut={rawOutgoing:F4}m/s " +
-                $"eRaw={rawRestitution:F4} " +
-                $"governedOut={governedOutgoing:F4}m/s " +
-                $"energyRetention={lastImpactEnergyRetention01:F4} " +
-                $"governor={governorApplied} " +
-                $"cap={upperReflectionRestitutionCap01:F3} " +
-                $"frames={pendingUpperReflectionResolveFrames}",
-                this);
-        }
 
         pendingUpperImpactEnergyMeasurement =
             false;
@@ -4337,8 +5438,12 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         pendingUpperReflectionResolveFrames =
             0;
     }
+    #endregion // PROTECTED_15_UpperReflectionResolution
 
 
+    #region PROTECTED_16_PhysicalLowerEnergyResolution
+    // [MOTION-PROTECTED] ResolvePendingPhysicalLowerImpactEnergyLoss
+    // Preserve behavior/state/order. Fine tuning is allowed; deletion is not.
     private void ResolvePendingPhysicalLowerImpactEnergyLoss()
     {
         if (!enableLogicalPhysicalHandoff ||
@@ -4365,14 +5470,9 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             supportNormalVelocity;
 
         pendingPhysicalLowerEnergyFrames++;
-        physicalLowerEnergyResolveFrameCount =
-            pendingPhysicalLowerEnergyFrames;
 
         if (outgoing > pendingPhysicalLowerBestOutgoingNormalSpeed)
-        {
             pendingPhysicalLowerBestOutgoingNormalSpeed = outgoing;
-            physicalLowerBestObservedOutgoingNormalSpeed = outgoing;
-        }
 
         float outgoingThreshold =
             Mathf.Max(
@@ -4436,9 +5536,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         lastPhysicalLowerEnergyRetention01 =
             retention;
 
-        physicalLowerEnergyResolveReason =
-            resolveReason;
-
         if (applyPhysicalLowerImpactEnergyLoss)
         {
             negativeEnvelope.SubmitPhysicalLowerImpactEnergyRetention(
@@ -4446,20 +5543,22 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 $"DescendingAfterUpperStairPhysX/{resolveReason}");
         }
 
-        Debug.Log(
-            $"[EQUALIZER PHYSICAL LOWER ENERGY] " +
-            $"incoming={incoming:F4}m/s " +
-            $"outgoing={resolvedOutgoing:F4}m/s " +
-            $"retention={retention:F4} " +
-            $"frames={pendingPhysicalLowerEnergyFrames} " +
-            $"reason={resolveReason} " +
-            $"canonical={negativeEnvelope.CanonicalDampingEnergyRatio:F4}",
-            this);
+        if (logMeasurements)
+        {
+            Debug.Log(
+                $"[EQ] cycle={waveCycleIndex} " +
+                $"T={observedNaturalPeriodSeconds:F3}s " +
+                $"lowerE={retention:F3} " +
+                $"upperE={lastImpactEnergyRetention01:F3}",
+                this);
+        }
+
 
         pendingPhysicalLowerIncomingNormalSpeed = 0f;
         pendingPhysicalLowerEnergyFrames = 0;
         pendingPhysicalLowerBestOutgoingNormalSpeed = 0f;
     }
+    #endregion // PROTECTED_16_PhysicalLowerEnergyResolution
 
     private void OnCollisionExit(
         Collision collision)
@@ -4494,56 +5593,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
                 spatialWavesPerStair));
     }
 
-
-// ================================================================
-// Observer
-// ================================================================
-
-    private void UpdateObserver()
-    {
-        if (!ballVisualEqualizer)
-            return;
-
-        if (ballVisual)
-        {
-            positionErrorToBallVisual =
-                Vector3.Distance(
-                    ballVisualEqualizer.position,
-                    ballVisual.position);
-
-            velocityErrorToBallVisual =
-                Vector3.Distance(
-                    ballVisualEqualizer.velocity,
-                    ballVisual.velocity);
-        }
-
-        currentKineticEnergy =
-            0.5f *
-            EqualizerMass *
-            ballVisualEqualizer.velocity.sqrMagnitude;
-
-        Vector3 subjectPosition =
-            ReadSubjectPositionVisual();
-
-        subjectDistance =
-            Vector3.Distance(
-                ballVisualEqualizer.position,
-                subjectPosition);
-
-        if (oscillationFrame.valid)
-        {
-            subjectTransportGap =
-                Vector3.ProjectOnPlane(
-                    subjectPosition -
-                    ballVisualEqualizer.position,
-                    oscillationFrame.normal).magnitude;
-        }
-        else
-        {
-            subjectTransportGap =
-                subjectDistance;
-        }
-    }
 
 // ================================================================
 // Regain compatibility
@@ -4614,8 +5663,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
 
         phase = EqualizerPhase.Reacquiring;
 
-        EnterSynchronizedState(
-            "NextIncidentReacquired");
+        EnterSynchronizedState();
     }
 
 
@@ -4623,6 +5671,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
     {
         ResolveReferences();
         CompleteContinuousNormalSupportHandoff("EmergencyVisualRecovery");
+        ResetPostUpperDirectionalMemory();
 
         if (!ballVisual ||
             !ballVisualEqualizer)
@@ -4661,8 +5710,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         if (emergencyVisualRecoveryInitialDistance <=
             resumeSynchronizationSnapDistance)
         {
-            EnterSynchronizedState(
-                "EmergencyAlreadyNear");
+            EnterSynchronizedState();
             return;
         }
 
@@ -4708,12 +5756,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         goalPlanarVelocityState = Vector3.zero;
         ResetRideSupportKinematics();
 
-        Debug.Log(
-            $"[EQUALIZER EMERGENCY BEGIN] " +
-            $"time={Time.fixedTime:F4} " +
-            $"distance={emergencyVisualRecoveryInitialDistance:F4} " +
-            $"duration={emergencyVisualRecoveryDuration:F4}s",
-            this);
     }
 
 
@@ -4781,8 +5823,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         // ここでのCopyBallVisualPoseは大距離snapではなく最終丸めだけになる。
         emergencyVisualRecoveryActive = false;
 
-        EnterSynchronizedState(
-            "EmergencyVisualRecoveryComplete");
+        EnterSynchronizedState();
     }
 
 
@@ -4833,8 +5874,7 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         // EqualizerだけEmergency/Hermite補間を継続すると、
         // その最中に次Incidentが始まりReleaseが競合する。
         // ここでは必ず同じFixed stepでBallVisualへ即時同期する。
-        EnterSynchronizedState(
-            "ResumeRequested");
+        EnterSynchronizedState();
     }
 
 
@@ -4871,10 +5911,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
             // Energy / phase / Upper衝突イベントは新規生成しない。
             CopyBallVisualPose();
 
-            Debug.Log(
-                $"[EQUALIZER POST TURN BRIDGE BEGIN] " +
-                $"mode=Synchronized duration={Mathf.Max(0f, suggestedDuration):F4}s",
-                this);
             return;
         }
 
@@ -4883,10 +5919,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         BeginEmergencyVisualRecovery(
             Mathf.Max(0.05f, suggestedDuration));
 
-        Debug.Log(
-            $"[EQUALIZER POST TURN BRIDGE BEGIN] " +
-            $"mode=RelativeHermite duration={Mathf.Max(0f, suggestedDuration):F4}s",
-            this);
     }
 
 
@@ -4900,11 +5932,6 @@ public sealed class BallVisualEqualizerSync : MonoBehaviour
         if (synchronized)
             CopyBallVisualPose();
 
-        Debug.Log(
-            $"[EQUALIZER POST TURN BRIDGE END] " +
-            $"synchronized={synchronized} " +
-            $"recoveryActive={emergencyVisualRecoveryActive}",
-            this);
     }
 
 

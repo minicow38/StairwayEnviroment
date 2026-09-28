@@ -94,10 +94,10 @@ public class MainGameManager : MonoBehaviour
             LimitTouchingphase = LimitTouchingphase + 8 + del;
             PiercingSpiral.ModifyOverrap = del;
         }
-        if (CurrentPointToPlane != PointToPlane)
+        if (CurrentPointToPlane != mainDrive.PointToPlane)
         {
-            displayScore.text = PointToPlane.ToString("");
-            CurrentPointToPlane=PointToPlane;
+            displayScore.text = mainDrive.PointToPlane.ToString("");
+            CurrentPointToPlane=mainDrive.PointToPlane;
         }
     }
 }

@@ -247,7 +247,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &50892150
 Transform:
   m_ObjectHideFlags: 0
@@ -270,7 +270,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 50892149}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 24eb7396d09f2df4a9d53e370bee2f33, type: 3}
   m_Name: 
@@ -386,7 +386,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 50892149}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: de0d19857c896c0438e578aa9fbd1213, type: 3}
   m_Name: 
@@ -516,7 +516,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 50892149}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cedee718140d91542881b6da82c9fede, type: 3}
   m_Name: 
@@ -1283,13 +1283,40 @@ MonoBehaviour:
   catchUpSpeedHeadroom01: 0.35
   lateralSpringStrength: 12
   lateralDamper: 5
+  logMeasurements: 0
   minimumObservedCycleSeconds: 0
   upperPeakRearmHeight01: 0.35
-  enableUpperReflectionDiagnostics: 1
   enableUpperReflectionGovernor: 0
   upperReflectionRestitutionCap01: 0.85
   upperReflectionGovernorMinimumIncomingSpeed: 1
   upperReflectionResolveMaxFixedSteps: 3
+  usePostUpperDirectionalMemory: 1
+  postUpperDirectionalReferenceSpeedFraction: 0.72
+  postUpperDirectionalResponseTime: 0.08
+  postUpperDirectionalMaximumAcceleration: 90
+  postUpperDirectionalHalfLifeSeconds: 0.2
+  postUpperLateralAlignmentShare01: 0.35
+  postUpperLateralResponseTime: 0.12
+  postUpperSmoothAssistStartBudgetRatio: 0.3
+  postUpperSmoothAssistFullBudgetRatio: 0.72
+  postUpperSmoothAssistSpeedRatioInfluence: 0.35
+  useMicroModalOscillation: 1
+  microModalAccelerationShare01: 0.08
+  microModalEntryKick: 0.22
+  microModalUpperKick: 0.55
+  microModalLowerKick: 0.42
+  microModalImpactReferenceSpeed: 6
+  microModalVelocityResidualDriveGain: 0.18
+  microModalVelocityResidualReferenceSpeed: 2
+  microModalDampingRatio: 0.14
+  microModalDuffingBeta: 0.07
+  microModalFrequencyRatio1: 2.6
+  microModalFrequencyRatio2: 4.1
+  microModalFrequencyRatio3: 5.7
+  microModalMaximumFrequencyHz: 10
+  microModalGrazingBoost01: 0.12
+  microModalGrazingDistance01: 0.14
+  microModalGrazingVelocityScale: 0.8
   applyPhysicalLowerImpactEnergyLoss: 1
   minimumPhysicalLowerEnergyRetention01: 0.05
   physicalLowerEnergyResolveMaxFixedSteps: 6
@@ -1335,14 +1362,6 @@ MonoBehaviour:
   emergencyVisualRecoveryProgress01: 0
   emergencyVisualRecoveryInitialDistance: 0
   waveCycleIndex: 0
-  current4RHnMeters: 0
-  current4RHnR: 0
-  currentUpperNormalSpanMeters: 0
-  currentUpperNormalSpanR: 0
-  currentUpperTargetDirectionVisual: {x: 0, y: 1, z: 0}
-  upperPlacementEnergyRatio: 1
-  upperPlacementRequiredEnergyJoule: 0
-  upperPlacementInitialSpeedScale: 1
   observedNaturalPeriodSeconds: 0
   rideTargetHeight: 0
   rideActualHeight: 0
@@ -1353,12 +1372,7 @@ MonoBehaviour:
   springAcceleration: 0
   damperAcceleration: 0
   gravityCompensationAcceleration: 0
-  rideAccelerationCommand: 0
-  transportLagMeters: 0
-  subjectTangentSpeed: 0
-  equalizerTangentSpeed: 0
   requiredCatchUpSpeed: 0
-  catchUpAccelerationCommand: 0
   spatialRawDomainProgress01: 0
   spatialDomainProgress01: 0
   spatialDomainAdvanceRate01PerSecond: 0
@@ -1400,19 +1414,10 @@ MonoBehaviour:
   normalActiveJerkLimit: 0
   physicalUpperSeenSinceLastLower: 0
   physicalLowerContactActive: 0
-  physicalLowerContactCount: 0
-  rejectedAscendingStairContactCount: 0
-  lastPhysicalLowerColliderName: None
   rideSupportFrameContinuous: 1
-  rideSupportFrameResetCount: 0
-  rideSupportLastCenterJumpMeters: 0
-  rideSupportLastMeasuredCenterSpeed: 0
   lastPhysicalLowerIncomingNormalSpeed: 0
   lastPhysicalLowerOutgoingNormalSpeed: 0
   lastPhysicalLowerEnergyRetention01: 1
-  physicalLowerEnergyResolveFrameCount: 0
-  physicalLowerBestObservedOutgoingNormalSpeed: 0
-  physicalLowerEnergyResolveReason: None
   sourceCanonicalNormalSpeed: 0
   logicalLaunchNormalSpeed: 0
   logicalLaunchEnergyJoule: 0
@@ -1443,21 +1448,23 @@ MonoBehaviour:
   rigidbodyPassiveDampingAcceleration: 0
   rigidbodyPassiveDampingAppliedAcceleration: 0
   rigidbodyPassiveDampingShareApplied01: 0
-  positionErrorToBallVisual: 0
-  velocityErrorToBallVisual: 0
-  currentKineticEnergy: 0
-  subjectTransportGap: 0
-  subjectDistance: 0
-  physicsCollisionCount: 0
-  upperCollisionCount: 0
   lastUpperIncomingNormalSpeed: 0
   upperReflectionCount: 0
   lastUpperReflectionFixedTime: -1
-  lastUpperRawOutgoingNormalSpeed: 0
   lastUpperOutgoingNormalSpeed: 0
-  lastUpperMeasuredRestitution01: 0
   lastImpactEnergyRetention01: 1
-  lastUpperReflectionGovernorApplied: 0
+  postUpperDirectionalMemoryActive: 0
+  postUpperCapturedTangent: {x: 0, y: 0, z: 1}
+  postUpperCapturedNormal: {x: 0, y: 1, z: 0}
+  postUpperCapturedLateral: {x: 1, y: 0, z: 0}
+  postUpperDirectionalTargetSpeed: 0
+  postUpperDirectionalWeight01: 0
+  postUpperDirectionalAppliedAcceleration: 0
+  postUpperLateralAppliedAcceleration: 0
+  postUpperHybridAccelerationDemand: 0
+  postUpperHybridAccelerationBudget: 0
+  postUpperHybridAccelerationRatio: 0
+  postUpperHybridSmoothAssist01: 0
   gen3EventPhase: 0
   gen3CurrentCycleTargetSpanR: 4
   gen3ObservedUpperSpanR: 0
@@ -1471,13 +1478,6 @@ MonoBehaviour:
   gen3EnergyTankJoule: 0
   gen3EnergyTankCapacityJoule: 0
   gen3PassivityScale01: 1
-  physicsCleanRate: 0
-  gameImpactSuccessRate: 0
-  releaseOverallSuccessRate: 0
-  dampingFeasibility01: 1
-  subjectConvergenceFeasibility: 1
-  availableTimeToLimit: 0
-  averageGameImpactQuality: 0
 --- !u!135 &64372317
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -1987,7 +1987,7 @@ GameObject:
   - component: {fileID: 279495549}
   - component: {fileID: 279495552}
   - component: {fileID: 279495553}
-  m_Layer: 5
+  m_Layer: 10
   m_Name: PlayButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -2002,7 +2002,7 @@ RectTransform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 279495547}
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -450}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -2010,8 +2010,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: -222.5}
-  m_SizeDelta: {x: 300, y: 300}
+  m_AnchoredPosition: {x: -2.2, y: -140}
+  m_SizeDelta: {x: 200, y: 200}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &279495549
 MonoBehaviour:
@@ -5886,7 +5886,7 @@ GameObject:
   - component: {fileID: 1162934640}
   - component: {fileID: 1162934642}
   - component: {fileID: 1162934641}
-  m_Layer: 5
+  m_Layer: 10
   m_Name: Text (TMP)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -5909,7 +5909,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -150, y: 311.68}
+  m_AnchoredPosition: {x: -69.2, y: 311.68}
   m_SizeDelta: {x: 200, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1162934641
@@ -5959,8 +5959,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 120
-  m_fontSizeBase: 120
+  m_fontSize: 80
+  m_fontSizeBase: 80
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -6754,7 +6754,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1440215988}
-  m_Layer: 5
+  m_Layer: 10
   m_Name: DropOut
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -6769,7 +6769,7 @@ RectTransform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1440215987}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -450}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -7733,6 +7733,12 @@ PrefabInstance:
       propertyPath: stairPlane
       value: 
       objectReference: {fileID: 0}
+    - target: {fileID: 1464098952575493774, guid: 74221757a7fa34c47a7df1a3b267756a,
+        type: 3}
+      propertyPath: EnemyPrefab
+      value: 
+      objectReference: {fileID: 1631279656229403594, guid: 44270000e9cc2c84392da194a3e96594,
+        type: 3}
     - target: {fileID: 1464098952575493774, guid: 74221757a7fa34c47a7df1a3b267756a,
         type: 3}
       propertyPath: PylonPrefab

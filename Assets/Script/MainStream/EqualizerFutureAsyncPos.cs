@@ -4,7 +4,7 @@ using UnityEngine;
 /// EqualizerFuture vertical-boundary provider.
 ///
 /// Strict responsibility:
-/// - Owns the Inspector boundary f(0)=CY only in Physics-Y.
+/// - Owns the Inspector boundary f(0)=CY only in Physics-Y.f
 /// - Observes first-wave CY(s) relative to the SlopeStickCore carrier.
 /// - Builds a first-wave Pre-Apex candidate from a local spatial Taylor/quadratic model.
 /// - Confirms a Taylor candidate in the SAME FixedUpdate when an independent

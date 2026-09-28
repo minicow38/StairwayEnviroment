@@ -33,6 +33,7 @@ public class ActionDall : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
+        
         resouceY = new float[3];
         anime = transform.GetComponent<Animator>();
         rb = GetComponent<Rigidbody>();
@@ -53,7 +54,7 @@ public class ActionDall : MonoBehaviour
                     var turn_name=""+ match.Groups[1] + match.Groups[2] + "_" + match.Groups[3] + "_" + "Physics";
                     var obj=GameObject.Find("" + turn_name).transform.gameObject;
                    angle=obj.transform.localEulerAngles;
-                   transform.rotation = Quaternion.Euler(0, angle.y, 0);
+                  // transform.rotation = Quaternion.Euler(0, angle.y, 0);
                    //rb.constraints = RigidbodyConstraints.FreezePositionY;
                     Debug.Log("");
 
@@ -79,7 +80,7 @@ public class ActionDall : MonoBehaviour
                     if (!StimulateSeekingAnimation)
                     {
 
-                        DollAttachGrond.transform.GetComponent<MeshCollider>().enabled = true;
+                       DollAttachGrond.transform.GetComponent<MeshCollider>().enabled = true;
                         
                         StimulateSeekingAnimation = true;
                     }
@@ -138,7 +139,8 @@ public class ActionDall : MonoBehaviour
                 ForceMode.Impulse
             );
         }
-    }void OnCollisionEnter(Collision col)
+    }
+    void OnCollisionEnter(Collision col)
     {
         if (col.transform.CompareTag("plane")&&!NonComeBackPhysicX)
         {
@@ -146,7 +148,7 @@ public class ActionDall : MonoBehaviour
             Match match;
             int currrentArcHit = 0;
 
-            match = Regex.Match(AroundStairwayPhysics[1].transform.name, @"^([a-zA-Z]+)(\d*)_(\d*)_(Physics)");
+            match = Regex.Match(AroundStairwayPhysics[0].transform.name, @"^([a-zA-Z]+)(\d*)_(\d*)_(Physics)");
             
 
             for (int arcHit = 0; arcHit < AroundStairwayPhysics.Count; arcHit++)
@@ -157,9 +159,11 @@ public class ActionDall : MonoBehaviour
                     break;
                 }
             }
-            transform.GetComponent<CapsuleCollider>().isTrigger = true;
             var localAngle = col.transform.localEulerAngles;
-            transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y + 180, localAngle.z);
+
+            transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y+180, localAngle.z);
+
+            transform.GetComponent<CapsuleCollider>().isTrigger = true;
             DollAttachGrond = col.transform;
 
             NonComeBackPhysicX = true;
@@ -167,7 +171,7 @@ public class ActionDall : MonoBehaviour
 
             int fit = 0;
         }
-        rb.constraints = RigidbodyConstraints.FreezePositionY;
+       rb.constraints = RigidbodyConstraints.FreezePositionY;
     }
     // Update is called once per frame
     
