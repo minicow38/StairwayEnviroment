@@ -208,6 +208,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         // MainGameManager.Start() の実行順に左右されないよう、
         // 通常プレイ時の最初の先行生成ラインを最低8に保つ。
+        
+        resumeOnly.Earliest=false;
         if (!MainGameManager.OnDead &&
             MainGameManager.LimitTouchingphase < ChunkTriggerStep)
         {

@@ -156,6 +156,8 @@ public sealed class SlopeStickCore : MonoBehaviour
         public Vector3 direction;
         public bool useGravity;
     }
+    
+    public bool Earliest=false;
 
     // Visual旋回全体と、先頭の短いKinematic停止区間を分ける。
     bool turnTransitionActive;
@@ -886,7 +888,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         MainGameManager.TopLiteral.SetActive(false);
         MainGameManager.PlayButton.SetActive(false);
         MainGameManager.Userbility.SetActive(true);
-
+        
+        Earliest=true;
         BeginCommandOnTouch = true;
     }
 
@@ -1860,6 +1863,9 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void QueueQuarterTurn(float directionSign)
     {
+        
+        if (!Earliest)
+                return;
         if (Mathf.Abs(directionSign) <= Eps)
             return;
 
@@ -2044,7 +2050,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         bool visualTurnStarted = false;
 
-        if (correspondSubject && visualPlayerRoot)
+        if (correspondSubject && visualPlayerRoot )
         {
             Vector3 pivot =
                 visualRotationPivot
