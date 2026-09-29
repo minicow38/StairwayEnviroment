@@ -1899,7 +1899,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 Vector3.one * 1.5f,
                 "Thorn",
                 false);
-
+           
+            
+            // Physics側のRendererだけ無効化
+            foreach (Renderer r in pair.physics.GetComponentsInChildren<Renderer>(true))
+                r.enabled = false;
             Debug.Log(
                 $"[PYLON LOCAL] stair={ActiveStairway1.name}, " +
                 $"angleY={angle:F2}, local={localPylonPosition}, " +

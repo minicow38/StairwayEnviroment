@@ -1589,8 +1589,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cf06f638ced3fa648bee0ad72f677983, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  shakePreset: 3
-  lastAppliedShakePreset: 3
+  shakePreset: 2
+  lastAppliedShakePreset: 2
   inSubject: {fileID: 1083418863}
   visualTarget: {fileID: 64372315}
   autoCreateDisplayForRigidbody: 1
@@ -1607,7 +1607,7 @@ MonoBehaviour:
   rotationFollowHz: 8
   surfaceLayers:
     serializedVersion: 2
-    m_Bits: 16383
+    m_Bits: 7112
   probeSpacing: 0.45
   probeHeight: 2
   probeDepth: 8
@@ -1624,33 +1624,39 @@ MonoBehaviour:
   initialHeight: 0.4
   fallbackInitialNormalSpeed: 3.1367
   energyBlend: 0.25
-  restitution: 0.86
-  lowerRatio: 0.75
-  firstApexFraction: 0.77
+  restitution: 0.82
+  lowerRatio: 0.65
+  firstApexFraction: 0.72
   laterApexFraction: 0.5
-  dampingPerMeter: 0.025
+  dampingPerMeter: 0.035
   exitDamping: 9
-  maximumFirstWaveHeight: 0.6
-  maximumVisibleLiftNormal: 0.5
-  maximumVisibleDropNormal: 0.28
-  maximumCenterHeightAboveGround: 1.1
-  firstRoughness: 0.1
-  secondRoughness: 0.28
-  thirdRoughness: 0.16
-  measuredRoughnessGain: 0.16
-  signedRoughAccelerationGain: 120
-  accelerationResidualGain: 0.23
-  residualLowPassHz: 2.4
-  springK: 400
-  damperC: 24
-  maximumResidual: 0.2
-  maximumAcceleration: 420
-  maximumJerk: 2100
-  entryBlendSeconds: 0.1
+  maximumFirstWaveHeight: 0.58
+  maximumVisibleLiftNormal: 0.45
+  maximumVisibleDropNormal: 0.24
+  maximumCenterHeightAboveGround: 1.03
+  firstRoughness: 0.06
+  secondRoughness: 0.16
+  thirdRoughness: 0.09
+  measuredRoughnessGain: 0.08
+  signedRoughAccelerationGain: 65
+  accelerationResidualGain: 0.13
+  residualLowPassHz: 2
+  springK: 300
+  damperC: 28
+  maximumResidual: 0.16
+  maximumAcceleration: 300
+  maximumJerk: 1400
+  entryBlendSeconds: 0.12
   softenVisualWave: 1
-  impactSmoothSeconds: 0.012
-  flightSmoothSeconds: 0.03
-  contactBlendFraction: 0.15
+  impactSmoothSeconds: 0.02
+  flightSmoothSeconds: 0.055
+  contactBlendFraction: 0.2
+  adaptiveVisualFilter: 1
+  adaptiveSpeedGain: 0.1
+  adaptiveDerivativeHz: 8
+  adaptiveMinimumSmoothSeconds: 0.015
+  resetFilterOnSharpTurn: 1
+  filterTurnResetDegrees: 65
   active: 0
   exiting: 0
   probeValid: 0
@@ -1681,6 +1687,9 @@ MonoBehaviour:
   visibleUpperLimit: 0
   guardedTargetOffset: 0
   heightGuardActive: 0
+  adaptiveVisualSpeed: 0
+  adaptiveCutoffHz: 0
+  visualFilterResetCount: 0
   upperNormal: 0
   lowerNormal: 0
   firstWavePeakCY: 0
@@ -7734,6 +7743,12 @@ MonoBehaviour:
   impactSmoothSeconds: 0.015
   flightSmoothSeconds: 0.035
   contactBlendFraction: 0.16
+  adaptiveVisualFilter: 1
+  adaptiveSpeedGain: 1.4
+  adaptiveDerivativeHz: 8
+  adaptiveMinimumSmoothSeconds: 0.008
+  resetFilterOnSharpTurn: 1
+  filterTurnResetDegrees: 65
   active: 0
   exiting: 0
   probeValid: 0
@@ -7764,6 +7779,9 @@ MonoBehaviour:
   visibleUpperLimit: 0
   guardedTargetOffset: 0
   heightGuardActive: 0
+  adaptiveVisualSpeed: 0
+  adaptiveCutoffHz: 0
+  visualFilterResetCount: 0
   upperNormal: 0
   lowerNormal: 0
   firstWavePeakCY: 0

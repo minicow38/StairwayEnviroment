@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using Sirenix.OdinInspector;
 
 /// <summary>
 /// InSubject-only, visual-only Stairway equalizer (Unity 2022.3 / built-in API).
@@ -12,6 +13,7 @@ using System.Collections.Generic;
 /// is copied into an independent visual proxy under the same parent. The original
 /// Rigidbody, Collider, and motion scripts remain untouched.
 /// </summary>
+[Searchable]
 [DefaultExecutionOrder(12000)]
 [DisallowMultipleComponent]
 public sealed class ExampleBallVisualEqualizer : MonoBehaviour
@@ -41,7 +43,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     [Header("Required: only primary motion injection")]
     [SerializeField] Rigidbody inSubject;
     [SerializeField] Transform visualTarget;
-    [Header("Output wiring: no writes to the existing Rigidbody")]
+    [Header("Output wiring: always use an isolated renderer-only proxy")]
+    [Tooltip("Must stay enabled: original Visual Target Transform is never moved, whether or not it owns a Rigidbody.")]
     [SerializeField] bool autoCreateDisplayForRigidbody = true;
     [SerializeField] bool hideOriginalRendererWhileTesting = true;
     [SerializeField] Transform actualDisplayTarget;
@@ -126,6 +129,19 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     [Tooltip("Fraction of each wave near a contact to blend between the two response times.")]
     [SerializeField, Range(.02f, .30f)] float contactBlendFraction = .16f;
 
+    [Header("Adaptive Visual Filter: renderer-only; does not alter physics")]
+    [Tooltip("When enabled, adapt the existing SmoothDamp response to visual offset speed. The wave solver, InSubject and Colliders are never filtered.")]
+    [SerializeField] bool adaptiveVisualFilter = true;
+    [Tooltip("How much faster the display follows a rapidly changing visual offset (Hz per m/s). Zero = original contact/flight SmoothDamp.")]
+    [SerializeField, Min(0f)] float adaptiveSpeedGain = 1.4f;
+    [Tooltip("Smooths the speed estimate used to adapt the display filter, not the physical velocity.")]
+    [SerializeField, Range(.5f, 30f)] float adaptiveDerivativeHz = 8f;
+    [Tooltip("Never use a shorter display smoothing time than this.")]
+    [SerializeField, Range(.005f, .04f)] float adaptiveMinimumSmoothSeconds = .008f;
+    [Tooltip("Prevent carrying the old visual offset into a sharply rotated Stable-N/T coordinate frame.")]
+    [SerializeField] bool resetFilterOnSharpTurn = true;
+    [SerializeField, Range(30f, 170f)] float filterTurnResetDegrees = 65f;
+
     [Header("Read-only runtime diagnostics")]
     [SerializeField] bool active, exiting, probeValid, firstWavePeakReady;
     [SerializeField] int waveIndex = -1, firstWavePeakRevision;
@@ -136,6 +152,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     [SerializeField] float entryRawNormalSpeed, entryActualRiseSpeed, entryUnclampedHeight;
     [SerializeField] float visibleUpperLimit, guardedTargetOffset;
     [SerializeField] bool heightGuardActive;
+    [SerializeField] float adaptiveVisualSpeed, adaptiveCutoffHz;
+    [SerializeField] int visualFilterResetCount;
     [SerializeField] float upperNormal, lowerNormal, firstWavePeakCY, firstWavePeakProgress01;
     [SerializeField] Vector3 tangent = Vector3.forward, normal = Vector3.up, binormal = Vector3.right;
     [Header("Debug: Inspector diagnostics (read only)")]
@@ -164,6 +182,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     float initialWaveHeight, initialWaveSpeed, gravityN, elapsed, exitElapsed, flatElapsed;
     float previousOffset, previousOffsetSpeed, lastBegin = -999f, lastProbeSlopeDegrees;
     float nextHeightGuardLog;
+    bool visualFilterReady;
+    float previousFilterTarget;
+    Vector3 previousFilterNormal = Vector3.up, previousFilterTangent = Vector3.forward;
     bool initialized, armed = true;
     int lastApexWave = -1;
 
@@ -173,46 +194,24 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     // Avoid reapplying on every Inspector refresh so manual fine-tuning is retained.
     void OnValidate() => ApplyShakePresetIfChanged();
 
-    // Runtime API: changes the selected profile when it differs from the last
-    // applied one. Keeping this one-argument overload also makes ordinary calls
-    // from other scripts simple.
-    public void SetShakePreset(ShakePreset value)
-    {
-        SetShakePreset(value, false);
-    }
+    // Runtime API. The one-argument overload preserves existing callers.
+    public void SetShakePreset(ShakePreset value) => SetShakePreset(value, false);
 
-    // force=true reapplies a profile even when it is already selected, restoring
-    // all of its tuned fields after manual/runtime changes. Custom changes only
-    // the selection and deliberately preserves the numeric fields.
     public void SetShakePreset(ShakePreset value, bool force)
     {
-        if ((int)value < (int)ShakePreset.Custom ||
-            (int)value > (int)ShakePreset.ClassicImpact)
+        if ((int)value < (int)ShakePreset.Custom || (int)value > (int)ShakePreset.ClassicImpact)
         {
             Debug.LogWarning($"[ExampleBVE][INVALID_SHAKE_PRESET] value={(int)value}", this);
             return;
         }
-
-        if (!force && shakePreset == value && lastAppliedShakePreset == value)
-            return;
-
-        shakePreset = value;
-        lastAppliedShakePreset = value;
-        if (value != ShakePreset.Custom)
-            ApplyShakePresetValues(value);
+        if (!force && shakePreset == value && lastAppliedShakePreset == value) return;
+        shakePreset = lastAppliedShakePreset = value;
+        if (value != ShakePreset.Custom) ApplyShakePresetValues(value);
     }
 
-    // Safe for game events or the component context menu. Reapplying Custom is
-    // intentionally a no-op: the current hand-tuned Inspector values remain.
     [ContextMenu("ExampleBVE / Reapply Selected Shake Preset")]
-    public void ReapplyShakePreset()
-    {
-        SetShakePreset(shakePreset, true);
-    }
+    public void ReapplyShakePreset() => SetShakePreset(shakePreset, true);
 
-    // Integer entry point for Unity UI Button.onClick and other UnityEvents.
-    // 0 Custom, 1 BalancedContact, 2 SoftFlow, 3 FineStairRattle,
-    // 4 FirmImpact, 5 CompactSafe, 6 ClassicImpact.
     public void SetShakePresetByIndex(int index)
     {
         if (index < (int)ShakePreset.Custom || index > (int)ShakePreset.ClassicImpact)
@@ -223,12 +222,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         SetShakePreset((ShakePreset)index, true);
     }
 
-    // The Inspector enum dropdown still applies a newly selected preset once;
-    // its periodic OnValidate calls do not erase manual field adjustments.
     void ApplyShakePresetIfChanged()
     {
-        if (shakePreset != lastAppliedShakePreset)
-            SetShakePreset(shakePreset, false);
+        if (shakePreset != lastAppliedShakePreset) SetShakePreset(shakePreset, false);
     }
 
     void ApplyShakePresetValues(ShakePreset value)
@@ -424,12 +420,12 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
 
     void OnEnable()
     {
-        presentedOffset = visualOffset;
-        presentedSpeed = 0f;
+        ResetVisualFilterState(visualOffset);
+
         if (Application.isPlaying && initialized && !actualDisplayTarget)
         {
             ResolveDisplayTarget();
-            outputWritable = actualDisplayTarget && !actualDisplayTarget.GetComponent<Rigidbody>();
+            outputWritable = IsSafeDisplayTarget(actualDisplayTarget);
             blockedOutputLogged = false;
         }
     }
@@ -491,13 +487,14 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             Debug.LogError("[ExampleBVE] Assign the InSubject Rigidbody and a separate visualTarget.", this);
             return false;
         }
-        if (visualTarget == inSubject.transform || visualTarget.IsChildOf(inSubject.transform))
+        if (visualTarget == inSubject.transform || visualTarget.IsChildOf(inSubject.transform) ||
+            inSubject.transform.IsChildOf(visualTarget))
         {
-            Debug.LogError("[ExampleBVE] visualTarget must NOT be InSubject or its child: physical motion is read-only.", this);
+            Debug.LogError("[ExampleBVE] Visual Target must be separate from InSubject's physics hierarchy.", this);
             return false;
         }
         ResolveDisplayTarget();
-        outputWritable = actualDisplayTarget && !actualDisplayTarget.GetComponent<Rigidbody>();
+        outputWritable = IsSafeDisplayTarget(actualDisplayTarget);
         if (!outputWritable)
             Debug.LogError("[ExampleBVE][OUTPUT_UNAVAILABLE] Could not create a mesh/sprite-only display. " +
                 "Assign a separate renderer-only Visual Target; the dynamic Rigidbody remains untouched.", this);
@@ -536,20 +533,20 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     }
 
 
-    // The user may assign the legacy dynamic BallVisualEqualizer directly. It is
-    // never moved: the presentation alone is copied to a sibling in VisualPlayerRoot.
-    // The renderer visibility is restored whenever this component is disabled.
+    // Always write a renderer-only proxy. Even when visualTarget has no Rigidbody,
+    // moving its Transform might move a child Collider or a stage object.
+    // The source Transform, Rigidbody and Collider hierarchy is strictly read-only.
+    bool IsSafeDisplayTarget(Transform candidate)
+    {
+        return candidate && generatedDisplay && candidate == generatedDisplay.transform &&
+            !candidate.GetComponentInParent<Rigidbody>() &&
+            candidate.GetComponentInChildren<Collider>(true) == null &&
+            candidate.GetComponentInChildren<Rigidbody>(true) == null;
+    }
+
     void ResolveDisplayTarget()
     {
         if (!visualTarget) { actualDisplayTarget = null; return; }
-        Rigidbody oldBody = visualTarget.GetComponent<Rigidbody>();
-        if (!oldBody)
-        {
-            ReleaseGeneratedDisplay();
-            actualDisplayTarget = visualTarget;
-            outputMode = "DirectRendererOnly";
-            return;
-        }
         if (generatedDisplay)
         {
             actualDisplayTarget = generatedDisplay.transform;
@@ -560,14 +557,46 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         {
             actualDisplayTarget = null;
             outputMode = "ProxyDisabled";
+            Debug.LogError("[ExampleBVE][PROXY_REQUIRED] Enable Auto Create Display For Rigidbody. " +
+                "This option now protects *all* original Visual Targets, including targets without a Rigidbody.", this);
+            return;
+        }
+
+        // A static Collider hierarchy is a stage/physics source, not a stand-alone
+        // presentation object. The supported legacy ball source has its own Rigidbody.
+        if (!visualTarget.GetComponent<Rigidbody>() &&
+            visualTarget.GetComponentInChildren<Collider>(true))
+        {
+            actualDisplayTarget = null;
+            outputMode = "PhysicsSourceRejected";
+            Debug.LogError("[ExampleBVE][PHYSICS_SOURCE_REJECTED] Visual Target contains Colliders " +
+                "but has no own Rigidbody. Assign the ball MeshRenderer source instead of a stage/physics root.", this);
+            return;
+        }
+
+        // An incorrect stage/root assignment must not create an entire staircase
+        // duplicate and hide its renderers. For a ball, a compact renderer tree is expected.
+        Renderer[] sourceRenderers = visualTarget.GetComponentsInChildren<Renderer>(true);
+        Collider[] sourceColliders = visualTarget.GetComponentsInChildren<Collider>(true);
+        if (sourceRenderers.Length > 32 || sourceColliders.Length > 8)
+        {
+            actualDisplayTarget = null;
+            outputMode = "UnsafeSourceHierarchy";
+            Debug.LogError("[ExampleBVE][UNSAFE_VISUAL_TARGET] This is too large for a ball " +
+                $"(renderers={sourceRenderers.Length}, colliders={sourceColliders.Length}). " +
+                "Assign the single ball Visual Target, NOT Stairway/StageRoot.", this);
             return;
         }
 
         generatedDisplay = new GameObject("ExampleBVE_Display_" + visualTarget.name);
         Transform display = generatedDisplay.transform;
-        display.SetParent(visualTarget.parent, false);
+        // Never parent the output under a moving Rigidbody: renderer-only writes
+        // must stay isolated from the physics hierarchy.
+        Transform safeParent = visualTarget.parent && !visualTarget.parent.GetComponentInParent<Rigidbody>()
+            ? visualTarget.parent : null;
+        display.SetParent(safeParent, false);
         display.SetPositionAndRotation(visualTarget.position, visualTarget.rotation);
-        display.localScale = visualTarget.localScale;
+        display.localScale = safeParent ? visualTarget.localScale : visualTarget.lossyScale;
         int count = CopyPresentation(visualTarget, display);
         if (count == 0)
         {
@@ -678,7 +707,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         binormal = Vector3.Cross(normal, tangent).normalized;
         previousNormal = normal;
         visualOffset = 0f;
-        presentedOffset = presentedSpeed = presentationSmoothSeconds = 0f;
+        ResetVisualFilterState(0f);
         heightGuardActive = false;
         visibleUpperLimit = maximumVisibleLiftNormal;
         guardedTargetOffset = 0f;
@@ -795,7 +824,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         previousVelocity = v;
         traveled = progress01 = phase = elapsed = exitElapsed = flatElapsed = 0f;
         baseOffset = residualOffset = residualSpeed = residualAcceleration = visualOffset = 0f;
-        presentedOffset = presentedSpeed = 0f;
+        ResetVisualFilterState(0f);
         previousOffset = previousOffsetSpeed = lowPassedNormalAcceleration = 0f;
         currentAmplitude = initialWaveHeight;
         waveIndex = -1;
@@ -974,6 +1003,40 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
 
     // A C1 soft knee: preserve the small contact motion and progressively
     // compress an excessive excursion instead of snapping the renderer off.
+    void ResetVisualFilterState(float target)
+    {
+        presentedOffset = previousFilterTarget = target;
+        presentedSpeed = adaptiveVisualSpeed = adaptiveCutoffHz = presentationSmoothSeconds = 0f;
+        previousFilterNormal = normal;
+        previousFilterTangent = tangent;
+        visualFilterReady = false;
+        visualFilterResetCount++;
+    }
+
+    // One-Euro-inspired adaptive response: speed is low-pass filtered, then used
+    // to shorten the existing SmoothDamp time. It does NOT add a second position
+    // smoother, preserving small step-contact transients and avoiding extra lag.
+    float GetAdaptiveSmoothSeconds(float target, float contactFlightSeconds, float dt)
+    {
+        float h = Mathf.Max(.0001f, dt);
+        if (!visualFilterReady)
+        {
+            previousFilterTarget = target;
+            adaptiveVisualSpeed = 0f;
+            visualFilterReady = true;
+        }
+        float rawVisualSpeed = (target - previousFilterTarget) / h;
+        previousFilterTarget = target;
+        float alpha = 1f - Mathf.Exp(-2f * Mathf.PI * adaptiveDerivativeHz * h);
+        adaptiveVisualSpeed += (rawVisualSpeed - adaptiveVisualSpeed) * alpha;
+
+        float baseSeconds = Mathf.Max(.005f, contactFlightSeconds);
+        float baseCutoff = 1f / (2f * Mathf.PI * baseSeconds);
+        adaptiveCutoffHz = baseCutoff + adaptiveSpeedGain * Mathf.Abs(adaptiveVisualSpeed);
+        return Mathf.Clamp(1f / (2f * Mathf.PI * adaptiveCutoffHz),
+            Mathf.Min(adaptiveMinimumSmoothSeconds, baseSeconds), baseSeconds);
+    }
+
     static float SoftLimit(float value, float lower, float upper)
     {
         if (value > 0f)
@@ -1071,6 +1134,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
                 $"N={Fmt(normal)} base={baseOffset:F4} residual={residualOffset:F4} " +
                 $"vResidual={residualSpeed:F4} aResidual={residualAcceleration:F3} q={visualOffset:F4} " +
                 $"displayQ={presentedOffset:F4} displaySpeed={presentedSpeed:F3} smoothT={presentationSmoothSeconds:F3} " +
+                $"adaptive={adaptiveVisualFilter} speed={adaptiveVisualSpeed:F3} cutoff={adaptiveCutoffHz:F2}Hz resets={visualFilterResetCount} " +
                 $"displayCap={visibleUpperLimit:F3} guard={heightGuardActive} " +
                 $"upper={upperNormal:F3} lower={lowerNormal:F3}", true);
         if (mappedSubjectGap > coordinateWarningMeters && !coordinateMismatchLogged &&
@@ -1107,6 +1171,20 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
                 $"upper={visibleUpperLimit:F3} lower={-maximumVisibleDropNormal:F3} " +
                 $"h0={initialWaveHeight:F3} supportProbe={probeValid}");
         }
+        // Sharp turn: the previously displayed scalar q belongs to the old
+        // T/N coordinate frame. Do not transport its lag into the new frame.
+        bool sharpTurn = resetFilterOnSharpTurn && visualFilterReady &&
+            (Vector3.Angle(previousFilterNormal, normal) >= filterTurnResetDegrees ||
+             Vector3.Angle(previousFilterTangent, tangent) >= filterTurnResetDegrees);
+        if (sharpTurn)
+        {
+            ResetVisualFilterState(guardedTargetOffset);
+            if (logEvents) Trace("VISUAL_FILTER_TURN_RESET",
+                $"N={Fmt(normal)} T={Fmt(tangent)} q={guardedTargetOffset:F3}");
+        }
+        previousFilterNormal = normal;
+        previousFilterTangent = tangent;
+
         if (softenVisualWave)
         {
             float cycles = traveled * Waves / Mathf.Max(.1f, sectionLength);
@@ -1114,8 +1192,11 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             float distanceFromImpact = Mathf.Min(u, 1f - u);
             float blend = Mathf.SmoothStep(0f, 1f,
                 distanceFromImpact / Mathf.Max(.02f, contactBlendFraction));
-            presentationSmoothSeconds = Mathf.Lerp(
-                impactSmoothSeconds, flightSmoothSeconds, blend);
+            float baseSeconds = Mathf.Lerp(impactSmoothSeconds, flightSmoothSeconds, blend);
+            presentationSmoothSeconds = adaptiveVisualFilter
+                ? GetAdaptiveSmoothSeconds(guardedTargetOffset, baseSeconds, Time.deltaTime)
+                : baseSeconds;
+            if (!adaptiveVisualFilter) visualFilterReady = false;
             presentedOffset = Mathf.SmoothDamp(
                 presentedOffset, guardedTargetOffset, ref presentedSpeed,
                 presentationSmoothSeconds, Mathf.Infinity, Time.deltaTime);
@@ -1125,6 +1206,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             presentationSmoothSeconds = 0f;
             presentedOffset = guardedTargetOffset;
             presentedSpeed = 0f;
+            visualFilterReady = false;
         }
         // SmoothDamp is not a hard safety limit when the stair height changes.
         // Bound the final *presentation* too, leaving all raw wave/Apex data intact.
@@ -1137,7 +1219,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         }
         // Map carrier + presentation offset together using CorrespondSubject's map.
         UpdateCoordinateDiagnostics(inSubject.transform.position, presentedOffset);
-        if (outputWritable)
+        if (outputWritable && IsSafeDisplayTarget(actualDisplayTarget))
         {
             actualDisplayTarget.position = predictedVisualWorld;
             if (followSubjectRotation && subjectRotation)
@@ -1152,3 +1234,4 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         DiagnosticSample();
     }
 }
+

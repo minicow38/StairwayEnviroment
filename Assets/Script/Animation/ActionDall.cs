@@ -156,6 +156,7 @@ public class ActionDall : MonoBehaviour
                 transform.right * knockTorque,
                 ForceMode.Impulse
             );
+             StartCoroutine(DelayDestory());
         }
     }
     void OnCollisionEnter(Collision col)
@@ -189,15 +190,14 @@ public class ActionDall : MonoBehaviour
 
             int fit = 0;
             rb.constraints = RigidbodyConstraints.FreezePositionY;
-            StartCoroutine(DelayDestory());
+           
 
         }
     }
     IEnumerator DelayDestory()
     {
         yield return new WaitForSeconds(3f);
-        
-       // Destroy(transform.gameObject);
+        Destroy(transform.gameObject);
     }
     // Update is called once per frame
     
