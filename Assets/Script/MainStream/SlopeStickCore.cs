@@ -1864,7 +1864,7 @@ public float AdvancePredictedSplineDriveReadOnly(
     void QueueQuarterTurn(float directionSign)
     {
         
-        if (!Earliest)
+        if (Earliest)
                 return;
         if (Mathf.Abs(directionSign) <= Eps)
             return;
