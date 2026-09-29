@@ -93,6 +93,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     public GameObject PylonPrefab;
 
     public int FirstShift = 0;
+    public CorrespondSubject reSubject;
 
     public Vector3 RootStartpoint = new Vector3(-8.535f, 31.8f, -0.1f);
     public Vector3 stepHandlePoint;
@@ -239,12 +240,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (MainGameManager.OnDead)
         {
             resumeOnly.BeginCommandOnTouch = false;
-
-           /* MainGameManager.TopTitle.SetActive(true);
-            MainGameManager.PreviewIconRoot.SetActive(true);
-            MainGameManager.TopLiteral.SetActive(true);
-            MainGameManager.PlayButton.SetActive(true);
-            MainGameManager.Userbility.SetActive(false);*/
+            reSubject.PointToPlane = 0;
+           
             Start();
             rebuilding = false;
 
@@ -254,6 +251,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     [ContextMenu("RebuildSpline")]
     void Start()
     {
+        reSubject = GameObject.Find("subject").transform.GetComponent<CorrespondSubject>();
         for (int i = 1; i < InitialStartPattern.Length; i++)
         {
             if (InitialStartPattern[i] != 0)
@@ -1993,7 +1991,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         int widthObj = FirstCorner
             ? UnityEngine.Random.Range(0, ShiftObj.Length)
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
-        Vector3 localPosition = new Vector3(ShiftObj[widthObj].x, 0.5f, 0f);
+        Vector3 localPosition = new Vector3(ShiftObj[widthObj].x, 0, 0f);
 
         GameObject visualCharacter = SpawnVisual(
             EnemyPrefab,

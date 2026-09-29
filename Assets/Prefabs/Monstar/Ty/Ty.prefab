@@ -592,8 +592,13 @@ MonoBehaviour:
   AroundStairway: []
   ExpendScopePlayer: []
   resouceY: []
+  DollAttachGrond: {fileID: 0}
   AroundStairwayPhysics: []
+  angle: {x: 0, y: 0, z: 0}
   knockBackPower: 60
   knockUpPower: 25
   knockTorque: 3
+  previousRotation: {x: 0, y: 0, z: 0, w: 0}
+  StimulateSeekingAnimation: 0
+  NonComeBackPhysicX: 0
   anime: {fileID: 0}

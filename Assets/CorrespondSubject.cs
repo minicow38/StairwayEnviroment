@@ -1,5 +1,6 @@
 using UnityEngine;
 using DG.Tweening;
+using System.Text.RegularExpressions;
 
 /// <summary>
 /// PhysicsRoot上のInSubjectを、VisualPlayerRoot上の座標へ写してSubjectへ反映します。
@@ -15,6 +16,7 @@ public sealed class CorrespondSubject : MonoBehaviour
     const float Epsilon = 0.000001f;
   // public int CurrentPointToPlane = 0;
   public int PointToPlane;
+  public Transform RestrickTurnObj;
 
     [Header("Inertial Physics Frame")] [Tooltip("PhysicsRoot上で物理計算を行うInSubjectのRigidbodyです。")] [SerializeField]
     Rigidbody inSubjectBody;
@@ -622,7 +624,13 @@ public sealed class CorrespondSubject : MonoBehaviour
             .SetUpdate(UpdateType.Fixed)
             .OnComplete(() =>
             {
-                PointToPlane++;
+                Match match = Regex.Match(MainGameManager.core.currentHit.transform.name, @"(ArcSlab).*(\d).*_(\d).*_([A-Za-z].*)");
+                if (match.Success && RestrickTurnObj!=MainGameManager.core.currentHit.transform)
+                {
+                    RestrickTurnObj = MainGameManager.core.currentHit.transform;
+                    PointToPlane++;
+                }
+
                 Apply(1f);
                 turnTween = null;
                 turnCompleted?.Invoke();

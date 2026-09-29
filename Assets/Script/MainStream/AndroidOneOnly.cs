@@ -17,7 +17,7 @@ public class AndroidOneOnly : MonoBehaviour
 
     public MainGameManager mainGameManager;
 
-    public CorrespondSubject mainDrive;
+    public CorrespondSubject reSubject;
     
     public GameObject[] BackGrounds;
     public static int pharseCoin = 0;

@@ -67,7 +67,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Tooltip("VisualPlayerRootの90度旋回時間[s]。CorrespondSubjectのTween時間をこの値で上書きします。")]
     [Min(0.05f)] [SerializeField] float turnVisualDurationSeconds = 0.30f;
 
-    [Tooltip("旋回開始直後にInSubjectをKinematic停止する時間[s]。解除後はUTurnならBezier TurnPath、FiveLine系ならCoastへ移ります。")]
+    [Tooltip("旋回開始直後にInSubjectをKinematic停止する時間[s]。解除後はUTurnなら開始点から新方向へ直接進み、FiveLine系ならCoastへ移ります。")]
     [Min(0f)] [SerializeField] float turnHardFreezeSeconds = 0.12f;
 
     [Tooltip("Turn Input Intent / HardFreeze / Coastの診断ログを出します。")]
@@ -75,18 +75,6 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     // 旋回角度は1系統だけ。入力強度や呼び出し元に関係なく必ず90度。
     const float QuarterTurnDegrees = 90f;
-    const float QuarterCircleBezierKappa = 0.5522847498307936f;
-
-    [Header("Physics Turn Path")]
-    [Tooltip("物理軌道だけに使う90度旋回半径[m]。小さいほど早くインコーナーへ入ります。")]
-    [Min(0.10f)] [SerializeField] float turnPathRadiusMeters = 1.20f;
-    [Tooltip("高速時でも1～2FixedUpdateだけの折れにしないための最低ステップ数です。")]
-    [Min(2)] [SerializeField] int turnPathMinimumFixedSteps = 4;
-    [Tooltip("低速時でも物理旋回を長引かせない上限[s]。Visualの回転時間とは独立です。")]
-    [Min(0.02f)] [SerializeField] float turnPathMaximumDurationSeconds = 0.14f;
-    [Tooltip("開始水平速度がほぼ0のときだけDuration計算に使う最低速度[m/s]です。")]
-    [Min(0.01f)] [SerializeField] float turnPathMinimumReferencePlanarSpeed = 1.0f;
-    [SerializeField] bool logTurnPath;
 
     public enum TurnResolutionMode
     {
@@ -154,17 +142,9 @@ public sealed class SlopeStickCore : MonoBehaviour
     float stickState;
     bool wasSlope;
 
-    // Physicsの短いTurnPathが完了したあと、NearestKnotDetectorが
-    // 旋回後Splineを捕捉するまでだけtrue。
+    // 旋回が始まってからNearestKnotDetectorが旋回後Splineを捕捉するまでtrue。
     bool waitingForTurnGuide;
     Vector3 turnTargetDirection;
-
-    bool turnPathActive;
-    float turnPathElapsed;
-    float turnPathDuration;
-    float turnPathCapturedPlanarSpeed;
-    Vector3 turnPathP0, turnPathP1, turnPathP2, turnPathP3;
-    Vector3 turnPathCurrentDirection = Vector3.forward;
 
     struct TurnTransitionSnapshot
     {
@@ -222,7 +202,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     public float LastDynamicEnergyTargetTolerance => dynamicEnergyTargetTolerance;
     public float LastFlatTurnLimitProgress => lastFlatTurnLimitProgress;
 
-    public bool IsPhysicsTurnPathActive => turnPathActive;
+    // 旧READ ONLY APIとの互換性を維持。Bezier物理Pathは廃止したため常にfalse。
+    public bool IsPhysicsTurnPathActive => false;
     public bool IsTurnTransitionActive => turnTransitionActive;
     public bool IsTurnBodyFrozen => turnBodyFrozen;
     public TurnResolutionMode CurrentTurnResolutionMode => activeTurnMode;
@@ -1028,43 +1009,23 @@ public float AdvancePredictedSplineDriveReadOnly(
         ApplyPendingQuarterTurn();
 
         // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。
-        // HardFreeze解除後は、UTurnならBezier物理旋回を進め、FiveLine系なら慣性Coastする。
+        // UTurnはHardFreeze解除時に90度方向転換済み。円弧追従は行わない。
         if (turnTransitionActive)
         {
             AdvanceTurnTransition();
-
             if (turnBodyFrozen)
             {
                 ResetBallVisualSplineSession();
                 return;
             }
 
-            if (turnPathActive)
-            {
-                StepQuarterTurnPath();
-                direction = turnPathCurrentDirection;
-            }
-            else
-            {
-                direction = turnTargetDirection;
-            }
-
+            direction = turnTargetDirection;
             driveState = 0f;
             ResetBallVisualSplineSession();
             return;
         }
 
-        // Visual TweenよりTurnPathが長く残った設定でも、Pathだけは最後まで完走させる。
-        if (turnPathActive)
-        {
-            StepQuarterTurnPath();
-            direction = turnPathCurrentDirection;
-            driveState = 0f;
-            ResetBallVisualSplineSession();
-            return;
-        }
-
-        // TurnPathが完了していればheadingは旋回後方向へ確定。
+        // Visual旋回後、新Spline捕捉まで旧SplineのDriveを再開しない。
         if (waitingForTurnGuide)
             direction = turnTargetDirection;
 
@@ -1193,7 +1154,7 @@ public float AdvancePredictedSplineDriveReadOnly(
                     -surface.normal * stickState,
                     ForceMode.Acceleration);
 
-                // 物理TurnPath完了後はtargetDirectionの水平速度を保持したまま、
+                // InCorner開始後はtargetDirectionの水平速度を保持したまま、
                 // 新Splineが捕捉されるまで旧SplineのDriveだけを止める。
                 return;
             }
@@ -1687,7 +1648,7 @@ public float AdvancePredictedSplineDriveReadOnly(
     /// </summary>
     public bool PrepareForStageRebuild()
     {
-        // Tween途中・HardFreeze途中・TurnPath途中の状態を再生成へ持ち越さない。
+        // Tween途中・HardFreeze途中の状態を再生成へ持ち越さない。
         ClearSmoothTurnStateForStageRebuild();
 
         FindMapFrameReferences();
@@ -1737,7 +1698,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (rb && rb.isKinematic)
             rb.isKinematic = false;
 
-        CancelQuarterTurnPath();
 
         activeTurnMode = TurnResolutionMode.None;
         fiveLineCorrectionPending = false;
@@ -1923,7 +1883,6 @@ public float AdvancePredictedSplineDriveReadOnly(
                 $"buffer={turnInputBufferSeconds:F3}s " +
                 $"blocked={IsTurnExecutionBlocked()} " +
                 $"transition={turnTransitionActive} frozen={turnBodyFrozen} " +
-                $"turnPath={turnPathActive} " +
                 $"fiveLineActive={fiveLineCorrectionActive} " +
                 $"fiveLinePending={fiveLineCorrectionPending} " +
                 $"ballVisualOwnsPose={(ballVisualSlopeDrive && ballVisualSlopeDrive.OwnsBallVisualPose)} " +
@@ -1979,7 +1938,7 @@ public float AdvancePredictedSplineDriveReadOnly(
     // 新しい旋回を「今このFixedUpdateで開始してよいか」だけ判定する。
     bool IsTurnExecutionBlocked()
     {
-        if (turnTransitionActive || turnPathActive)
+        if (turnTransitionActive || waitingForTurnGuide)
             return true;
 
         if (fiveLineCorrectionActive || fiveLineCorrectionPending)
@@ -2060,9 +2019,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         activeTurnMode = ResolveTurnResolutionMode(directionBefore);
         ClearPendingTurnSnapshot();
         flatEntryFrame = default; // 次のFlatで新しいEntryを採取する。
-
-        bool useUTurn =
-            activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
 
         // 旧UTurn仕様:
         // UTurnが選ばれた旋回ではFiveLine補正を予約しない。
@@ -2224,34 +2180,14 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (useUTurn)
         {
-            // UTurnは基準版のBezier軌道を残す。速度を先に90°へ折らず、Path自身に曲げさせる。
-            direction = NormalizeFlat(snapshot.direction, travelDirection);
-
-            if (!BeginQuarterTurnPath(activeTurnDegrees, direction))
-            {
-                // 旧UTurn仕様:
-                // UTurnとして確定した後はFiveLineへフォールバックしない。
-                // Pathを開始できなければ旋回モードだけ無効化し、
-                // FiveLine補正を予約せず元の物理速度を維持する。
-                Debug.LogError(
-                    "[CORE PHYSICS TURN PATH FAILED] UTurn Pathを開始できません。FiveLineへは移行しません。",
-                    this);
-
-                activeTurnMode = TurnResolutionMode.None;
-                fiveLineCorrectionPending = false;
-                rb.velocity = snapshot.velocity;
-                rb.angularVelocity = snapshot.angularVelocity;
-                direction = NormalizeFlat(snapshot.direction, travelDirection);
-                turnTargetDirection = direction;
-                waitingForTurnGuide = false;
-                return;
-            }
-
-            fiveLineCorrectionPending = false;
+            // 旋回種別の確定時にFiveLine予約済み状態を決定している。
+            // ここでは重複したPending解除をせず、InCornerの運動だけを実行する。
+            ApplyDirectInCornerTurn(snapshot.velocity);
+            rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
         }
         else
         {
-            // FiveLine系は位置を飛ばさず、速度/headingだけ新方向へ向けてVisual旋回完了までCoast。
+            // FiveLine系は位置を飛ばさず、速度/headingだけ新方向へ向けてCoast。
             rb.velocity = snapshot.velocity;
             ApplyDirectFiveLineTurn(activeTurnDegrees);
             rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
@@ -2267,7 +2203,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             Debug.Log(
                 $"[CORE TURN MOTION RELEASE] " +
                 $"reason={reason} time={Time.fixedTime:F4} " +
-                $"mode={activeTurnMode} turnPath={turnPathActive} " +
+                $"mode={activeTurnMode} " +
                 $"velocity={rb.velocity:F4} direction={direction:F4}",
                 this);
         }
@@ -2291,7 +2227,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnTransitionSnapshot = default;
 
         // waitingForTurnGuideはApplyQuarterTurn開始時からtrueのまま。
-        // TurnPathが残っていればPathを完走した後にSpline捕捉へ進む。
+        // InCornerは既に新方向へ切り替え済み。Spline捕捉へ進む。
         driveState = 0f;
         ResetBallVisualSplineSession();
 
@@ -2304,7 +2240,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             Debug.Log(
                 $"[CORE SMOOTH TURN VISUAL COMPLETE] " +
                 $"time={Time.fixedTime:F4} turn={completedTurnDegrees:F1} " +
-                $"mode={activeTurnMode} turnPath={turnPathActive} " +
+                $"mode={activeTurnMode} " +
                 $"position={rb.position:F4} velocity={rb.velocity:F4}",
                 this);
         }
@@ -2314,7 +2250,6 @@ public float AdvancePredictedSplineDriveReadOnly(
     {
         TurnTransitionSnapshot snapshot = turnTransitionSnapshot;
 
-        CancelQuarterTurnPath();
 
         if (rb)
         {
@@ -2377,7 +2312,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
 
         correspondSubject?.CancelVisualFrameTurn(false);
-        CancelQuarterTurnPath();
 
         turnTransitionActive = false;
         turnBodyFrozen = false;
@@ -2442,7 +2376,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             return TurnResolutionMode.FiveLineAfterEnergyTarget;
         }
 
-        // Apply時に多少進んだ場合も、実際のBezier開始位置が境界を越えていないか検査。
+        // Apply時に多少進んだ場合も、実際のInCorner開始位置が境界を越えていないか検査。
         float executionProgress = Vector3.Dot(
             rb.position - pendingFlatEntryFrame.position,
             pendingFlatEntryFrame.direction);
@@ -2493,9 +2427,11 @@ public float AdvancePredictedSplineDriveReadOnly(
             entry.distanceToNextSlope <= Eps ||
             !currentGuideValid || currentGuide.splineIndex != entry.splineIndex)
             return false;
-
+        
+        //平面入り口からフリックした距離
         float entryToFlick = Vector3.Dot(
             pendingTurnFlickPosition - entry.position, entry.direction);
+        //平面入り口からBallVisualからもらった着地点の距離
         float entryToTarget = Vector3.Dot(
             pendingTurnTargetPhysics - entry.position, entry.direction);
 
@@ -2503,19 +2439,26 @@ public float AdvancePredictedSplineDriveReadOnly(
             pendingTurnFlickVelocity, entry.direction));
         float motionAllowance = forwardSpeed * Time.fixedDeltaTime;
 
-        // 次の斜面まで90度Bezierの旧進行方向成分Rと1物理ステップ分を確保。
-        float clearance = Mathf.Max(0.10f, turnPathRadiusMeters) + motionAllowance;
+        // InCornerでは旧方向にBezier半径Rを進めない。球のプローブ幅と1物理ステップだけ確保。
+        float clearance = ProbeRadius + motionAllowance;
+        if (!knotDetector)
+            return false;
         knotDetector.TryGetNextSlopePosition();
 
-        float flatLength = Vector3.Dot(knotDetector.nextSlopePosition - entry.position, entry.direction);
+        Vector3 nextSlopePosition = knotDetector.nextSlopePosition;
+        if (!IsFiniteVector(nextSlopePosition))
+            return false;
+        float flatLength = Vector3.Dot(nextSlopePosition - entry.position, entry.direction);
+        if (!IsFiniteFloat(flatLength) || flatLength <= Eps)
+            return false;
 
         float latestTurnProgress = flatLength - clearance;
 
-        if (!IsFiniteFloat(entryToFlick) ||
-            !IsFiniteFloat(entryToTarget) ||
+        if (!IsFiniteFloat(entryToFlick) || !IsFiniteFloat(entryToTarget) ||
             latestTurnProgress <= Eps ||
-            entryToFlick < -motionAllowance ||
-            entryToFlick > flatLength + motionAllowance)
+            entryToFlick < motionAllowance ||
+            entryToFlick > flatLength + motionAllowance
+            )
             return false;
 
         lastFlatTurnLimitProgress = latestTurnProgress;
@@ -2575,6 +2518,13 @@ public float AdvancePredictedSplineDriveReadOnly(
         pendingTurnFlickPosition = rb.position;
         pendingTurnFlickVelocity = rb.velocity;
         pendingFlatEntryFrame = flatEntryFrame;
+        
+        Debug.Log(
+            $"[FLICK SNAPSHOT] " +
+            $"flatValid={flatEntryFrame.valid} " +
+            $"pendingValid={pendingFlatEntryFrame.valid} " +
+            $"distance={pendingFlatEntryFrame.distanceToNextSlope}"
+        );
 
         if (!pendingTurnWasFlat)
             return;
@@ -2702,135 +2652,21 @@ public float AdvancePredictedSplineDriveReadOnly(
         rb.WakeUp();
     }
 
-    // ================================================================
-    // Integrated Physics Quarter Turn Path
-    // ================================================================
-
-    bool BeginQuarterTurnPath(float turnDegrees, Vector3 heading)
+    // InCorner: 旧進行方向へ前進する円弧を作らず、旋回開始位置から新方向へ向かう。
+    // 速度の水平大きさとY速度は保持する。FiveLine予約はApplyQuarterTurnで決定済み。
+    void ApplyDirectInCornerTurn(Vector3 originalVelocity)
     {
-        if (!rb || rb.isKinematic || Mathf.Abs(turnDegrees) <= Eps)
-            return false;
-
-        float signedDegrees = Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
-        Vector3 planarVelocity = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
-        turnPathCapturedPlanarSpeed = planarVelocity.magnitude;
-
-        Vector3 startDirection = NormalizeFlat(
-            heading,
-            planarVelocity.sqrMagnitude > Eps * Eps ? planarVelocity : transform.forward);
-
-        turnTargetDirection = NormalizeFlat(
-            Quaternion.AngleAxis(signedDegrees, Vector3.up) * startDirection,
-            startDirection);
-        turnPathCurrentDirection = startDirection;
-
-        float radius = Mathf.Max(0.10f, turnPathRadiusMeters);
-        turnPathP0 = Flatten(rb.position);
-        turnPathP3 = turnPathP0 + (startDirection + turnTargetDirection) * radius;
-
-        float tangentLength = QuarterCircleBezierKappa * radius;
-        turnPathP1 = turnPathP0 + startDirection * tangentLength;
-        turnPathP2 = turnPathP3 - turnTargetDirection * tangentLength;
-
-        float arcLength = Mathf.PI * 0.5f * radius;
-        float referenceSpeed = Mathf.Max(turnPathMinimumReferencePlanarSpeed, turnPathCapturedPlanarSpeed);
-        float naturalDuration = arcLength / referenceSpeed;
-        float minimumDuration = Mathf.Max(2, turnPathMinimumFixedSteps) * Time.fixedDeltaTime;
-
-        turnPathDuration = Mathf.Clamp(
-            naturalDuration,
-            minimumDuration,
-            Mathf.Max(minimumDuration, turnPathMaximumDurationSeconds));
-
-        turnPathElapsed = 0f;
-        turnPathActive = true;
+        float verticalSpeed = Vector3.Dot(originalVelocity, Vector3.up);
+        float planarSpeed = Vector3.ProjectOnPlane(originalVelocity, Vector3.up).magnitude;
+        direction = turnTargetDirection;
+        rb.velocity = direction * planarSpeed + Vector3.up * verticalSpeed;
         rb.WakeUp();
 
-        if (logTurnPath)
-        {
-            Debug.Log(
-                $"[CORE TURN PATH BEGIN] time={Time.fixedTime:F4} " +
-                $"radius={radius:F3} duration={turnPathDuration:F4}s " +
-                $"speed={turnPathCapturedPlanarSpeed:F3} " +
-                $"start={startDirection:F4} target={turnTargetDirection:F4}",
-                this);
-        }
-
-        return true;
+        if (logTurnTransition)
+            Debug.Log($"[CORE IN CORNER] pos={rb.position:F4} " +
+                $"speed={planarSpeed:F3} newDirection={direction:F4} " +
+                $"fiveLinePending={fiveLineCorrectionPending}", this);
     }
-
-    bool StepQuarterTurnPath()
-    {
-        if (!turnPathActive || !rb)
-            return false;
-
-        float dt = Mathf.Max(Time.fixedDeltaTime, Eps);
-        float nextElapsed = Mathf.Min(turnPathDuration, turnPathElapsed + dt);
-        float t = turnPathDuration > Eps ? Mathf.Clamp01(nextElapsed / turnPathDuration) : 1f;
-
-        Vector3 targetPlanarPoint = EvaluateTurnPathBezier(t);
-        Vector3 currentPlanarPoint = Flatten(rb.position);
-        Vector3 requiredPlanarVelocity = (targetPlanarPoint - currentPlanarPoint) / dt;
-
-        float verticalSpeed = Vector3.Dot(rb.velocity, Vector3.up);
-        rb.velocity = requiredPlanarVelocity + Vector3.up * verticalSpeed;
-
-        turnPathCurrentDirection = NormalizeFlat(
-            EvaluateTurnPathBezierDerivative(t),
-            turnTargetDirection);
-
-        turnPathElapsed = nextElapsed;
-        rb.WakeUp();
-
-        if (t < 1f - Eps)
-            return true;
-
-        turnPathActive = false;
-        turnPathCurrentDirection = turnTargetDirection;
-
-        if (logTurnPath)
-        {
-            Debug.Log(
-                $"[CORE TURN PATH COMPLETE] time={Time.fixedTime:F4} " +
-                $"target={turnTargetDirection:F4} velocity={rb.velocity:F4}",
-                this);
-        }
-
-        return true;
-    }
-
-    void CancelQuarterTurnPath()
-    {
-        turnPathActive = false;
-        turnPathElapsed = 0f;
-        turnPathDuration = 0f;
-        turnPathCapturedPlanarSpeed = 0f;
-        turnPathCurrentDirection = NormalizeFlat(direction, travelDirection);
-    }
-
-    Vector3 EvaluateTurnPathBezier(float t)
-    {
-        float u = 1f - t;
-        float uu = u * u;
-        float tt = t * t;
-        return
-            uu * u * turnPathP0 +
-            3f * uu * t * turnPathP1 +
-            3f * u * tt * turnPathP2 +
-            tt * t * turnPathP3;
-    }
-
-    Vector3 EvaluateTurnPathBezierDerivative(float t)
-    {
-        float u = 1f - t;
-        return
-            3f * u * u * (turnPathP1 - turnPathP0) +
-            6f * u * t * (turnPathP2 - turnPathP1) +
-            3f * t * t * (turnPathP3 - turnPathP2);
-    }
-
-    static Vector3 Flatten(Vector3 value) =>
-        Vector3.ProjectOnPlane(value, Vector3.up);
 
     // ================================================================
     // FiveLine landing correction
@@ -2843,7 +2679,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!fiveLineCorrectionPending ||
             fiveLineCorrectionActive ||
             waitingForTurnGuide ||
-            turnPathActive ||
             turnTransitionActive)
         {
             return;

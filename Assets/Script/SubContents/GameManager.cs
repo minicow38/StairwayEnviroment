@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEngine;
 using TMPro;
 public class MainGameManager : MonoBehaviour
@@ -7,7 +8,7 @@ public class MainGameManager : MonoBehaviour
 
     public CoreStepInsertSplinePathNatural PiercingSpiral;
 
-    public CorrespondSubject mainDrive;
+    public CorrespondSubject reSubject;
     public TextMeshProUGUI displayScore;
     public TextMeshProUGUI displayCoin;
 
@@ -46,7 +47,7 @@ public class MainGameManager : MonoBehaviour
         VisualPlayerChildCollider = array
              .Where(x => x != null && x.transform.name != "subject")
              .ToArray();
-        mainDrive= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
+        reSubject= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();
         
         TopTitle= GameObject.Find("GameUI/Title").transform.gameObject;
@@ -94,10 +95,12 @@ public class MainGameManager : MonoBehaviour
             LimitTouchingphase = LimitTouchingphase + 8 + del;
             PiercingSpiral.ModifyOverrap = del;
         }
-        if (CurrentPointToPlane != mainDrive.PointToPlane)
+        if (CurrentPointToPlane != reSubject.PointToPlane)
         {
-            displayScore.text = mainDrive.PointToPlane.ToString("");
-            CurrentPointToPlane=mainDrive.PointToPlane;
+            
+            displayScore.text = reSubject.PointToPlane.ToString("");
+            CurrentPointToPlane=reSubject.PointToPlane;
+            
         }
     }
 }

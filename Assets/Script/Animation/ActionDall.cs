@@ -22,7 +22,11 @@ public class ActionDall : MonoBehaviour
     public float knockBackPower = 60f;
     public float knockUpPower = 25f;
     public float knockTorque = 3f;
+    
+    private float totalRotation;
 
+
+    public Quaternion previousRotation;
     public bool StimulateSeekingAnimation = false;
     public bool NonComeBackPhysicX = false;
     private bool knockedBack = false;
@@ -33,7 +37,8 @@ public class ActionDall : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        
+        previousRotation = transform.rotation;
+
         resouceY = new float[3];
         anime = transform.GetComponent<Animator>();
         rb = GetComponent<Rigidbody>();
@@ -42,6 +47,21 @@ public class ActionDall : MonoBehaviour
 
      void FixedUpdate()
     {
+        float delta = Mathf.DeltaAngle(
+            previousRotation.eulerAngles.y,
+            transform.eulerAngles.y
+        );
+
+
+        totalRotation += Mathf.Abs(delta);
+
+        bool isRotating = totalRotation > 210f;
+
+        if (rb.velocity.y>3f)
+        {
+            Debug.Log("累積回転が210度を超えました");
+        }
+        
         if (AroundStairway.Length == 0)
         {
             AroundStairway = Physics.OverlapSphere(transform.position, 6f);
@@ -53,7 +73,6 @@ public class ActionDall : MonoBehaviour
                     AroundStairwayPhysics.Add(AroundStairway[i].transform.gameObject);
                     var turn_name=""+ match.Groups[1] + match.Groups[2] + "_" + match.Groups[3] + "_" + "Physics";
                     var obj=GameObject.Find("" + turn_name).transform.gameObject;
-                   angle=obj.transform.localEulerAngles;
                   // transform.rotation = Quaternion.Euler(0, angle.y, 0);
                    //rb.constraints = RigidbodyConstraints.FreezePositionY;
                     Debug.Log("");
@@ -76,10 +95,9 @@ public class ActionDall : MonoBehaviour
             {
                 if (AnotherNascent.transform.CompareTag("SubjectVisual"))
                 {
-                    transform.rotation = Quaternion.Euler(0, angle.y, 0);
+                   // transform.rotation = Quaternion.Euler(0, angle.y, 0);
                     if (!StimulateSeekingAnimation)
                     {
-
                        DollAttachGrond.transform.GetComponent<MeshCollider>().enabled = true;
                         
                         StimulateSeekingAnimation = true;
@@ -170,8 +188,16 @@ public class ActionDall : MonoBehaviour
 
 
             int fit = 0;
+            rb.constraints = RigidbodyConstraints.FreezePositionY;
+            StartCoroutine(DelayDestory());
+
         }
-       rb.constraints = RigidbodyConstraints.FreezePositionY;
+    }
+    IEnumerator DelayDestory()
+    {
+        yield return new WaitForSeconds(3f);
+        
+       // Destroy(transform.gameObject);
     }
     // Update is called once per frame
     
