@@ -4,7 +4,10 @@ using Sirenix.OdinInspector;
 
 /// <summary>
 /// InSubject-only, visual-only Stairway equalizer (Unity 2022.3 / built-in API).
-/// No SlopeStickCore, EnvelopeSystem, BallVisualSlopeDrive or Splines dependency.
+/// InSubject remains the only motion authority. SlopeStickCore is read-only and optional:
+/// it is used only to estimate the real landing distance. Wave 1 happens once, then
+/// Wave 2 / Wave 3 repeat spatially until the landing; the final planned wave is Wave 3.
+/// No EnvelopeSystem, BallVisualSlopeDrive or Splines write dependency.
 /// Attach this component to an independent VISUAL GameObject, not InSubject.
 /// Main motion authority: InSubject only. Output coordinates follow CorrespondSubject.
 /// Subject is a read-only visual-space anchor / rotation reference.
@@ -19,26 +22,8 @@ using Sirenix.OdinInspector;
 public sealed class ExampleBallVisualEqualizer : MonoBehaviour
 {
     const float Eps = 0.000001f;
-    const int Waves = 3;
+    const int ReferenceWaveCount = 3;
     readonly RaycastHit[] hits = new RaycastHit[16];
-
-    // These are *presentation* profiles. They do not change references, layer masks,
-    // InSubject movement, Subject mapping, stage progress or the section length.
-    public enum ShakePreset
-    {
-        Custom = 0,
-        BalancedContact = 1,
-        SoftFlow = 2,
-        FineStairRattle = 3,
-        FirmImpact = 4,
-        CompactSafe = 5,
-        ClassicImpact = 6
-    }
-
-    [Header("Shake feel: choose a preset from the Inspector dropdown")]
-    [Tooltip("Custom keeps current numeric values. Selecting another item writes its suggested tuning into the fields below; you may fine-tune those fields afterwards.")]
-    [SerializeField] ShakePreset shakePreset = ShakePreset.Custom;
-    [SerializeField, HideInInspector] ShakePreset lastAppliedShakePreset = ShakePreset.Custom;
 
     [Header("Required: only primary motion injection")]
     [SerializeField] Rigidbody inSubject;
@@ -81,8 +66,19 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
 
     [Header("Section / entry")]
     [SerializeField] bool autoBeginOnDownhill = true;
-    [SerializeField] bool autoEndAtSection = true;
+    [SerializeField] bool autoEndAtLanding = true;
+    [Tooltip("Reference -1 stair length. This defines the natural spatial density: 1 -> 2 -> 3 over this distance.")]
     [SerializeField, Min(.1f)] float sectionLength = 9.9f;
+    [Tooltip("READ ONLY. Used only to estimate the current stair landing distance; never written by ExampleBVE.")]
+    [SerializeField] SlopeStickCore slopeSectionSource;
+    [Tooltip("Only sections clearly longer than the -1 reference repeat Wave2/Wave3. Near-reference sections stay exactly 1->2->3.")]
+    [SerializeField, Min(1.05f)] float repeatLengthMultiplierThreshold = 1.35f;
+    [Tooltip("How quickly repeated Wave2/Wave3 pairs lose energy. This is pair damping, not distance stretching.")]
+    [SerializeField, Range(.50f, 1f)] float repeatPairDamping = .92f;
+    [Tooltip("Keeps long stairs visibly alive instead of letting restitution drive later pairs to almost zero.")]
+    [SerializeField, Range(.02f, .60f)] float minimumRepeatAmplitudeRatio = .18f;
+    [Tooltip("Short confirmation time after SlopeStickCore leaves the slope before the equalizer starts settling.")]
+    [SerializeField, Range(0f, .20f)] float landingConfirmSeconds = .04f;
     [SerializeField, Range(1f, 60f)] float entrySlopeDegrees = 12f;
     [SerializeField, Min(0f)] float minimumEntryPlanarSpeed = 2f;
     [SerializeField, Min(0f)] float teleportThreshold = 2.5f;
@@ -115,6 +111,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     [SerializeField, Range(0f, .5f)] float secondRoughness = .22f;
     [SerializeField, Range(0f, .5f)] float thirdRoughness = .12f;
     [SerializeField, Range(0f, .5f)] float measuredRoughnessGain = .10f;
+
+
     [SerializeField, Min(0f)] float signedRoughAccelerationGain = 90f;
     [SerializeField, Min(0f)] float accelerationResidualGain = .18f;
     [SerializeField, Min(.01f)] float residualLowPassHz = 2f;
@@ -137,30 +135,30 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     [Tooltip("Fraction of each wave near a contact to blend between the two response times.")]
     [SerializeField, Range(.02f, .30f)] float contactBlendFraction = .16f;
 
-    [Header("Adaptive Visual Filter: renderer-only; does not alter physics")]
-    [Tooltip("When enabled, adapt the existing SmoothDamp response to visual offset speed. The wave solver, InSubject and Colliders are never filtered.")]
-    [SerializeField] bool adaptiveVisualFilter = true;
-    [Tooltip("How much faster the display follows a rapidly changing visual offset (Hz per m/s). Zero = original contact/flight SmoothDamp.")]
-    [SerializeField, Min(0f)] float adaptiveSpeedGain = 1.4f;
-    [Tooltip("Smooths the speed estimate used to adapt the display filter, not the physical velocity.")]
-    [SerializeField, Range(.5f, 30f)] float adaptiveDerivativeHz = 8f;
-    [Tooltip("Never use a shorter display smoothing time than this.")]
-    [SerializeField, Range(.005f, .04f)] float adaptiveMinimumSmoothSeconds = .008f;
-    [Tooltip("Prevent carrying the old visual offset into a sharply rotated Stable-N/T coordinate frame.")]
-    [SerializeField] bool resetFilterOnSharpTurn = true;
-    [SerializeField, Range(30f, 170f)] float filterTurnResetDegrees = 65f;
+    [Header("Presentation turn reset")]
+    [Tooltip("Do not carry display smoothing lag from the old Stable-N/T frame across a sharp turn.")]
+    [SerializeField] bool resetDisplayOnSharpTurn = true;
+    [SerializeField, Range(30f, 170f)] float displayTurnResetDegrees = 65f;
 
     [Header("Read-only runtime diagnostics")]
     [SerializeField] bool active, exiting, probeValid, firstWavePeakReady;
-    [SerializeField] int waveIndex = -1, firstWavePeakRevision;
+    [Tooltip("0=Wave1, 1=Wave2, 2=Wave3. Repeated Wave2/Wave3 keep these profile indices.")]
+    [SerializeField] int waveIndex = -1;
+    [Tooltip("Absolute spatial wave number: 0,1,2,3... Pattern is 1,2,3,2,3...")]
+    [SerializeField] int waveCycleIndex = -1;
+    [SerializeField] int plannedWaveCount = ReferenceWaveCount, firstWavePeakRevision;
     [SerializeField] float traveled, progress01, phase, currentAmplitude;
+    [SerializeField] bool landingPlanValid;
+    [SerializeField] float plannedLandingDistance = 9.9f;
+    [SerializeField] float runtimeWaveLength = 3.3f;
+    [SerializeField] float sourceSectionLength;
+    [SerializeField] float sourceSectionStartProgress01;
     [SerializeField] float slope0, slope1, slope2, signedCurvature, roughness, filteredRoughness;
     [SerializeField] float baseOffset, residualOffset, residualSpeed, residualAcceleration, visualOffset;
     [SerializeField] float presentedOffset, presentedSpeed, presentationSmoothSeconds;
     [SerializeField] float entryRawNormalSpeed, entryActualRiseSpeed, entryUnclampedHeight;
     [SerializeField] float visibleUpperLimit, guardedTargetOffset;
     [SerializeField] bool heightGuardActive;
-    [SerializeField] float adaptiveVisualSpeed, adaptiveCutoffHz;
     [SerializeField] int visualFilterResetCount;
     [SerializeField] float upperNormal, lowerNormal, firstWavePeakCY, firstWavePeakProgress01;
     [SerializeField] Vector3 tangent = Vector3.forward, normal = Vector3.up, binormal = Vector3.right;
@@ -190,206 +188,22 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     float initialWaveHeight, initialWaveSpeed, gravityN, elapsed, exitElapsed, flatElapsed;
     float previousOffset, previousOffsetSpeed, lastBegin = -999f, lastProbeSlopeDegrees;
     float nextHeightGuardLog;
-    bool visualFilterReady;
-    float previousFilterTarget;
+    bool presentationFrameReady;
     Vector3 previousFilterNormal = Vector3.up, previousFilterTangent = Vector3.forward;
     bool initialized, armed = true;
-    int lastApexWave = -1;
-
-    public ShakePreset SelectedShakePreset => shakePreset;
+    bool observedSlopeSinceBegin;
+    float offSlopeElapsed;
+    int lastApexCycle = -1;
 
     // Unity calls OnValidate when the dropdown changes in Edit Mode or Play Mode.
     // Avoid reapplying on every Inspector refresh so manual fine-tuning is retained.
-    void OnValidate() => ApplyShakePresetIfChanged();
-
-    // Runtime API. The one-argument overload preserves existing callers.
-    public void SetShakePreset(ShakePreset value) => SetShakePreset(value, false);
-
-    public void SetShakePreset(ShakePreset value, bool force)
-    {
-        if ((int)value < (int)ShakePreset.Custom || (int)value > (int)ShakePreset.ClassicImpact)
-        {
-            Debug.LogWarning($"[ExampleBVE][INVALID_SHAKE_PRESET] value={(int)value}", this);
-            return;
-        }
-        if (!force && shakePreset == value && lastAppliedShakePreset == value) return;
-        shakePreset = lastAppliedShakePreset = value;
-        if (value != ShakePreset.Custom) ApplyShakePresetValues(value);
-    }
-
-    [ContextMenu("ExampleBVE / Reapply Selected Shake Preset")]
-    public void ReapplyShakePreset() => SetShakePreset(shakePreset, true);
-
-    public void SetShakePresetByIndex(int index)
-    {
-        if (index < (int)ShakePreset.Custom || index > (int)ShakePreset.ClassicImpact)
-        {
-            Debug.LogWarning($"[ExampleBVE][INVALID_SHAKE_PRESET_INDEX] index={index}", this);
-            return;
-        }
-        SetShakePreset((ShakePreset)index, true);
-    }
-
-    void ApplyShakePresetIfChanged()
-    {
-        if (shakePreset != lastAppliedShakePreset) SetShakePreset(shakePreset, false);
-    }
-
-    void ApplyShakePresetValues(ShakePreset value)
-    {
-        // Historical reference values from this Example BVE's 3-wave, roughness,
-        // pullback, presentation smoothing and subsequent height-guard iterations.
-        // These are trial presets, not measured optimums from a controlled A/B test.
-        // Restore a complete tuning baseline first so profiles do not inherit the
-        // previous profile's hidden leftovers. Keep physical/calibration fields intact.
-        initialHeight = .45f;
-        energyBlend = .35f;
-        restitution = .86f;
-        lowerRatio = .75f;
-        firstApexFraction = .82f;
-        laterApexFraction = .50f;
-        dampingPerMeter = .02f;
-        exitDamping = 9f;
-        firstRoughness = .08f;
-        secondRoughness = .22f;
-        thirdRoughness = .12f;
-        measuredRoughnessGain = .10f;
-        signedRoughAccelerationGain = 90f;
-        accelerationResidualGain = .18f;
-        residualLowPassHz = 2f;
-        springK = 420f;
-        damperC = 18f;
-        maximumResidual = .20f;
-        maximumAcceleration = 450f;
-        maximumJerk = 2500f;
-        entryBlendSeconds = .10f;
-        softenVisualWave = true;
-        impactSmoothSeconds = .015f;
-        flightSmoothSeconds = .035f;
-        contactBlendFraction = .16f;
-        maximumFirstWaveHeight = .65f;
-        maximumVisibleLiftNormal = .52f;
-        maximumVisibleDropNormal = .28f;
-        maximumCenterHeightAboveGround = 1.10f;
-
-        switch (value)
-        {
-            case ShakePreset.BalancedContact:
-                // Current contact feel with a slightly longer first descent.
-                firstApexFraction = .76f;
-                springK = 360f;
-                damperC = 24f;
-                maximumJerk = 1800f;
-                break;
-
-            case ShakePreset.SoftFlow:
-                // Longer aerial transition, less aggressive residual and texture.
-                initialHeight = .40f;
-                energyBlend = .25f;
-                restitution = .82f;
-                lowerRatio = .65f;
-                firstApexFraction = .72f;
-                dampingPerMeter = .035f;
-                firstRoughness = .06f;
-                secondRoughness = .16f;
-                thirdRoughness = .09f;
-                measuredRoughnessGain = .08f;
-                signedRoughAccelerationGain = 65f;
-                accelerationResidualGain = .13f;
-                springK = 300f;
-                damperC = 28f;
-                maximumResidual = .16f;
-                maximumAcceleration = 300f;
-                maximumJerk = 1400f;
-                entryBlendSeconds = .12f;
-                impactSmoothSeconds = .020f;
-                flightSmoothSeconds = .055f;
-                contactBlendFraction = .20f;
-                maximumFirstWaveHeight = .58f;
-                maximumVisibleLiftNormal = .45f;
-                maximumVisibleDropNormal = .24f;
-                maximumCenterHeightAboveGround = 1.03f;
-                break;
-
-            case ShakePreset.FineStairRattle:
-                // Emphasize measured steps and wave 2 without raising the arc.
-                initialHeight = .40f;
-                energyBlend = .25f;
-                firstApexFraction = .77f;
-                dampingPerMeter = .025f;
-                firstRoughness = .10f;
-                secondRoughness = .28f;
-                thirdRoughness = .16f;
-                measuredRoughnessGain = .16f;
-                signedRoughAccelerationGain = 120f;
-                accelerationResidualGain = .23f;
-                residualLowPassHz = 2.4f;
-                springK = 400f;
-                damperC = 24f;
-                maximumAcceleration = 420f;
-                maximumJerk = 2100f;
-                impactSmoothSeconds = .012f;
-                flightSmoothSeconds = .030f;
-                contactBlendFraction = .15f;
-                maximumFirstWaveHeight = .60f;
-                maximumVisibleLiftNormal = .50f;
-                break;
-
-            case ShakePreset.FirmImpact:
-                // A snappier contact that still softens its in-flight motion.
-                initialHeight = .48f;
-                firstApexFraction = .78f;
-                firstRoughness = .10f;
-                secondRoughness = .25f;
-                thirdRoughness = .14f;
-                measuredRoughnessGain = .12f;
-                signedRoughAccelerationGain = 110f;
-                springK = 440f;
-                damperC = 20f;
-                maximumJerk = 2400f;
-                impactSmoothSeconds = .010f;
-                flightSmoothSeconds = .025f;
-                break;
-
-            case ShakePreset.CompactSafe:
-                // Suppress showy separation from the stair, retain small impacts.
-                initialHeight = .32f;
-                energyBlend = .15f;
-                restitution = .78f;
-                lowerRatio = .60f;
-                firstApexFraction = .74f;
-                dampingPerMeter = .045f;
-                firstRoughness = .06f;
-                secondRoughness = .18f;
-                thirdRoughness = .10f;
-                measuredRoughnessGain = .09f;
-                signedRoughAccelerationGain = 85f;
-                accelerationResidualGain = .14f;
-                springK = 370f;
-                damperC = 27f;
-                maximumResidual = .12f;
-                maximumAcceleration = 300f;
-                maximumJerk = 1450f;
-                entryBlendSeconds = .12f;
-                impactSmoothSeconds = .014f;
-                flightSmoothSeconds = .040f;
-                maximumFirstWaveHeight = .42f;
-                maximumVisibleLiftNormal = .34f;
-                maximumVisibleDropNormal = .20f;
-                maximumCenterHeightAboveGround = .95f;
-                break;
-
-            case ShakePreset.ClassicImpact:
-                // The earlier direct (harder) presentation, with today's safety
-                // caps intentionally kept enabled. No physics output is changed.
-                softenVisualWave = false;
-                break;
-        }
-    }
-
     public Rigidbody InSubject => inSubject;
     public bool IsActive => active;
     public int WaveIndex => waveIndex;
+    public int WaveCycleIndex => waveCycleIndex;
+    public int PlannedWaveCount => plannedWaveCount;
+    public float RuntimeWaveLength => runtimeWaveLength;
+    public bool LandingPlanValid => landingPlanValid;
     public float Progress01 => progress01;
     public float Roughness => filteredRoughness;
     public float SignedCurvature => filteredSignedCurvature;
@@ -404,6 +218,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     public float FirstWavePeakProgress01 => firstWavePeakProgress01;
     public int FirstWavePeakRevision => firstWavePeakRevision;
     public Vector3 FirstWavePeakWorld => previousApexPosition;
+    // Compatibility aliases for existing Inspector/debug callers.
+    public float RuntimeSectionLength => plannedLandingDistance;
+    public bool AdaptiveSectionActive => landingPlanValid && plannedWaveCount > ReferenceWaveCount;
 
     /// <summary>InSubject drives motion; Subject is read only for mapped-space anchoring/rotation.</summary>
     public void Inject(Rigidbody primary, Transform secondaryRotation = null)
@@ -412,6 +229,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         inSubject = primary;
         subjectRotation = secondaryRotation;
         if (!visualTarget) visualTarget = transform;
+        ResolveSlopeSectionSource();
         ResolveCoordinateSource();
         initialized = ValidateReferences();
         if (initialized) InitializeFrame();
@@ -419,8 +237,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
 
     void Awake()
     {
-        ApplyShakePresetIfChanged();
         if (!visualTarget) visualTarget = transform;
+        ResolveSlopeSectionSource();
         ResolveCoordinateSource();
         initialized = ValidateReferences();
         if (initialized) InitializeFrame();
@@ -449,6 +267,157 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         {
             ResolveCoordinateSource();
             if (coordinateSource && initialized) ValidateReferences();
+        }
+    }
+
+    void ResolveSlopeSectionSource()
+    {
+        if (!slopeSectionSource && inSubject)
+            slopeSectionSource = inSubject.GetComponent<SlopeStickCore>();
+    }
+
+    bool SlopeSectionReadyForBegin()
+    {
+        // Preserve the legacy downhill entry timing. The landing plan may be captured
+        // a few FixedUpdate ticks later when SlopeStickCore has stabilized on the slope.
+        return true;
+    }
+
+    void ResetWavePlan()
+    {
+        plannedLandingDistance = Mathf.Max(.1f, sectionLength);
+        plannedWaveCount = ReferenceWaveCount;
+        runtimeWaveLength = plannedLandingDistance / ReferenceWaveCount;
+        sourceSectionLength = 0f;
+        sourceSectionStartProgress01 = 0f;
+        landingPlanValid = false;
+        observedSlopeSinceBegin = false;
+        offSlopeElapsed = 0f;
+    }
+
+    void CaptureWavePlan()
+    {
+        ResetWavePlan();
+        ResolveSlopeSectionSource();
+        TryCaptureLandingPlan(false);
+    }
+
+    void TryCaptureLandingPlanLate()
+    {
+        if (!active || landingPlanValid) return;
+        ResolveSlopeSectionSource();
+        TryCaptureLandingPlan(true);
+    }
+
+    bool TryCaptureLandingPlan(bool estimateEntryFromTraveled)
+    {
+        if (!slopeSectionSource || !slopeSectionSource.BallVisualIsOnSlope)
+            return false;
+
+        float fullLength = slopeSectionSource.BallVisualSlopeSectionLength;
+        if (fullLength <= Eps) return false;
+
+        float liveProgress = Mathf.Clamp01(slopeSectionSource.BallVisualSlopeProgress01);
+        float startProgress = estimateEntryFromTraveled
+            ? Mathf.Clamp01(liveProgress - traveled / Mathf.Max(.1f, fullLength))
+            : liveProgress;
+
+        float remaining = fullLength * Mathf.Max(0f, 1f - startProgress);
+        if (remaining <= .1f) return false;
+
+        float referenceLength = Mathf.Max(.1f, sectionLength);
+        int count = ReferenceWaveCount;
+        if (remaining > referenceLength * repeatLengthMultiplierThreshold)
+            count = ChooseWaveCountFromLengthMultiplier(remaining, referenceLength);
+
+        sourceSectionLength = fullLength;
+        sourceSectionStartProgress01 = startProgress;
+        plannedLandingDistance = remaining;
+        plannedWaveCount = Mathf.Max(ReferenceWaveCount, count);
+        runtimeWaveLength = plannedLandingDistance / plannedWaveCount;
+        landingPlanValid = true;
+        observedSlopeSinceBegin = true;
+        offSlopeElapsed = 0f;
+
+        Trace("WAVE_PLAN",
+            $"sourceLength={sourceSectionLength:F3} startP={sourceSectionStartProgress01:F4} " +
+            $"landing={plannedLandingDistance:F3} count={plannedWaveCount} " +
+            $"waveLength={runtimeWaveLength:F3} pattern=1,2,3,2,3...");
+        return true;
+    }
+
+    static int ChooseWaveCountFromLengthMultiplier(float distance, float referenceLength)
+    {
+        // Generated -N stairs scale almost linearly in length. Each extra reference
+        // length adds one Wave2/Wave3 pair: -1=>3 waves, -2=>5, -3=>7, -5=>11.
+        int lengthMultiplier = Mathf.Max(1, Mathf.RoundToInt(
+            distance / Mathf.Max(.1f, referenceLength)));
+        return 2 * lengthMultiplier + 1;
+    }
+
+    int ResolveWaveProfile(int cycleIndex)
+    {
+        if (cycleIndex <= 0) return 0;        // Wave1 once
+        return (cycleIndex & 1) == 1 ? 1 : 2; // Wave2, Wave3, Wave2, Wave3...
+    }
+
+    float EvaluateCycleAmplitude(int cycleIndex, float distanceFade)
+    {
+        float energyRatio = restitution * restitution;
+        int profile = ResolveWaveProfile(cycleIndex);
+
+        float profileRatio = profile == 0
+            ? 1f
+            : profile == 1 ? energyRatio : energyRatio * energyRatio;
+
+        int repeatPair = cycleIndex <= 2 ? 0 : (cycleIndex - 1) / 2;
+        float pairRatio = Mathf.Pow(repeatPairDamping, repeatPair);
+        float ratio = profileRatio * pairRatio;
+
+        if (cycleIndex > 2)
+            ratio = Mathf.Max(minimumRepeatAmplitudeRatio, ratio);
+
+        return initialWaveHeight * ratio * distanceFade;
+    }
+
+    void UpdateLandingState(float dt)
+    {
+        ResolveSlopeSectionSource();
+        bool onSlope = slopeSectionSource && slopeSectionSource.BallVisualIsOnSlope;
+
+        if (onSlope)
+        {
+            observedSlopeSinceBegin = true;
+            offSlopeElapsed = 0f;
+        }
+        else if (observedSlopeSinceBegin)
+        {
+            offSlopeElapsed += dt;
+        }
+
+        if (!autoEndAtLanding || exiting) return;
+
+        // Primary end: the same SlopeStickCore section reached its real endpoint.
+        if (landingPlanValid && traveled >= plannedLandingDistance - .01f)
+        {
+            EndStair();
+            return;
+        }
+
+        // Secondary end: Core has actually left the slope for a short stable interval.
+        if (observedSlopeSinceBegin && !onSlope && offSlopeElapsed >= landingConfirmSeconds)
+        {
+            EndStair();
+            return;
+        }
+
+        // Fallback when SlopeStickCore is unavailable: require a real flat probe after
+        // at least the reference 3-wave distance, not merely a noisy single sample.
+        if (!slopeSectionSource && probeValid && traveled >= Mathf.Max(.1f, sectionLength) &&
+            lastProbeSlopeDegrees < entrySlopeDegrees * .35f)
+        {
+            offSlopeElapsed += dt;
+            if (offSlopeElapsed >= landingConfirmSeconds) EndStair();
         }
     }
 
@@ -779,6 +748,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         visibleUpperLimit = maximumVisibleLiftNormal;
         guardedTargetOffset = 0f;
         active = exiting = false;
+        ResetWavePlan();
         UpdateCoordinateDiagnostics(inSubject.position, 0f);
         Trace("FRAME_INIT", $"physics={Fmt(inSubject.position)} subject={Fmt(subjectWorld)} " +
             $"mapped={Fmt(mappedCarrierWorld)} discrepancy={mappedSubjectGap:F4}m mode={mappingMode}");
@@ -889,13 +859,15 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
                 $"rawHeight={entryUnclampedHeight:F3} usedHeight={initialWaveHeight:F3}");
         previousCarrier = inSubject.position;
         previousVelocity = v;
+        CaptureWavePlan();
         traveled = progress01 = phase = elapsed = exitElapsed = flatElapsed = 0f;
         baseOffset = residualOffset = residualSpeed = residualAcceleration = visualOffset = 0f;
         ResetVisualFilterState(0f);
         previousOffset = previousOffsetSpeed = lowPassedNormalAcceleration = 0f;
         currentAmplitude = initialWaveHeight;
         waveIndex = -1;
-        lastApexWave = -1;
+        waveCycleIndex = -1;
+        lastApexCycle = -1;
         firstWavePeakReady = false;
         firstWavePeakCY = firstWavePeakProgress01 = 0f;
         previousNormal = normal;
@@ -904,7 +876,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         exiting = armed = false;
         Trace("BEGIN", $"p={Fmt(previousCarrier)} v={Fmt(v)} N={Fmt(normal)} " +
             $"subject={Fmt(subjectRotation ? subjectRotation.position : Vector3.zero)} " +
-            $"map={mappingMode} h0={initialWaveHeight:F3} u0={initialWaveSpeed:F3}");
+            $"map={mappingMode} h0={initialWaveHeight:F3} u0={initialWaveSpeed:F3} " +
+            $"landing={plannedLandingDistance:F3} count={plannedWaveCount} waveLength={runtimeWaveLength:F3}");
     }
 
     [ContextMenu("ExampleBVE / End Stair (Play Mode)")]
@@ -940,7 +913,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             if (flatElapsed > .12f && Time.fixedTime - lastBegin > .4f) armed = true;
             if (autoBeginOnDownhill && armed && probeValid &&
                 lastProbeSlopeDegrees >= entrySlopeDegrees &&
-                planar.magnitude >= minimumEntryPlanarSpeed)
+                planar.magnitude >= minimumEntryPlanarSpeed &&
+                SlopeSectionReadyForBegin())
                 BeginStair();
             if (!active)
             {
@@ -955,33 +929,64 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         if (exiting) exitElapsed += dt;
         float ds = Mathf.Max(0f, Vector3.Dot(displacement, tangent));
         traveled += ds;
-        progress01 = Mathf.Clamp01(traveled / Mathf.Max(.1f, sectionLength));
-        float cycles = traveled * Waves / Mathf.Max(.1f, sectionLength);
-        int oldWave = waveIndex;
-        waveIndex = Mathf.Min(Waves - 1, Mathf.FloorToInt(cycles));
-        float u = Mathf.Clamp01(cycles - waveIndex);
-        phase = cycles * 2f * Mathf.PI;
-        if (autoEndAtSection && cycles >= Waves) EndStair();
 
-        float fade = Mathf.Exp(-dampingPerMeter * traveled - (exiting ? exitDamping * exitElapsed : 0f));
-        float energyRatio = restitution * restitution;
-        currentAmplitude = initialWaveHeight * Mathf.Pow(energyRatio, waveIndex) * fade;
-        float priorAmplitude = initialWaveHeight * Mathf.Pow(energyRatio, Mathf.Max(0, waveIndex - 1)) * fade;
-        float start = waveIndex == 0 ? 0f : -priorAmplitude * lowerRatio;
+        // Capture the real landing distance once Core has a stable slope section.
+        // Unlike the previous version, this NEVER stretches 3 waves across a long stair.
+        TryCaptureLandingPlanLate();
+
+        float priorProgress01 = progress01;
+        progress01 = landingPlanValid
+            ? Mathf.Clamp01(traveled / Mathf.Max(.1f, plannedLandingDistance))
+            : Mathf.Clamp01(traveled / Mathf.Max(.1f, sectionLength));
+
+        float wavePosition = traveled / Mathf.Max(.1f, runtimeWaveLength);
+        int oldCycle = waveCycleIndex;
+        int cycle = Mathf.Max(0, Mathf.FloorToInt(wavePosition));
+        float u = wavePosition - cycle;
+
+        if (landingPlanValid && cycle >= plannedWaveCount)
+        {
+            cycle = plannedWaveCount - 1;
+            u = 1f;
+        }
+
+        waveCycleIndex = cycle;
+        waveIndex = ResolveWaveProfile(waveCycleIndex);
+        phase = (waveCycleIndex + Mathf.Clamp01(u)) * 2f * Mathf.PI;
+
+        UpdateLandingState(dt);
+
+        // Preserve the original -1 damping character only over one reference section.
+        // Long-distance decay is handled by repeatPairDamping so later waves do not vanish.
+        float profileDistance = Mathf.Min(traveled, Mathf.Max(.1f, sectionLength));
+        float distanceFade = Mathf.Exp(-dampingPerMeter * profileDistance -
+            (exiting ? exitDamping * exitElapsed : 0f));
+
+        currentAmplitude = EvaluateCycleAmplitude(waveCycleIndex, distanceFade);
+        float priorAmplitude = EvaluateCycleAmplitude(Mathf.Max(0, waveCycleIndex - 1), distanceFade);
+        float start = waveCycleIndex == 0 ? 0f : -priorAmplitude * lowerRatio;
         float end = -currentAmplitude * lowerRatio;
         float apex = waveIndex == 0 ? firstApexFraction : laterApexFraction;
+
+        // Four-point roughness remains only a small modifier. The repeated 2/3 pattern
+        // now supplies the durable stair rhythm, so R=0 on a clean 45-degree collider
+        // no longer collapses the long-section motion into one broad monotone wave.
         float measured = Mathf.Clamp01(filteredRoughness / Mathf.Max(.01f, roughnessReference));
         float baselineRough = waveIndex == 0 ? firstRoughness : waveIndex == 1 ? secondRoughness : thirdRoughness;
         float waveRough = baselineRough + measuredRoughnessGain * measured;
-        if (waveIndex != oldWave)
-            Trace("WAVE", $"index={waveIndex+1} s={traveled:F3} u={u:F3} " +
-                $"R={filteredRoughness:F4} signed={filteredSignedCurvature:F4} rough={waveRough:F3} " +
-                $"amplitude={currentAmplitude:F4}");
+
+        if (waveCycleIndex != oldCycle)
+            Trace("WAVE", $"cycle={waveCycleIndex+1}/{(landingPlanValid ? plannedWaveCount : -1)} " +
+                $"profile={waveIndex+1} s={traveled:F3} u={u:F3} " +
+                $"R={filteredRoughness:F4} signed={filteredSignedCurvature:F4} " +
+                $"rough={waveRough:F3} amplitude={currentAmplitude:F4}");
+
         float priorImpact = Mathf.Sqrt(2f * gravityN * priorAmplitude * (1f + lowerRatio));
         float impact = Mathf.Sqrt(2f * gravityN * currentAmplitude * (1f + lowerRatio));
-        float riseSpeed = waveIndex == 0 ? initialWaveSpeed : restitution * priorImpact;
+        float riseSpeed = waveCycleIndex == 0 ? initialWaveSpeed : restitution * priorImpact;
         float forwardSpeed = Mathf.Max(.1f, Vector3.Dot(v, tangent));
-        float period = sectionLength / (Waves * forwardSpeed);
+        float period = Mathf.Max(.05f, runtimeWaveLength / forwardSpeed);
+
         baseOffset = EvaluateWave(u, start, currentAmplitude, end, apex,
             riseSpeed, impact, period, waveRough);
 
@@ -1006,7 +1011,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             residualOffset = -maximumResidual;
             residualSpeed = Mathf.Max(0f, residualSpeed);
         }
-        float lowerBase = -Mathf.Lerp(waveIndex == 0 ? currentAmplitude : priorAmplitude,
+        float lowerBase = -Mathf.Lerp(waveCycleIndex == 0 ? currentAmplitude : priorAmplitude,
             currentAmplitude, Mathf.SmoothStep(0f, 1f, u)) * lowerRatio;
         upperNormal = currentAmplitude * (1f + Mathf.Abs(waveRough)) + maximumResidual;
         lowerNormal = lowerBase - maximumResidual;
@@ -1016,23 +1021,23 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         visualOffset *= entryFactor;
 
         float speedN = (visualOffset - previousOffset) / dt;
-        if (!firstWavePeakReady && waveIndex == 0 &&
+        if (!firstWavePeakReady && waveCycleIndex == 0 &&
             u >= .15f && previousOffset >= .5f * currentAmplitude &&
             previousOffsetSpeed > .02f && speedN <= 0f)
         {
             firstWavePeakReady = true;
             firstWavePeakRevision++;
             firstWavePeakCY = initialCY + previousNormal.y * previousOffset;
-            firstWavePeakProgress01 = Mathf.Clamp01(progress01 - ds / Mathf.Max(.1f, sectionLength));
+            firstWavePeakProgress01 = Mathf.Clamp01(priorProgress01);
             previousApexPosition = MapPoint(previousCarrier + Vector3.up * initialCY + previousNormal * previousOffset);
-            lastApexWave = waveIndex;
+            lastApexCycle = waveCycleIndex;
             Trace("FIRST_APEX", $"CY={firstWavePeakCY:F4} progress={firstWavePeakProgress01:F4} " +
                 $"mappedWorld={Fmt(previousApexPosition)}");
         }
-        else if (waveIndex != lastApexWave && previousOffsetSpeed > .02f && speedN <= 0f)
+        else if (waveCycleIndex != lastApexCycle && previousOffsetSpeed > .02f && speedN <= 0f)
         {
-            lastApexWave = waveIndex;
-            Trace("APEX", $"wave={waveIndex+1} q={previousOffset:F4}");
+            lastApexCycle = waveCycleIndex;
+            Trace("APEX", $"cycle={waveCycleIndex+1} profile={waveIndex+1} q={previousOffset:F4}");
         }
         previousOffsetSpeed = speedN;
         previousOffset = visualOffset;
@@ -1072,36 +1077,13 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     // compress an excessive excursion instead of snapping the renderer off.
     void ResetVisualFilterState(float target)
     {
-        presentedOffset = previousFilterTarget = target;
-        presentedSpeed = adaptiveVisualSpeed = adaptiveCutoffHz = presentationSmoothSeconds = 0f;
+        presentedOffset = target;
+        presentedSpeed = 0f;
+        presentationSmoothSeconds = 0f;
         previousFilterNormal = normal;
         previousFilterTangent = tangent;
-        visualFilterReady = false;
+        presentationFrameReady = true;
         visualFilterResetCount++;
-    }
-
-    // One-Euro-inspired adaptive response: speed is low-pass filtered, then used
-    // to shorten the existing SmoothDamp time. It does NOT add a second position
-    // smoother, preserving small step-contact transients and avoiding extra lag.
-    float GetAdaptiveSmoothSeconds(float target, float contactFlightSeconds, float dt)
-    {
-        float h = Mathf.Max(.0001f, dt);
-        if (!visualFilterReady)
-        {
-            previousFilterTarget = target;
-            adaptiveVisualSpeed = 0f;
-            visualFilterReady = true;
-        }
-        float rawVisualSpeed = (target - previousFilterTarget) / h;
-        previousFilterTarget = target;
-        float alpha = 1f - Mathf.Exp(-2f * Mathf.PI * adaptiveDerivativeHz * h);
-        adaptiveVisualSpeed += (rawVisualSpeed - adaptiveVisualSpeed) * alpha;
-
-        float baseSeconds = Mathf.Max(.005f, contactFlightSeconds);
-        float baseCutoff = 1f / (2f * Mathf.PI * baseSeconds);
-        adaptiveCutoffHz = baseCutoff + adaptiveSpeedGain * Mathf.Abs(adaptiveVisualSpeed);
-        return Mathf.Clamp(1f / (2f * Mathf.PI * adaptiveCutoffHz),
-            Mathf.Min(adaptiveMinimumSmoothSeconds, baseSeconds), baseSeconds);
     }
 
     static float SoftLimit(float value, float lower, float upper)
@@ -1197,11 +1179,12 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             Trace("SAMPLE", $"active={active} exiting={exiting} probe={probeValid} " +
                 $"heights=[{sampledHeights[0]:F3},{sampledHeights[1]:F3},{sampledHeights[2]:F3},{sampledHeights[3]:F3}] " +
                 $"slope=[{slope0:F3},{slope1:F3},{slope2:F3}] R={filteredRoughness:F4} " +
-                $"C={filteredSignedCurvature:F4} s={traveled:F3} u={progress01:F3} wave={waveIndex+1} " +
+                $"C={filteredSignedCurvature:F4} s={traveled:F3}/{plannedLandingDistance:F3} progress={progress01:F3} " +
+                $"cycle={waveCycleIndex+1}/{plannedWaveCount} profile={waveIndex+1} waveLen={runtimeWaveLength:F3} " +
                 $"N={Fmt(normal)} base={baseOffset:F4} residual={residualOffset:F4} " +
                 $"vResidual={residualSpeed:F4} aResidual={residualAcceleration:F3} q={visualOffset:F4} " +
                 $"displayQ={presentedOffset:F4} displaySpeed={presentedSpeed:F3} smoothT={presentationSmoothSeconds:F3} " +
-                $"adaptive={adaptiveVisualFilter} speed={adaptiveVisualSpeed:F3} cutoff={adaptiveCutoffHz:F2}Hz resets={visualFilterResetCount} " +
+                $"resets={visualFilterResetCount} landingPlan={landingPlanValid} " +
                 $"displayCap={visibleUpperLimit:F3} guard={heightGuardActive} " +
                 $"upper={upperNormal:F3} lower={lowerNormal:F3}", true);
         if (mappedSubjectGap > coordinateWarningMeters && !coordinateMismatchLogged &&
@@ -1244,9 +1227,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         }
         // Sharp turn: the previously displayed scalar q belongs to the old
         // T/N coordinate frame. Do not transport its lag into the new frame.
-        bool sharpTurn = resetFilterOnSharpTurn && visualFilterReady &&
-            (Vector3.Angle(previousFilterNormal, normal) >= filterTurnResetDegrees ||
-             Vector3.Angle(previousFilterTangent, tangent) >= filterTurnResetDegrees);
+        bool sharpTurn = resetDisplayOnSharpTurn && presentationFrameReady &&
+            (Vector3.Angle(previousFilterNormal, normal) >= displayTurnResetDegrees ||
+             Vector3.Angle(previousFilterTangent, tangent) >= displayTurnResetDegrees);
         if (sharpTurn)
         {
             ResetVisualFilterState(guardedTargetOffset);
@@ -1258,16 +1241,16 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
 
         if (softenVisualWave)
         {
-            float cycles = traveled * Waves / Mathf.Max(.1f, sectionLength);
-            float u = active ? Mathf.Clamp01(cycles - Mathf.Max(0, waveIndex)) : 1f;
+            float wavePosition = traveled / Mathf.Max(.1f, runtimeWaveLength);
+            float u = active ? wavePosition - Mathf.Floor(wavePosition) : 1f;
+            if (landingPlanValid && waveCycleIndex >= plannedWaveCount - 1 && traveled >= plannedLandingDistance)
+                u = 1f;
+            u = Mathf.Clamp01(u);
             float distanceFromImpact = Mathf.Min(u, 1f - u);
             float blend = Mathf.SmoothStep(0f, 1f,
                 distanceFromImpact / Mathf.Max(.02f, contactBlendFraction));
             float baseSeconds = Mathf.Lerp(impactSmoothSeconds, flightSmoothSeconds, blend);
-            presentationSmoothSeconds = adaptiveVisualFilter
-                ? GetAdaptiveSmoothSeconds(guardedTargetOffset, baseSeconds, Time.deltaTime)
-                : baseSeconds;
-            if (!adaptiveVisualFilter) visualFilterReady = false;
+            presentationSmoothSeconds = baseSeconds;
             presentedOffset = Mathf.SmoothDamp(
                 presentedOffset, guardedTargetOffset, ref presentedSpeed,
                 presentationSmoothSeconds, Mathf.Infinity, Time.deltaTime);
@@ -1277,7 +1260,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             presentationSmoothSeconds = 0f;
             presentedOffset = guardedTargetOffset;
             presentedSpeed = 0f;
-            visualFilterReady = false;
+            presentationFrameReady = true;
         }
         // SmoothDamp is not a hard safety limit when the stair height changes.
         // Bound the final *presentation* too, leaving all raw wave/Apex data intact.

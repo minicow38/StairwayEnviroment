@@ -114,6 +114,7 @@ public class ActionDall : MonoBehaviour
     
     void OnTriggerEnter(Collider other)
     {
+        
         if (other.transform.name == "subject")
         {
 

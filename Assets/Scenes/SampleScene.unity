@@ -1196,7 +1196,7 @@ GameObject:
   - component: {fileID: 64372322}
   m_Layer: 0
   m_Name: BallVisualEqualizer
-  m_TagString: Untagged
+  m_TagString: BallVisaulEqualizer
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -1589,8 +1589,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cf06f638ced3fa648bee0ad72f677983, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  shakePreset: 2
-  lastAppliedShakePreset: 2
   inSubject: {fileID: 1083418863}
   visualTarget: {fileID: 64372315}
   autoCreateDisplayForRigidbody: 1
@@ -1615,8 +1613,13 @@ MonoBehaviour:
   roughFollowHz: 12
   roughnessReference: 0.4
   autoBeginOnDownhill: 1
-  autoEndAtSection: 1
+  autoEndAtLanding: 1
   sectionLength: 9.9
+  slopeSectionSource: {fileID: 0}
+  repeatLengthMultiplierThreshold: 1.35
+  repeatPairDamping: 0.92
+  minimumRepeatAmplitudeRatio: 0.18
+  landingConfirmSeconds: 0.04
   entrySlopeDegrees: 12
   minimumEntryPlanarSpeed: 2
   teleportThreshold: 2.5
@@ -1651,22 +1654,25 @@ MonoBehaviour:
   impactSmoothSeconds: 0.02
   flightSmoothSeconds: 0.055
   contactBlendFraction: 0.2
-  adaptiveVisualFilter: 1
-  adaptiveSpeedGain: 0.1
-  adaptiveDerivativeHz: 8
-  adaptiveMinimumSmoothSeconds: 0.015
-  resetFilterOnSharpTurn: 1
-  filterTurnResetDegrees: 65
+  resetDisplayOnSharpTurn: 1
+  displayTurnResetDegrees: 65
   active: 0
   exiting: 0
   probeValid: 0
   firstWavePeakReady: 0
   waveIndex: -1
+  waveCycleIndex: -1
+  plannedWaveCount: 3
   firstWavePeakRevision: 0
   traveled: 0
   progress01: 0
   phase: 0
   currentAmplitude: 0
+  landingPlanValid: 0
+  plannedLandingDistance: 9.9
+  runtimeWaveLength: 3.3
+  sourceSectionLength: 0
+  sourceSectionStartProgress01: 0
   slope0: 0
   slope1: 0
   slope2: 0
@@ -1687,8 +1693,6 @@ MonoBehaviour:
   visibleUpperLimit: 0
   guardedTargetOffset: 0
   heightGuardActive: 0
-  adaptiveVisualSpeed: 0
-  adaptiveCutoffHz: 0
   visualFilterResetCount: 0
   upperNormal: 0
   lowerNormal: 0
@@ -7614,8 +7618,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cf06f638ced3fa648bee0ad72f677983, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  shakePreset: 0
-  lastAppliedShakePreset: 0
   inSubject: {fileID: 1083418863}
   visualTarget: {fileID: 1842262366}
   autoCreateDisplayForRigidbody: 1
@@ -7640,8 +7642,13 @@ MonoBehaviour:
   roughFollowHz: 12
   roughnessReference: 0.4
   autoBeginOnDownhill: 1
-  autoEndAtSection: 1
+  autoEndAtLanding: 1
   sectionLength: 9.9
+  slopeSectionSource: {fileID: 0}
+  repeatLengthMultiplierThreshold: 1.35
+  repeatPairDamping: 0.92
+  minimumRepeatAmplitudeRatio: 0.18
+  landingConfirmSeconds: 0.04
   entrySlopeDegrees: 12
   minimumEntryPlanarSpeed: 2
   teleportThreshold: 2.5
@@ -7676,22 +7683,25 @@ MonoBehaviour:
   impactSmoothSeconds: 0.015
   flightSmoothSeconds: 0.035
   contactBlendFraction: 0.16
-  adaptiveVisualFilter: 1
-  adaptiveSpeedGain: 1.4
-  adaptiveDerivativeHz: 8
-  adaptiveMinimumSmoothSeconds: 0.008
-  resetFilterOnSharpTurn: 1
-  filterTurnResetDegrees: 65
+  resetDisplayOnSharpTurn: 1
+  displayTurnResetDegrees: 65
   active: 0
   exiting: 0
   probeValid: 0
   firstWavePeakReady: 0
   waveIndex: -1
+  waveCycleIndex: -1
+  plannedWaveCount: 3
   firstWavePeakRevision: 0
   traveled: 0
   progress01: 0
   phase: 0
   currentAmplitude: 0
+  landingPlanValid: 0
+  plannedLandingDistance: 9.9
+  runtimeWaveLength: 3.3
+  sourceSectionLength: 0
+  sourceSectionStartProgress01: 0
   slope0: 0
   slope1: 0
   slope2: 0
@@ -7712,8 +7722,6 @@ MonoBehaviour:
   visibleUpperLimit: 0
   guardedTargetOffset: 0
   heightGuardActive: 0
-  adaptiveVisualSpeed: 0
-  adaptiveCutoffHz: 0
   visualFilterResetCount: 0
   upperNormal: 0
   lowerNormal: 0
