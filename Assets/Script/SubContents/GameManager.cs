@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
@@ -67,15 +68,15 @@ public class MainGameManager : MonoBehaviour
         displayCoin = GameObject.Find("StairwayUserbility/Coin/").transform.GetComponent<TextMeshProUGUI>();
         Userbility = GameObject.Find("GameUI/StairwayUserbility").transform.gameObject;
         Userbility.transform.gameObject.SetActive(false);
+
         Material activeMaterial =
             Resources.Load<Material>(
                 "BallCollections/" + AndroidOneOnly.activeBallMaterial
             );
-
+       
         GameObject.Find("VisualPlayerRoot/BallVisualEqualizer")
             .GetComponent<MeshRenderer>()
             .material = new Material(activeMaterial);
-
     }
 
     // Update is called once per frame

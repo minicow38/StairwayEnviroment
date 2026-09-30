@@ -28,8 +28,7 @@ public class OnClickChooseBall : MonoBehaviour
         if (ScrollViewState.IsDragging)
             return;
 
-        if (AndroidOneOnly.pharseCoin < 100)
-            return;
+       
 
         Match match = Regex.Match(
             transform.parent.name,
@@ -62,6 +61,8 @@ public class OnClickChooseBall : MonoBehaviour
 
             if (IsExstict.transform.gameObject.activeSelf)
             {
+                if (AndroidOneOnly.pharseCoin < 100)
+                    return;
                 AndroidOneOnly.pharseCoin -= 100;
 
                 string stringPlus = "";

@@ -1061,6 +1061,9 @@ public float AdvancePredictedSplineDriveReadOnly(
                 }
 
                 MainGameManager.OnDead = true;
+                MainGameManager.core.BeginCommandOnTouch = false;
+
+                MainGameManager.core.Earliest=false;
             }
 
         if (hit.transform != null)
@@ -1815,6 +1818,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (Input.GetMouseButtonDown(0))
         {
             flickStart = Input.mousePosition;
+            
             trackingFlick = true;
             flickConsumed = false;
         }
@@ -1831,7 +1835,7 @@ public float AdvancePredictedSplineDriveReadOnly(
                 (Vector2)Input.mousePosition - flickStart;
 
             if (Mathf.Abs(flick.x) >= minimumFlickPixels &&
-                Mathf.Abs(flick.x) > Mathf.Abs(flick.y))
+                Mathf.Abs(flick.x) > Mathf.Abs(flick.y)&&Earliest)
             {
                 flickConsumed = true;
                 QueueQuarterTurn(flick.x);
@@ -1864,7 +1868,7 @@ public float AdvancePredictedSplineDriveReadOnly(
     void QueueQuarterTurn(float directionSign)
     {
         
-        if (Earliest)
+        if (!Earliest)
                 return;
         if (Mathf.Abs(directionSign) <= Eps)
             return;

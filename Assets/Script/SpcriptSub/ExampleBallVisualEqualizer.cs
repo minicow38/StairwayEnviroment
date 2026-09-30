@@ -51,6 +51,14 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     [SerializeField] string outputMode = "Uninitialized";
     readonly List<Renderer> originalRenderers = new List<Renderer>();
     readonly List<bool> originalRendererStates = new List<bool>();
+
+    sealed class RendererBinding
+    {
+        public Renderer source;
+        public Renderer display;
+    }
+
+    readonly List<RendererBinding> rendererBindings = new List<RendererBinding>();
     GameObject generatedDisplay;
     [Header("Subject-space coordinate map (auto-resolves CorrespondSubject)")]
     [SerializeField] CorrespondSubject coordinateSource;
@@ -639,6 +647,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             renderer.sortingOrder = sourceMesh.sortingOrder;
             renderer.enabled = sourceMesh.enabled;
             TrackOriginal(sourceMesh);
+            BindRenderer(sourceMesh, renderer);
             copied++;
         }
         SpriteRenderer sourceSprite = source.GetComponent<SpriteRenderer>();
@@ -654,6 +663,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             renderer.sortingOrder = sourceSprite.sortingOrder;
             renderer.enabled = sourceSprite.enabled;
             TrackOriginal(sourceSprite);
+            BindRenderer(sourceSprite, renderer);
             copied++;
         }
         for (int i = 0; i < source.childCount; i++)
@@ -679,12 +689,69 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         originalRendererStates.Add(renderer.enabled);
     }
 
+    void BindRenderer(Renderer source, Renderer display)
+    {
+        if (!source || !display) return;
+
+        rendererBindings.Add(new RendererBinding
+        {
+            source = source,
+            display = display
+        });
+    }
+
+    // MainGameManager continues to edit the ORIGINAL BallVisualEqualizer Renderer.
+    // The proxy is what the camera sees, so mirror presentation state every LateUpdate.
+    // IMPORTANT: do NOT copy Renderer.enabled here. The original is intentionally hidden.
+    void SyncPresentationFromOriginal()
+    {
+        for (int i = 0; i < rendererBindings.Count; i++)
+        {
+            RendererBinding binding = rendererBindings[i];
+            if (binding == null || !binding.source || !binding.display)
+                continue;
+
+            MeshRenderer sourceMesh = binding.source as MeshRenderer;
+            MeshRenderer displayMesh = binding.display as MeshRenderer;
+
+            if (sourceMesh && displayMesh)
+            {
+                displayMesh.sharedMaterials = sourceMesh.sharedMaterials;
+                displayMesh.shadowCastingMode = sourceMesh.shadowCastingMode;
+                displayMesh.receiveShadows = sourceMesh.receiveShadows;
+                displayMesh.lightProbeUsage = sourceMesh.lightProbeUsage;
+                displayMesh.reflectionProbeUsage = sourceMesh.reflectionProbeUsage;
+                displayMesh.sortingLayerID = sourceMesh.sortingLayerID;
+                displayMesh.sortingOrder = sourceMesh.sortingOrder;
+                continue;
+            }
+
+            SpriteRenderer sourceSprite = binding.source as SpriteRenderer;
+            SpriteRenderer displaySprite = binding.display as SpriteRenderer;
+
+            if (sourceSprite && displaySprite)
+            {
+                displaySprite.sprite = sourceSprite.sprite;
+                displaySprite.sharedMaterial = sourceSprite.sharedMaterial;
+                displaySprite.color = sourceSprite.color;
+                displaySprite.flipX = sourceSprite.flipX;
+                displaySprite.flipY = sourceSprite.flipY;
+                displaySprite.drawMode = sourceSprite.drawMode;
+                displaySprite.size = sourceSprite.size;
+                displaySprite.maskInteraction = sourceSprite.maskInteraction;
+                displaySprite.sortingLayerID = sourceSprite.sortingLayerID;
+                displaySprite.sortingOrder = sourceSprite.sortingOrder;
+            }
+        }
+    }
+
     void ReleaseGeneratedDisplay()
     {
         for (int i = 0; i < originalRenderers.Count; i++)
             if (originalRenderers[i]) originalRenderers[i].enabled = originalRendererStates[i];
         originalRenderers.Clear();
         originalRendererStates.Clear();
+        rendererBindings.Clear();
         actualDisplayTarget = null;
         if (generatedDisplay)
         {
@@ -1157,6 +1224,10 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     void LateUpdate()
     {
         if (!initialized) return;
+
+        // MainGameManager may have changed the original BallVisualEqualizer material
+        // after this proxy was created. Reflect those changes on the visible proxy.
+        SyncPresentationFromOriginal();
         // InSubject supplies ALL progression, Subject supplies visual coordinate frame.
         // Smooth ONLY the displayed normal-axis offset: carrier X/Z, actual Rigidbody,
         // wave phase and the raw first-Apex observation stay untouched.
@@ -1234,4 +1305,3 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         DiagnosticSample();
     }
 }
-

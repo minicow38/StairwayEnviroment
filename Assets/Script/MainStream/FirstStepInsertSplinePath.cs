@@ -112,7 +112,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     static readonly int[] InitialStartPattern =
     {
         -1, 0, -1, 0, -1, 0, -1, 0, -1,
-        0, -1, 0, -1, 0, -1, 0,0
+        0, -1, 0, -1, 0, -3, -3,0
     };
 
     public int startDashDot = 0;
@@ -203,13 +203,13 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     void FixedUpdate()
     {
+        
         if (rebuilding)
             return;
 
         // MainGameManager.Start() の実行順に左右されないよう、
         // 通常プレイ時の最初の先行生成ラインを最低8に保つ。
         
-        resumeOnly.Earliest=false;
         if (!MainGameManager.OnDead &&
             MainGameManager.LimitTouchingphase < ChunkTriggerStep)
         {
@@ -223,16 +223,19 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             !MainGameManager.OpenChunkStage &&
             MainGameManager.lastTouch >= MainGameManager.LimitTouchingphase)
         {
+           /*if (!resumeOnly.Earliest)
+            return;*/
             MainGameManager.OpenChunkStage = true;
             MainGameManager.LimitTouchingphase += ChunkTriggerStep;
         }
+        
 
         if (MainGameManager.OpenChunkStage)
         {
-            
 
             MainGameManager.OpenChunkStage = false;
             rebuilding = true;
+            
 
             Start();
 
@@ -241,7 +244,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         if (MainGameManager.OnDead)
         {
-            resumeOnly.BeginCommandOnTouch = false;
             reSubject.PointToPlane = 0;
            
             Start();
@@ -1886,7 +1888,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             ? UnityEngine.Random.Range(0, ShiftObj.Length)
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
         float localX = ShiftObj[widthObj].x;
-        bool onPylon = value < 1;
+        bool onPylon = value < 2;
         bool generated = false;
 
         if (onPylon && PylonPrefab && ActiveStairway1 && ActiveStairway2)

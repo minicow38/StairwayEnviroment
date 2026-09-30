@@ -99,7 +99,7 @@ public class GettingTraffic_Corn : MonoBehaviour
 
 
         Debug.Log("C : 待機終了");
-
+        //MainGameManager.core.Earliest=false;
         MainGameManager.OpenChunkStage = true;
 
         Debug.Log("D : ステージ解放");
