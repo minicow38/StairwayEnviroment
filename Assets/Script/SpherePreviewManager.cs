@@ -33,7 +33,7 @@ public class SpherePreviewManager : MonoBehaviour
                 .ToArray();
         // UIなどの初期化を1フレーム待つ
         yield return null;
-        GameObject.Find("Main Camera/UICamera/CoinLimit").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
+        GameObject.Find("MainUI/CoinLimit").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
             AndroidOneOnly.pharseCoin.ToString();
         
         foreach (var indivisualBack in BackGrounds)

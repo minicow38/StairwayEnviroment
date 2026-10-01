@@ -205,19 +205,7 @@ public sealed class CorrespondSubject : MonoBehaviour
                 inSubjectBody.position,
                 backToPhysics);
 
-        Debug.Log(
-            $"[CHAIN MAP] " +
-            $"reason={reason} " +
-            $"time={Time.fixedTime:F3} " +
-            $"turn={PointToPlane} " +
-            $"inPos={inSubjectBody.position:F3} " +
-            $"mappedPos={mappedPos:F3} " +
-            $"subjectPos={subjectBody.position:F3} " +
-            $"subjectErr={subjectPositionError:F6} " +
-            $"roundTripErr={roundTripError:F6} " +
-            $"inVel={inSubjectBody.velocity:F3} " +
-            $"mappedVel={mappedVelocityDirect:F3}"
-        );
+        ;
     }
     public Vector3 MappedAngularVelocity =>
         hasVelocitySample
@@ -936,3 +924,4 @@ public sealed class CorrespondSubject : MonoBehaviour
         );
     }
 }
+

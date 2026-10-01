@@ -543,7 +543,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
     private void Start()
     {
         // 実行中のファイル世代をログだけで確認できる識別子。
-        Debug.Log($"[BALL VISUAL DRIVE BUILD] {RuntimeBuildId}", this);
+        ;
 
         if (BallVisualEqualizer == null)
         {
@@ -614,7 +614,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (motionPhase == MotionPhase.ContinuousRejoin)
         {
             ProcessContinuousRejoin();
-            WriteDebugLog();
+            ;
             return;
         }
 
@@ -623,7 +623,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (motionPhase == MotionPhase.TurnHandoffRejoin)
         {
             ProcessTurnHandoffRejoin();
-            WriteDebugLog();
+            ;
             return;
         }
 
@@ -636,8 +636,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
             if (!canBeginIncident)
             {
                 HoldSettledSync();
-                LogIncidentEntryGateIfNeeded(isOnSlope);
-                WriteDebugLog();
+                ;
+                ;
                 return;
             }
 
@@ -654,8 +654,8 @@ public class BallVisualSlopeDrive : MonoBehaviour
             else
                 SyncCompletelyToSubject("WaitingSync");
 
-            LogIncidentEntryGateIfNeeded(isOnSlope);
-            WriteDebugLog();
+            ;
+            ;
             return;
         }
 
@@ -674,12 +674,12 @@ public class BallVisualSlopeDrive : MonoBehaviour
             if (motionPhase == MotionPhase.MissileAscent)
             {
                 ProcessMissileAscent();
-                WriteDebugLog();
+                ;
                 return;
             }
 
             ProcessIncident();
-            WriteDebugLog();
+            ;
             return;
         }
 
@@ -687,7 +687,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (motionPhase == MotionPhase.MissileAscent)
         {
             ProcessMissileAscent();
-            WriteDebugLog();
+            ;
             return;
         }
 
@@ -701,14 +701,14 @@ public class BallVisualSlopeDrive : MonoBehaviour
             else
                 ProcessTerminalRejoin();
 
-            WriteDebugLog();
+            ;
             return;
         }
 
         if (motionPhase == MotionPhase.TerminalRejoin)
         {
             ProcessTerminalRejoin();
-            WriteDebugLog();
+            ;
         }
     }
 
@@ -816,16 +816,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 ? respondSubject.MapDirection(Vector3.forward)
                 : Vector3.forward;
 
-        Debug.Log(
-            $"[INCIDENT ENTRY GATE] " +
-            $"allowed={CanBeginIncident(isOnSlope)} " +
-            $"progressError={slopeCore.slopeProgressErrorPercent:F3}% " +
-            $"coreIncidentReady={slopeCore.BallVisualIncidentReady} " +
-            $"visualFrameStable={visualFrameStable} " +
-            $"coreTurnGuideWait={slopeCore.IsWaitingForTurnGuide} " +
-            $"stableFrames={visualFrameStableFrames}/{VisualFrameStableFixedFramesRequired} " +
-            $"mappedForward={mappedForward:F4}",
-            this);
+        ;
     }
 
     // =====================================================================
@@ -848,12 +839,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (enableDebugLog && reason != "WaitingSync")
         {
-            Debug.Log(
-                $"[SYNC CHECKPOINT] reason={reason} " +
-                $"time={Time.fixedTime:F4} " +
-                $"position={ballBody.position:F4} " +
-                $"velocity={ballBody.velocity:F4}",
-                this);
+            ;
         }
     }
 
@@ -946,18 +932,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (enableDebugLog)
         {
-            Debug.Log(
-                $"[NATURAL ENTRY BEGIN] " +
-                $"time={Time.fixedTime:F4} " +
-                $"position={ballBody.position:F4} " +
-                $"velocity={ballBody.velocity:F4} " +
-                $"gravity={Physics.gravity:F4} " +
-                $"target={incidentTargetPosition:F4} " +
-                $"normal={currentSurfaceNormal:F4} " +
-                $"tangent={currentSlopeTangent:F4} " +
-                $"equalizerConnectArmed={connectArmed} " +
-                $"colliderSolid={(ballCollider == null || !ballCollider.isTrigger)}",
-                this);
+            ;
         }
     }
 
@@ -1245,21 +1220,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (logWhenLimited && enableDebugLog)
         {
-            Debug.Log(
-                $"[SELECTIVE NORMAL FLIGHT LIMIT] " +
-                $"source={source} " +
-                $"time={Time.fixedTime:F4} " +
-                $"height={normalFlightHeightR:F3}R " +
-                $"outwardVN={outwardNormalSpeed:F4}m/s " +
-                $"safeVN={safeOutwardNormalSpeed:F4}m/s " +
-                $"removedVN={removedNormalSpeed:F4}m/s " +
-                $"strength={responseStrength01:F3} " +
-                $"predictedHeight={predictedHeightR:F3}R " +
-                $"ceiling={ceilingR:F3}R " +
-                $"emergencyOnly={emergencyOnly} " +
-                $"horizon={horizon:F3}s " +
-                $"normal={normal:F4}",
-                this);
+            ;
         }
 
         return true;
@@ -1295,13 +1256,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (enableDebugLog &&
             fixedFrameCounter % Mathf.Max(1, logEveryFixedFrames) == 0)
         {
-            Debug.Log(
-                $"[MISSILE ARTIFICIAL NORMAL SUPPRESSED] " +
-                $"source={source} " +
-                $"time={Time.fixedTime:F4} " +
-                $"removedA={outwardNormalAcceleration:F4}m/s2 " +
-                $"normal={normal:F4}",
-                this);
+            ;
         }
 
         return corrected;
@@ -1477,26 +1432,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
             Vector3 relativeVelocityAtLimit =
                 limitIncomingVelocity - limitReferenceVelocity;
 
-            Debug.Log(
-                $"[NATURAL ENTRY -> MISSILE BOUNDARY] " +
-                $"time={limitCrossingTime:F4} " +
-                $"alpha={limitCrossingAlpha:F4} " +
-                $"crossPos={limitCrossingPosition:F4} " +
-                $"target={incidentTargetPosition:F4} " +
-                $"positionError={targetError:F4} " +
-                $"verticalError={verticalError:F4} " +
-                $"relativeHeightAtLimit={relativeHeightAtLimit:F4} " +
-                $"relativeVelocityAtLimit={relativeVelocityAtLimit:F4} " +
-                $"normalHeight={normalFlightHeightR:F3}R " +
-                $"outwardVN={normalFlightOutwardVN:F4}m/s " +
-                $"safeVN={normalFlightSafeVN:F4}m/s " +
-                $"predictedHeight={normalFlightPredictedHeightR:F3}R " +
-                $"removedVN={normalFlightRemovedVN:F4}m/s " +
-                $"normalWouldLimit={boundaryWouldLimit} " +
-                $"maxObservedXZSeparation={incidentMaximumObservedPlanarSeparation:F4}m " +
-                $"incomingVelocity={limitIncomingVelocity:F4} " +
-                $"naturalEntryCost={(limitCrossingTime - incidentStartTime):F4}s",
-                this);
+            ;
         }
 
         BeginMissileMethod();
@@ -1585,16 +1521,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 Mathf.Max(0f, plannedVelocityAfter.y),
                 Mathf.Max(0.0001f, outgoingPlanar)) * Mathf.Rad2Deg;
 
-            Debug.Log(
-                $"[MISSILE ENTRY SYNC] " +
-                $"time={missileStartTime:F4} " +
-                $"position={ballBody.position:F4} " +
-                $"velocityBefore={velocityBefore:F4} " +
-                $"referenceVelocity={limitReferenceVelocity:F4} " +
-                $"plannedVelocityAfter={plannedVelocityAfter:F4} " +
-                $"incomingAngle={incomingAngle:F3}deg " +
-                $"outgoingAngle={outgoingAngle:F3}deg",
-                this);
+            ;
         }
     }
 
@@ -1663,12 +1590,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
             if (enableDebugLog)
             {
-                Debug.Log(
-                    $"[MISSILE APEX] time={missileApexTime:F4} " +
-                    $"reason={(apex ? "Apex" : "Timeout")} " +
-                    $"ballPos={ballBody.position:F4} " +
-                    $"subjectPos={subjectPosition:F4}",
-                    this);
+                ;
             }
         }
     }
@@ -1757,12 +1679,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
                 if (enableDebugLog)
                 {
-                    Debug.Log(
-                        $"[TERMINAL ENTRY WINDOW] reason=SubjectFlat " +
-                        $"time={subjectFlatTime:F4} " +
-                        $"ballPos={ballBody.position:F4} " +
-                        $"subjectPos={respondSubject.MappedPosition:F4}",
-                        this);
+                    ;
                 }
             }
 
@@ -1938,11 +1855,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 if (enableDebugLog &&
                     fixedFrameCounter % Mathf.Max(1, logEveryFixedFrames) == 0)
                 {
-                    Debug.Log(
-                        $"[TERMINAL TURN WAIT] time={Time.fixedTime:F4} " +
-                        $"posError3D={fullPositionError.magnitude:F4} " +
-                        $"velError3D={fullVelocityError.magnitude:F4}",
-                        this);
+                    ;
                 }
 
                 return;
@@ -1967,14 +1880,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
                 if (enableDebugLog)
                 {
-                    Debug.Log(
-                        $"[TERMINAL RECOVERY EXTEND] " +
-                        $"count={terminalRecoveryExtensionCount} " +
-                        $"time={Time.fixedTime:F4} " +
-                        $"horizon={recoveryHorizon:F4}s " +
-                        $"posError3D={fullPositionError.magnitude:F4} " +
-                        $"velError3D={fullVelocityError.magnitude:F4}",
-                        this);
+                    ;
                 }
 
                 return;
@@ -1990,17 +1896,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
         if (enableDebugLog &&
             fixedFrameCounter % Mathf.Max(1, logEveryFixedFrames) == 0)
         {
-            Debug.Log(
-                $"[TERMINAL REJOIN] elapsed={terminalElapsed:F4}s " +
-                $"Tgo={terminalTimeToGo:F4}s " +
-                $"ballFlat={ballFlatCaptured} " +
-                $"controlPosError={controlPositionError.magnitude:F4} " +
-                $"controlVelError={controlVelocityError.magnitude:F4} " +
-                $"finalPosError3D={fullPositionError.magnitude:F4} " +
-                $"finalVelError3D={fullVelocityError.magnitude:F4} " +
-                $"turning={visualTurnActive} " +
-                $"verticalOwner={(ballFlatCaptured ? "PhysicsContact" : "Guidance")}",
-                this);
+            ;
         }
     }
 
@@ -2420,14 +2316,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
                     ? "TURN HANDOFF BEGIN"
                     : "CONTINUOUS REJOIN BEGIN";
 
-            Debug.Log(
-                $"[{label}] " +
-                $"reason={reason} " +
-                $"time={Time.fixedTime:F4} " +
-                $"duration={continuousRejoinDuration:F4}s " +
-                $"relativeDistance={relativeDistance:F4} " +
-                $"relativeSpeed={worldRelativeVelocity.magnitude:F4}",
-                this);
+            ;
         }
     }
 
@@ -2554,13 +2443,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 !continuousRejoinWaitingForTurnEndLogged)
             {
                 continuousRejoinWaitingForTurnEndLogged = true;
-                Debug.Log($"[{(isTurnHandoff ? "TURN HANDOFF HOLD" : "CONTINUOUS REJOIN TURN HOLD")}] " +
-                          $"time={Time.fixedTime:F4} " +
-                          $"turning={visualTurnActive} " +
-                          $"frameStable={visualFrameStable} " +
-                          $"relativePos={continuousRejoinCurrentLocalOffset.magnitude:F6} " +
-                          $"relativeVel={continuousRejoinCurrentLocalVelocity.magnitude:F6}",
-                    this);
+                ;
             }
 
             return;
@@ -2597,13 +2480,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
                         ? "TURN HANDOFF COMPLETE"
                         : "CONTINUOUS REJOIN COMPLETE";
 
-                Debug.Log(
-                    $"[{completeLabel}] " +
-                    $"time={Time.fixedTime:F4} " +
-                    $"posError={positionError:F6} " +
-                    $"velError={velocityError:F6} " +
-                    $"maxResidual={maximumContinuityResidualMeters:F6}",
-                    this);
+                ;
             }
 
             return;
@@ -2811,15 +2688,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (enableDebugLog)
         {
-            Debug.Log(
-                $"[FINAL SYNC CHECKPOINT] forced=False " +
-                $"source={source} " +
-                $"requestedForced={requestedForced} " +
-                $"time={Time.fixedTime:F4} " +
-                $"turning=False " +
-                $"preSyncPosError={preSyncPositionError:F4} " +
-                $"preSyncVelError={preSyncVelocityError:F4}",
-                this);
+            ;
         }
 
         return true;
@@ -2988,13 +2857,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
 
         if (enableDebugLog)
         {
-            Debug.Log(
-                $"[BALL FLAT CONTACT] source={source} " +
-                $"time={ballFlatTime:F4} " +
-                $"collider={t.name} " +
-                $"normal={averageNormal:F4} " +
-                $"velocity={ballBody.velocity:F4}",
-                this);
+            ;
         }
     }
 
@@ -3082,37 +2945,7 @@ public class BallVisualSlopeDrive : MonoBehaviour
                 ? incidentElapsed
                 : -1f;
 
-        Debug.Log(
-            $"[BALL VISUAL CONTROL] " +
-            $"time={Time.fixedTime:F3} " +
-            $"motionPhase={motionPhase} " +
-            $"authority={PoseAuthority} " +
-            $"normalGuardApplied={normalFlightGuardApplied} " +
-            $"normalGuardSource={normalFlightLastSource} " +
-            $"normalHeightR={normalFlightHeightR:F3} " +
-            $"outwardVN={normalFlightOutwardVN:F3} " +
-            $"safeVN={normalFlightSafeVN:F3} " +
-            $"predictedHeightR={normalFlightPredictedHeightR:F3} " +
-            $"guardStrength={normalFlightResponseStrength01:F3} " +
-            $"removedVN={normalFlightRemovedVN:F3} " +
-            $"stableNormal={normalFlightStableNormal:F3} " +
-            $"artificialRemovedA={normalFlightLastArtificialNormalAcceleration:F3} " +
-            $"clampCount={normalFlightClampCount} " +
-            $"contactClampCount={normalFlightContactClampCount} " +
-            $"missileClampCount={normalFlightMissileClampCount} " +
-            $"emergencyClampCount={normalFlightEmergencyClampCount} " +
-            $"artificialSuppressCount={normalFlightArtificialSuppressionCount} " +
-            $"ballFlat={ballFlatCaptured} " +
-            $"naturalEntryAge={incidentAge:F4} " +
-            $"incidentTargetError={incidentTargetError:F4} " +
-            $"subjectPos={subjectPosition:F4} " +
-            $"ballPos={observedBallPosition:F4} " +
-            $"positionError={(subjectPosition - observedBallPosition).magnitude:F4} " +
-            $"subjectVel={subjectVelocity:F4} " +
-            $"ballVel={observedBallVelocity:F4} " +
-            $"velocityError={(subjectVelocity - observedBallVelocity).magnitude:F4} " +
-            $"continuityResidual={currentContinuityResidualMeters:F6}",
-            this);*/
+        ;*/
     }
 
     private void OnDrawGizmosSelected()

@@ -991,10 +991,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
             if (logCore)
             {
-                Debug.Log(
-                    $"[CORE SOFT RESTART APPLIED] " +
-                    $"restart={restart:F4} direction={direction:F4}",
-                    this);
+                ;
             }
         }
 
@@ -1080,7 +1077,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!grounded && !grace)
         {
             if (logCore)
-                Debug.Log($"[CORE SUPPORT LOST] load={load:F3} dist={guide.distanceToGuide:F3} outward={Outward(guide):F3}");
+                ;
 
             LoseSupport();
             return;
@@ -1238,11 +1235,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
             if (logCore)
             {
-                Debug.Log(
-                    $"[CORE] speed={surface.tangentSpeed:F3} " +
-                    $"progress={guide.sectionProgress01:F3} " +
-                    $"drive={driveState:F3} stick={stickState:F3} " +
-                    $"grace={grace} load={load:F3}");
+                ;
             }
         }
     }
@@ -1589,11 +1582,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore && hasInitialVisualPlayerRootPose)
         {
-            Debug.Log(
-                $"[CORE INITIAL VISUAL FRAME CAPTURED] " +
-                $"rootPos={initialVisualPlayerRootPosition:F4} " +
-                $"rootRot={initialVisualPlayerRootRotation.eulerAngles:F2}",
-                this);
+            ;
         }
     }
 
@@ -1636,12 +1625,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore && visualPlayerRoot)
         {
-            Debug.Log(
-                $"[CORE INITIAL VISUAL FRAME RESTORED] " +
-                $"rootPos={visualPlayerRoot.position:F4} " +
-                $"rootRot={visualPlayerRoot.rotation.eulerAngles:F2} " +
-                $"restored={restored}",
-                this);
+            ;
         }
 
         return restored;
@@ -1675,9 +1659,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore)
         {
-            Debug.Log(
-                $"[CORE SOFT RESTART PREPARED] restored={restored}",
-                this);
+            ;
         }
 
         return restored;
@@ -1886,19 +1868,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore || logTurnTransition)
         {
-            Debug.Log(
-                $"[CORE TURN INPUT INTENT] " +
-                $"time={Time.fixedTime:F4} " +
-                $"angle={pendingTurnDegrees:F1} " +
-                $"buffer={turnInputBufferSeconds:F3}s " +
-                $"blocked={IsTurnExecutionBlocked()} " +
-                $"transition={turnTransitionActive} frozen={turnBodyFrozen} " +
-                $"fiveLineActive={fiveLineCorrectionActive} " +
-                $"fiveLinePending={fiveLineCorrectionPending} " +
-                $"ballVisualOwnsPose={(ballVisualSlopeDrive && ballVisualSlopeDrive.OwnsBallVisualPose)} " +
-                $"turnHandoff={(ballVisualSlopeDrive && ballVisualSlopeDrive.IsTurnHandoffActive)} " +
-                $"visualTurning={(correspondSubject && correspondSubject.IsVisualFrameTurning)}",
-                this);
+            ;
         }
     }
 
@@ -1922,12 +1892,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore || logTurnTransition)
         {
-            Debug.Log(
-                $"[CORE TURN INPUT INTENT EXPIRED] " +
-                $"time={Time.fixedTime:F4} " +
-                $"angle={pendingTurnDegrees:F1} " +
-                $"age={(pendingTurnQueuedTime >= 0f ? Time.time - pendingTurnQueuedTime : 0f):F3}s",
-                this);
+            ;
         }
 
         pendingTurnDegrees = 0f;
@@ -2030,15 +1995,36 @@ public float AdvancePredictedSplineDriveReadOnly(
         ClearPendingTurnSnapshot();
         flatEntryFrame = default; // 次のFlatで新しいEntryを採取する。
 
-        // 旧UTurn仕様:
-        // UTurnが選ばれた旋回ではFiveLine補正を予約しない。
-        // FiveLine系が選ばれた場合だけ補正をPendingにする。
-        fiveLineCorrectionPending =
+        bool fiveLineMode =
             activeTurnMode == TurnResolutionMode.FiveLineAfterPop ||
             activeTurnMode == TurnResolutionMode.FiveLineAfterEnergyTarget;
 
+        // OutCorner側の外ラインに既に乗っている場合は、
+        // FiveLineで中央側へ取り直さず、その横位置を旋回後ラインとして残す。
+        // InCorner(UTurnBeforeEnergyTarget)には一切入らない。
+        bool preserveOutCornerLine =
+            fiveLineMode &&
+            ShouldPreserveOutCornerLine(turnDegrees);
+
+        fiveLineCorrectionPending =
+            fiveLineMode &&
+            !preserveOutCornerLine;
+
         if (!BeginTurnTransition(turnDegrees))
             return;
+
+        // FiveLine補正を使わないので、この旋回だけModeを消費済みにする。
+        // ReleaseTurnBodyToMotionではUTurn以外が既存のDirectFiveLineTurnへ流れるため、
+        // 位置を飛ばさず速度方向だけ90度変える現在仕様をそのまま使える。
+        if (preserveOutCornerLine)
+        {
+            activeTurnMode = TurnResolutionMode.None;
+
+            if (logCore || logTurnPolicy)
+            {
+                ;
+            }
+        }
 
         // 旋回後Splineへ切り替わるまでは通常Driveを再開しない。
         waitingForTurnGuide = true;
@@ -2091,16 +2077,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore || logTurnPolicy || logTurnTransition)
         {
-            Debug.Log(
-                $"[CORE SMOOTH TURN BEGIN] " +
-                $"time={Time.fixedTime:F4} " +
-                $"mode={activeTurnMode} turn={turnDegrees:F1} " +
-                $"visualDuration={turnVisualDurationSeconds:F3}s " +
-                $"hardFreeze={turnHardFreezeSeconds:F3}s " +
-                $"energyTargetForward={lastEnergyTargetForwardDistance:F4}m " +
-                $"directionBefore={directionBefore:F4} targetDirection={turnTargetDirection:F4} " +
-                $"velocityBefore={velocityBefore:F4} angularBefore={angularVelocityBefore:F4}",
-                this);
+            ;
         }
     }
 
@@ -2210,12 +2187,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore || logTurnTransition)
         {
-            Debug.Log(
-                $"[CORE TURN MOTION RELEASE] " +
-                $"reason={reason} time={Time.fixedTime:F4} " +
-                $"mode={activeTurnMode} " +
-                $"velocity={rb.velocity:F4} direction={direction:F4}",
-                this);
+            ;
         }
     }
 
@@ -2247,12 +2219,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore || logTurnTransition)
         {
-            Debug.Log(
-                $"[CORE SMOOTH TURN VISUAL COMPLETE] " +
-                $"time={Time.fixedTime:F4} turn={completedTurnDegrees:F1} " +
-                $"mode={activeTurnMode} " +
-                $"position={rb.position:F4} velocity={rb.velocity:F4}",
-                this);
+            ;
         }
     }
 
@@ -2366,7 +2333,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!pendingTurnSnapshotValid || !pendingTurnWasFlat || !pendingTurnTargetValid)
         {
             if (logTurnPolicy)
-                Debug.Log("[CORE DYNAMIC TURN] Missing flick-time target/frame; FiveLine fallback.", this);
+                ;
             return TurnResolutionMode.FiveLineAfterEnergyTarget;
         }
 
@@ -2381,8 +2348,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!TryCalculateDynamicEnergyTolerance(out float tolerance))
         {
             if (logTurnPolicy)
-                Debug.Log($"[CORE DYNAMIC TURN] Invalid Flat geometry; FiveLine fallback. " +
-                    $"forward={lastEnergyTargetForwardDistance:F3}m", this);
+                ;
             return TurnResolutionMode.FiveLineAfterEnergyTarget;
         }
 
@@ -2404,20 +2370,11 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (useUTurn)
         {
-            Debug.Log("");
+            ;
         }
         if (logTurnPolicy)
         {
-            Debug.Log(
-                $"[CORE DYNAMIC TURN] " +
-                $"forward={lastEnergyTargetForwardDistance:F3}m " +
-                $"tolerance={tolerance:F3}m " +
-                $"flickProgress={Vector3.Dot(pendingTurnFlickPosition - pendingFlatEntryFrame.position, pendingFlatEntryFrame.direction):F3}m " +
-                $"executionProgress={executionProgress:F3}m " +
-                $"limit={lastFlatTurnLimitProgress:F3}m " +
-                $"flatLength={pendingFlatEntryFrame.distanceToNextSlope:F3}m " +
-                $"target={pendingTurnLandingIntent.source} age={pendingTurnLandingIntent.ageSeconds:F3}s " +
-                $"mode={(useUTurn ? "UTurn" : "FiveLine")}", this);
+            ;
         }
 
         return useUTurn
@@ -2512,9 +2469,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         };
 
         if (logTurnPolicy)
-            Debug.Log($"[CORE FLAT ENTRY] pos={flatEntryFrame.position:F3} " +
-                $"dir={entryDirection:F3} nextSlope={guide.distanceToNextSlope:F3}m " +
-                $"spline={guide.splineIndex}", this);
+            ;
     }
 
     void CapturePendingTurnSnapshot()
@@ -2529,12 +2484,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         pendingTurnFlickVelocity = rb.velocity;
         pendingFlatEntryFrame = flatEntryFrame;
         
-        Debug.Log(
-            $"[FLICK SNAPSHOT] " +
-            $"flatValid={flatEntryFrame.valid} " +
-            $"pendingValid={pendingFlatEntryFrame.valid} " +
-            $"distance={pendingFlatEntryFrame.distanceToNextSlope}"
-        );
+        ;
 
         if (!pendingTurnWasFlat)
             return;
@@ -2673,9 +2623,47 @@ public float AdvancePredictedSplineDriveReadOnly(
         rb.WakeUp();
 
         if (logTurnTransition)
-            Debug.Log($"[CORE IN CORNER] pos={rb.position:F4} " +
-                $"speed={planarSpeed:F3} newDirection={direction:F4} " +
-                $"fiveLinePending={fiveLineCorrectionPending}", this);
+            ;
+    }
+
+    bool ShouldPreserveOutCornerLine(float turnDegrees)
+    {
+        if (!rb ||
+            !knotDetector ||
+            !currentGuideValid ||
+            !currentSurfaceValid)
+        {
+            return false;
+        }
+
+        if (!knotDetector.TryGetFiveLineFrame(
+                currentGuide,
+                currentSurface.side,
+                out NearestKnotDetector.FiveLineFrame frame) ||
+            !frame.valid)
+        {
+            return false;
+        }
+
+        Vector3 outwardSide =
+            -Mathf.Sign(turnDegrees) *
+            currentSurface.side.normalized;
+
+        float outerDistance =
+            Mathf.Max(
+                Vector3.Dot(frame.left - frame.center, outwardSide),
+                Vector3.Dot(frame.right - frame.center, outwardSide));
+
+        if (outerDistance <= Eps)
+            return false;
+
+        float outwardOffset =
+            Vector3.Dot(
+                rb.position - frame.center,
+                outwardSide);
+
+        // Centerから最外ラインまでの半分より外なら、既存の横ラインを優先する。
+        return outwardOffset >= outerDistance * 0.5f;
     }
 
     // ================================================================
@@ -2774,11 +2762,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore || logTurnPolicy)
         {
-            Debug.Log(
-                $"[CORE FIVE LINE BEGIN] mode={activeTurnMode} " +
-                $"group={selectedGroup} rawCorrection={rawCorrection:F4} " +
-                $"appliedCorrection={correction:F4} selector={selectorPosition:F4}",
-                this);
+            ;
         }
     }
 
@@ -2843,10 +2827,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (logCore || logTurnPolicy)
         {
-            Debug.Log(
-                $"[CORE FIVE LINE COMPLETE] group={fiveLineTargetGroup} " +
-                $"position={rb.position:F4} velocity={rb.velocity:F4}",
-                this);
+            ;
         }
     }
 

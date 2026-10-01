@@ -114,7 +114,6 @@ public class ActionDall : MonoBehaviour
     
     void OnTriggerEnter(Collider other)
     {
-        
         if (other.transform.name == "subject")
         {
 
@@ -157,6 +156,7 @@ public class ActionDall : MonoBehaviour
                 transform.right * knockTorque,
                 ForceMode.Impulse
             );
+            MainGameManager.Coin += 10;
              StartCoroutine(DelayDestory());
         }
     }
@@ -181,7 +181,7 @@ public class ActionDall : MonoBehaviour
             }
             var localAngle = col.transform.localEulerAngles;
 
-            transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y+180, localAngle.z);
+            transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y, localAngle.z);
 
             transform.GetComponent<CapsuleCollider>().isTrigger = true;
             DollAttachGrond = col.transform;
@@ -197,7 +197,7 @@ public class ActionDall : MonoBehaviour
     }
     IEnumerator DelayDestory()
     {
-        yield return new WaitForSeconds(3f);
+        yield return new WaitForSeconds(1.2f);
         Destroy(transform.gameObject);
     }
     // Update is called once per frame

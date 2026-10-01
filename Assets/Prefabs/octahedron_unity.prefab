@@ -41,7 +41,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
       propertyPath: m_LocalRotation.w
-      value: 6.123234e-17
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
@@ -56,7 +56,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
       propertyPath: m_LocalRotation.z
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
@@ -145,3 +145,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 88159de572e1fea4cbfd4a5882aea54c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  PhysicsMul: {fileID: 0}
+  RendererMul: {fileID: 0}

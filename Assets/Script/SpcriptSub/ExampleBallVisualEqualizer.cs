@@ -189,7 +189,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     float previousOffset, previousOffsetSpeed, lastBegin = -999f, lastProbeSlopeDegrees;
     float nextHeightGuardLog;
     bool presentationFrameReady;
-    Vector3 previousFilterNormal = Vector3.up, previousFilterTangent = Vector3.forward;
+    Vector3 previousFilterNormal = Vector3.up;
     bool initialized, armed = true;
     bool observedSlopeSinceBegin;
     float offSlopeElapsed;
@@ -339,10 +339,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         observedSlopeSinceBegin = true;
         offSlopeElapsed = 0f;
 
-        Trace("WAVE_PLAN",
-            $"sourceLength={sourceSectionLength:F3} startP={sourceSectionStartProgress01:F4} " +
-            $"landing={plannedLandingDistance:F3} count={plannedWaveCount} " +
-            $"waveLength={runtimeWaveLength:F3} pattern=1,2,3,2,3...");
+        ;
         return true;
     }
 
@@ -454,7 +451,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     void Trace(string kind, string info, bool diagnostic = false)
     {
         if (logEvents || diagnostic)
-            Debug.Log($"[ExampleBVE][{kind}] t={Time.time:F3} {info}", this);
+            ;
     }
 
     bool ValidateReferences()
@@ -502,10 +499,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
                 "Physical world positions cannot be treated as Subject-space positions.", this);
             return false;
         }
-        Trace("SETUP", $"map={mappingMode} physics={PathOf(inSubject.transform)} " +
-            $"subject={PathOf(subjectRotation)} target={PathOf(visualTarget)} " +
-            $"source={PathOf(coordinateSource ? coordinateSource.transform : null)} writable={outputWritable} " +
-            $"outputMode={outputMode} display={PathOf(actualDisplayTarget)}");
+        ;
         return true;
     }
 
@@ -595,9 +589,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         }
         actualDisplayTarget = display;
         outputMode = "AutoVisualProxy";
-        Trace("OUTPUT_CONNECTED", $"legacyBody={PathOf(visualTarget)} display={PathOf(display)} " +
-            $"renderers={count} hiddenOriginal={hideOriginalRendererWhileTesting} " +
-            "dynamicBodyUnchanged=True colliderUnchanged=True", true);
+        ;
     }
 
     int CopyPresentation(Transform source, Transform destination)
@@ -750,8 +742,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         active = exiting = false;
         ResetWavePlan();
         UpdateCoordinateDiagnostics(inSubject.position, 0f);
-        Trace("FRAME_INIT", $"physics={Fmt(inSubject.position)} subject={Fmt(subjectWorld)} " +
-            $"mapped={Fmt(mappedCarrierWorld)} discrepancy={mappedSubjectGap:F4}m mode={mappingMode}");
+        ;
     }
 
     static string Fmt(Vector3 value) => $"({value.x:F3},{value.y:F3},{value.z:F3})";
@@ -797,9 +788,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         bool r3 = ProbeHeight(position + heading * (1.5f * d), 3, out h3);
         probeValid = r0 && r1 && r2 && r3;
         if (logProbeTransitions && (!probeInitialized || probeWasValid != probeValid))
-            Trace(probeValid ? "PROBE_RECOVERED" : "PROBE_MISS",
-                $"valid={r0},{r1},{r2},{r3} sources=[{string.Join(",", sampledSurfaces)}] " +
-                $"origin={Fmt(position)} heading={Fmt(heading)} layer={surfaceLayers.value}", true);
+            ;
         probeWasValid = probeValid;
         probeInitialized = true;
         float a = 1f - Mathf.Exp(-2f * Mathf.PI * roughFollowHz * dt);
@@ -854,9 +843,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         entryUnclampedHeight = Mathf.Max(.02f, Mathf.Lerp(initialHeight, ballisticRise, energyBlend));
         initialWaveHeight = Mathf.Min(entryUnclampedHeight, Mathf.Max(.02f, maximumFirstWaveHeight));
         if (entryRawNormalSpeed > entryActualRiseSpeed + .25f || entryUnclampedHeight > initialWaveHeight + .001f)
-            Trace("ENTRY_ENERGY_GUARD", $"vY={v.y:F3} rawDotVN={entryRawNormalSpeed:F3} " +
-                $"trueRise={entryActualRiseSpeed:F3} usedU0={initialWaveSpeed:F3} " +
-                $"rawHeight={entryUnclampedHeight:F3} usedHeight={initialWaveHeight:F3}");
+            ;
         previousCarrier = inSubject.position;
         previousVelocity = v;
         CaptureWavePlan();
@@ -874,10 +861,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         lastBegin = Time.fixedTime;
         active = true;
         exiting = armed = false;
-        Trace("BEGIN", $"p={Fmt(previousCarrier)} v={Fmt(v)} N={Fmt(normal)} " +
-            $"subject={Fmt(subjectRotation ? subjectRotation.position : Vector3.zero)} " +
-            $"map={mappingMode} h0={initialWaveHeight:F3} u0={initialWaveSpeed:F3} " +
-            $"landing={plannedLandingDistance:F3} count={plannedWaveCount} waveLength={runtimeWaveLength:F3}");
+        ;
     }
 
     [ContextMenu("ExampleBVE / End Stair (Play Mode)")]
@@ -886,7 +870,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         if (!active || exiting) return;
         exiting = true;
         exitElapsed = 0f;
-        Trace("EXIT", $"s={traveled:F3}");
+        ;
     }
 
     void FixedUpdate()
@@ -899,8 +883,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         if (displacement.magnitude > teleportThreshold)
         {
             InitializeFrame();
-            Trace("TELEPORT_RESET", $"p={Fmt(p)} prior={Fmt(previousCarrier)} " +
-                $"delta={displacement.magnitude:F3} threshold={teleportThreshold:F3}");
+            ;
             return;
         }
         ObserveGeometry(p, v, dt);
@@ -976,10 +959,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         float waveRough = baselineRough + measuredRoughnessGain * measured;
 
         if (waveCycleIndex != oldCycle)
-            Trace("WAVE", $"cycle={waveCycleIndex+1}/{(landingPlanValid ? plannedWaveCount : -1)} " +
-                $"profile={waveIndex+1} s={traveled:F3} u={u:F3} " +
-                $"R={filteredRoughness:F4} signed={filteredSignedCurvature:F4} " +
-                $"rough={waveRough:F3} amplitude={currentAmplitude:F4}");
+            ;
 
         float priorImpact = Mathf.Sqrt(2f * gravityN * priorAmplitude * (1f + lowerRatio));
         float impact = Mathf.Sqrt(2f * gravityN * currentAmplitude * (1f + lowerRatio));
@@ -1031,13 +1011,12 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             firstWavePeakProgress01 = Mathf.Clamp01(priorProgress01);
             previousApexPosition = MapPoint(previousCarrier + Vector3.up * initialCY + previousNormal * previousOffset);
             lastApexCycle = waveCycleIndex;
-            Trace("FIRST_APEX", $"CY={firstWavePeakCY:F4} progress={firstWavePeakProgress01:F4} " +
-                $"mappedWorld={Fmt(previousApexPosition)}");
+            ;
         }
         else if (waveCycleIndex != lastApexCycle && previousOffsetSpeed > .02f && speedN <= 0f)
         {
             lastApexCycle = waveCycleIndex;
-            Trace("APEX", $"cycle={waveCycleIndex+1} profile={waveIndex+1} q={previousOffset:F4}");
+            ;
         }
         previousOffsetSpeed = speedN;
         previousOffset = visualOffset;
@@ -1050,7 +1029,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         {
             active = exiting = false;
             visualOffset = 0f;
-            Trace("SETTLED", $"s={traveled:F3}");
+            ;
         }
     }
 
@@ -1081,7 +1060,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         presentedSpeed = 0f;
         presentationSmoothSeconds = 0f;
         previousFilterNormal = normal;
-        previousFilterTangent = tangent;
         presentationFrameReady = true;
         visualFilterResetCount++;
     }
@@ -1151,7 +1129,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             : physicsFrame && visualFrame ? "ManualRootFrames" : "SubjectAnchorFallback";
         if (mappingMode != liveMode)
         {
-            Trace("MAP_MODE_CHANGED", $"old={mappingMode} new={liveMode}");
+            ;
             mappingMode = liveMode;
         }
         mappedCarrierWorld = MapPoint(physicsPosition);
@@ -1168,25 +1146,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         if (Time.unscaledTime < nextDiagnosticLogTime) return;
         nextDiagnosticLogTime = Time.unscaledTime + Mathf.Max(.05f, logIntervalSeconds);
         if (logCoordinates)
-            Trace("MAP", $"mode={mappingMode} inP={Fmt(inSubject.transform.position)} " +
-                $"subjectP={Fmt(subjectWorld)} carrierMapped={Fmt(mappedCarrierWorld)} " +
-                $"targetCalculated={Fmt(predictedVisualWorld)} targetActual={Fmt(actualDisplayTarget ? actualDisplayTarget.position : Vector3.zero)} " +
-                $"subjectGap={mappedSubjectGap:F4} preWriteGap={outputGapBeforeWrite:F4} " +
-                $"roundTrip={roundTripError:F6} writable={outputWritable} outputMode={outputMode} " +
-                $"rootP={PathOf(coordinateSource ? coordinateSource.PhysicsRoot : physicsFrame)} " +
-                $"rootV={PathOf(coordinateSource ? coordinateSource.VisualPlayerRoot : visualFrame)}", true);
+            ;
         if (logWaveSamples)
-            Trace("SAMPLE", $"active={active} exiting={exiting} probe={probeValid} " +
-                $"heights=[{sampledHeights[0]:F3},{sampledHeights[1]:F3},{sampledHeights[2]:F3},{sampledHeights[3]:F3}] " +
-                $"slope=[{slope0:F3},{slope1:F3},{slope2:F3}] R={filteredRoughness:F4} " +
-                $"C={filteredSignedCurvature:F4} s={traveled:F3}/{plannedLandingDistance:F3} progress={progress01:F3} " +
-                $"cycle={waveCycleIndex+1}/{plannedWaveCount} profile={waveIndex+1} waveLen={runtimeWaveLength:F3} " +
-                $"N={Fmt(normal)} base={baseOffset:F4} residual={residualOffset:F4} " +
-                $"vResidual={residualSpeed:F4} aResidual={residualAcceleration:F3} q={visualOffset:F4} " +
-                $"displayQ={presentedOffset:F4} displaySpeed={presentedSpeed:F3} smoothT={presentationSmoothSeconds:F3} " +
-                $"resets={visualFilterResetCount} landingPlan={landingPlanValid} " +
-                $"displayCap={visibleUpperLimit:F3} guard={heightGuardActive} " +
-                $"upper={upperNormal:F3} lower={lowerNormal:F3}", true);
+            ;
         if (mappedSubjectGap > coordinateWarningMeters && !coordinateMismatchLogged &&
             mappingMode != "SubjectAnchorFallback")
         {
@@ -1221,23 +1183,19 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         if (heightGuardActive && logEvents && Time.unscaledTime >= nextHeightGuardLog)
         {
             nextHeightGuardLog = Time.unscaledTime + .5f;
-            Trace("DISPLAY_HEIGHT_GUARD", $"rawQ={visualOffset:F3} guardedQ={guardedTargetOffset:F3} " +
-                $"upper={visibleUpperLimit:F3} lower={-maximumVisibleDropNormal:F3} " +
-                $"h0={initialWaveHeight:F3} supportProbe={probeValid}");
+            ;
         }
-        // Sharp turn: the previously displayed scalar q belongs to the old
-        // T/N coordinate frame. Do not transport its lag into the new frame.
+        // Reset only when the support normal itself changes sharply.
+        // Tangent T and -T describe the same axis, so a pure sign flip must not reset
+        // the presentation filter or create a one-frame snap during a turn.
         bool sharpTurn = resetDisplayOnSharpTurn && presentationFrameReady &&
-            (Vector3.Angle(previousFilterNormal, normal) >= displayTurnResetDegrees ||
-             Vector3.Angle(previousFilterTangent, tangent) >= displayTurnResetDegrees);
+            Vector3.Angle(previousFilterNormal, normal) >= displayTurnResetDegrees;
         if (sharpTurn)
         {
             ResetVisualFilterState(guardedTargetOffset);
-            if (logEvents) Trace("VISUAL_FILTER_TURN_RESET",
-                $"N={Fmt(normal)} T={Fmt(tangent)} q={guardedTargetOffset:F3}");
+            if (logEvents) ;
         }
         previousFilterNormal = normal;
-        previousFilterTangent = tangent;
 
         if (softenVisualWave)
         {
@@ -1288,3 +1246,4 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         DiagnosticSample();
     }
 }
+

@@ -36,8 +36,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     [Tooltip("VisualPlayerRoot/RenderStageRootを設定します。")] [SerializeField]
     Transform renderStageRoot;
-    
-    
+
+
     public int ModifyOverrap;
 
     public int ContinuousPattern = 0;
@@ -62,14 +62,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     [SerializeField] bool turnToPositiveZ = true;
     [SerializeField] bool regularizeTurn = true;
     [SerializeField] bool verticalFalsePair = true;
-    
-    
+
+
     [Header("Generated Representations")] [SerializeField]
     bool hidePhysicsRenderers = true;
 
     [SerializeField] bool disableVisualColliders = true;
     [SerializeField] bool removeGeneratedRigidbodies = true;
-    
+
     [SerializeField]
     string visualStairwayLayerName = "VisualStairway";
 
@@ -81,14 +81,15 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     public bool twistReturn;
 
     public Dictionary<String, List<GameObject>> RogicalEntity;
-    
+
     public List<GameObject> ArcSlab1;
     public List<GameObject> ArcSlab2;
     public List<GameObject> StackStairway1;
     public List<GameObject> StackStairway2;
-    
+
     public GameObject CoinPrefab;
     public GameObject EnemyPrefab;
+    //public GameObject PresonerPrefab;
 
     public GameObject PylonPrefab;
 
@@ -203,13 +204,13 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     void FixedUpdate()
     {
-        
+
         if (rebuilding)
             return;
 
         // MainGameManager.Start() の実行順に左右されないよう、
         // 通常プレイ時の最初の先行生成ラインを最低8に保つ。
-        
+
         if (!MainGameManager.OnDead &&
             MainGameManager.LimitTouchingphase < ChunkTriggerStep)
         {
@@ -228,14 +229,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             MainGameManager.OpenChunkStage = true;
             MainGameManager.LimitTouchingphase += ChunkTriggerStep;
         }
-        
+
 
         if (MainGameManager.OpenChunkStage)
         {
 
             MainGameManager.OpenChunkStage = false;
             rebuilding = true;
-            
+
 
             Start();
 
@@ -245,7 +246,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (MainGameManager.OnDead)
         {
             reSubject.PointToPlane = 0;
-           
+
             Start();
             rebuilding = false;
 
@@ -263,7 +264,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 startDashDot = i;
                 break;
             }
-           
+
         }
         bool restartingFromDeath =
             MainGameManager.OnDead;
@@ -463,16 +464,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
              i++)
         {
             Emit(i, i > 0);
-        }
-
-        if (restartingFromDeath)
-        {
-            Debug.Log(
-                $"[STAGE REBUILD INITIAL] " +
-                $"ArcSlab=0..{Mathf.Max(0, nextArcSlabIndex - 1)} ({arcSlabCount} generated), " +
-                $"StairWay=0..{Mathf.Max(0, nextStairwayIndex - 1)} ({stairwayCount} generated), " +
-                $"nextTrigger={MainGameManager.LimitTouchingphase}",
-                this);
         }
 
         int finalOffset =
@@ -987,19 +978,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     ? startPattern[plan]
                     : int.MinValue;
 
-            Debug.Log(
-                $"Flat " +
-                $"plan={plan}, " +
-                $"pattern={patternValue}, " +
-                $"segment={segmentIndex}, " +
-                $"shift={shiftHalf}, " +
-                $"distance={directDistance:F3}, " +
-                $"currentProjection={currentProjection:F3}, " +
-                $"previousProjection={previousProjection:F3}, " +
-                $"robustDistance={robustDistance:F3}, " +
-                $"angle={directionAngle:F1}, " +
-                $"direction={currentFlatDirection}");
-
             // 次の Flat 判定用に保存する。
             previousFlatPosition =
                 currentFlatPosition;
@@ -1025,15 +1003,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     LayerMask.NameToLayer("Slope"),
                     $"StairWay{generatedStairwayIndex}",
                     scale);
-
-            Debug.Log(
-                $"StairWay{generatedStairwayIndex} " +
-                $"plan={plan}, " +
-                $"segment={segmentIndex}, " +
-                $"scale={scale}, " +
-                $"start={localStart}, " +
-                $"direction={localDirection}, " +
-                $"length={localDirection.magnitude}");
 
             // Slope 側には Flat 用の半区間補正を掛けない。
             ApplyBoardPose(
@@ -1065,19 +1034,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     Vector3.Dot(
                         physicsLocalForward.normalized,
                         expectedLocalDirection);
-
-                Debug.Log(
-                    $"[STAIR ORIENTATION CHECK] " +
-                    $"name={pair.Physics.name} " +
-                    $"plan={plan} " +
-                    $"segment={segmentIndex} " +
-                    $"direction={expectedLocalDirection} " +
-                    $"physicsLocalForward={physicsLocalForward} " +
-                    $"physicsLocalUp={pair.Physics.localRotation * Vector3.up} " +
-                    $"physicsLocalRight={pair.Physics.localRotation * Vector3.right} " +
-                    $"localEuler={pair.Physics.localEulerAngles} " +
-                    $"dot={dot:F4}",
-                    pair.Physics);
             }
         }
 
@@ -1601,11 +1557,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             yield break;
         }
 
-        Debug.Log(
-            $"[ITEM CHUNK] range=[{safeStart},{safeEndExclusive}) " +
-            $"available={availableCount}",
-            this);
-
         for (int i = safeStart;
              i < safeEndExclusive;
              i++)
@@ -1646,19 +1597,19 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             }
 
             bool FirstCorner=i > startDashDot;
-           
+
             float angleY =
                 ActiveStairway1
                     .transform
                     .localEulerAngles
                     .y;
-            
+
             bool DontSeqItem =
                 GeneratePylon(
                     angleY,
                     ActiveStairway1,
                     ActiveStairway2,FirstCorner);
-           
+
             if (!DontSeqItem)
             {
                 GenerateCoin(
@@ -1711,11 +1662,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             yield break;
         }
 
-        Debug.Log(
-            $"[ITEM CHUNK] range=[{safeStart},{safeEndExclusive}) " +
-            $"available={availableCount}",
-            this);
-
         for (int i = safeStart;
              i < safeEndExclusive;
              i++)
@@ -1756,19 +1702,19 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             }
 
             bool FirstCorner=i > startDashDot;
-           
+
             float angleY =
                 ActiveStairway1
                     .transform
                     .localEulerAngles
                     .y;
-            
+
             bool DontSeqItem =
                 GeneratePylon(
                     angleY,
                     ActiveStairway1,
                     ActiveStairway2,FirstCorner);
-           
+
             if (!DontSeqItem)
             {
                 GenerateCoin(
@@ -1829,7 +1775,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     collider.enabled = false;
             }
         }
-       
+
 
         return instance;
     }
@@ -1903,17 +1849,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 Vector3.one * 1.5f,
                 "Thorn",
                 false);
-           
-            
+
+
             // Physics側のRendererだけ無効化
             foreach (Renderer r in pair.physics.GetComponentsInChildren<Renderer>(true))
                 r.enabled = false;
-            Debug.Log(
-                $"[PYLON LOCAL] stair={ActiveStairway1.name}, " +
-                $"angleY={angle:F2}, local={localPylonPosition}, " +
-                $"physicsWorld={pair.physics.transform.position}, " +
-                $"visualWorld={pair.visual.transform.position}",
-                pair.physics);
 
             generated = true;
         }
@@ -1944,7 +1884,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         return generated;
     }
 
-    
+
     bool GenerateCoin(float angle, GameObject ActiveStairway1, GameObject ActiveStairway2, bool FirstConner)
     {
         // Pylonが配置されなかったStairwayに対し20%で抽選。
@@ -1999,7 +1939,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         int widthObj = FirstCorner
             ? UnityEngine.Random.Range(0, ShiftObj.Length)
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
-        Vector3 localPosition = new Vector3(ShiftObj[widthObj].x, 0, 0f);
+        Vector3 localPosition = new Vector3(ShiftObj[widthObj].x, 0.125f, 0f);
 
         GameObject visualCharacter = SpawnVisual(
             EnemyPrefab,
@@ -2008,12 +1948,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             Quaternion.Euler(-135f, 0f, 0f),
             Vector3.one * 1.5f,
             "FunChr");
-
-        Debug.Log(
-            $"[FUN CHARACTER LOCAL] arc={physicsArc.name}, " +
-            $"angleY={angle:F2}, local={localPosition}, " +
-            $"visualWorld={visualCharacter.transform.position}",
-            visualCharacter);
 
         return true;
     }

@@ -1196,7 +1196,7 @@ GameObject:
   - component: {fileID: 64372322}
   m_Layer: 0
   m_Name: BallVisualEqualizer
-  m_TagString: BallVisaulEqualizer
+  m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -1231,7 +1231,7 @@ SphereCollider:
     serializedVersion: 2
     m_Bits: 0
   m_LayerOverridePriority: 0
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
@@ -1988,22 +1988,22 @@ PrefabInstance:
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
       propertyPath: m_LocalRotation.w
-      value: 1
+      value: 0.9999756
       objectReference: {fileID: 0}
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0
+      value: -0.00016620754
       objectReference: {fileID: 0}
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0
+      value: 0.006608832
       objectReference: {fileID: 0}
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0
+      value: 0.0022475477
       objectReference: {fileID: 0}
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
@@ -2018,17 +2018,17 @@ PrefabInstance:
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
+      value: -0.021
       objectReference: {fileID: 0}
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
       propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
+      value: 0.757
       objectReference: {fileID: 0}
     - target: {fileID: 1540811919117320995, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
+      value: 0.257
       objectReference: {fileID: 0}
     - target: {fileID: 8997063344009635508, guid: 1739ffe06857a2f44bac7a543c634e9b,
         type: 3}
@@ -4199,79 +4199,6 @@ Transform:
     type: 3}
   m_PrefabInstance: {fileID: 769741806}
   m_PrefabAsset: {fileID: 0}
---- !u!1001 &772866020
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 19.575
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalPosition.y
-      value: -121.399994
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 295.3311
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 0.9230868
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0.38459173
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 1478818794105347255, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4479950664465519022, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_Name
-      value: Stairway
-      objectReference: {fileID: 0}
-    - target: {fileID: 4479950664465519022, guid: d4ce9eedf0501d1419b6a1fb856a7888,
-        type: 3}
-      propertyPath: m_IsActive
-      value: 1
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: d4ce9eedf0501d1419b6a1fb856a7888, type: 3}
 --- !u!1001 &785228183
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -4538,7 +4465,7 @@ GameObject:
   - component: {fileID: 832575518}
   m_Layer: 0
   m_Name: Global Volume
-  m_TagString: Untagged
+  m_TagString: BallVisaulEqualizer
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -7932,7 +7859,7 @@ PrefabInstance:
         type: 3}
       propertyPath: EnemyPrefab
       value: 
-      objectReference: {fileID: 1631279656229403594, guid: 44270000e9cc2c84392da194a3e96594,
+      objectReference: {fileID: 7076778081306880446, guid: f4d398ca2453c154cac70d8b849ecfa9,
         type: 3}
     - target: {fileID: 1464098952575493774, guid: 74221757a7fa34c47a7df1a3b267756a,
         type: 3}
@@ -8226,5 +8153,4 @@ SceneRoots:
   - {fileID: 1492337658}
   - {fileID: 1847646707}
   - {fileID: 364707067}
-  - {fileID: 772866020}
   - {fileID: 50892150}
