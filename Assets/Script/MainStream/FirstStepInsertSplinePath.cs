@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
 using UnityEngine;
+using TMPro;
 using UnityEngine.Splines;
 using System.Collections;
 using System.Text.RegularExpressions;
@@ -229,7 +230,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             MainGameManager.OpenChunkStage = true;
             MainGameManager.LimitTouchingphase += ChunkTriggerStep;
         }
-
+        MainGameManager.PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = MainGameManager.Coin.ToString();
+        MainGameManager.TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.currentScore.ToString("");
+        MainGameManager.TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =AndroidOneOnly.bestScore.ToString("");
 
         if (MainGameManager.OpenChunkStage)
         {

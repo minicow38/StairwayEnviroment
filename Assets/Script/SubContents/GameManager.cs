@@ -24,7 +24,7 @@ public class MainGameManager : MonoBehaviour
     public static int PointToPlane;
     
     public static GameObject PreviewIconRoot;
-    public int CurrentPointToPlane = 0;
+    public static int CurrentPointToPlane = 0;
     public static int CurrentCoin = 0;
     public static int lastTouch = 0;
     public static int Coin = 0;
@@ -56,13 +56,13 @@ public class MainGameManager : MonoBehaviour
         TopLiteral = GameObject.Find("GameUI/TopLiteral").transform.gameObject;
         PlayButton= GameObject.Find("GameUI/PlayButton").transform.gameObject;
         DropOut=GameObject.Find("GameUI/DropOut").transform.gameObject;
-        PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = Coin.ToString();
+       // PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = Coin.ToString();
         TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.currentScore.ToString("");
 
         DropOut.SetActive(false);
 
 
-        TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.bestScore.ToString("");
+       // TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.bestScore.ToString("");
         displayScore = GameObject.Find("StairwayUserbility/Score/").transform.GetComponent<TextMeshProUGUI>();
         displayCoin = GameObject.Find("StairwayUserbility/Coin/").transform.GetComponent<TextMeshProUGUI>();
         Userbility = GameObject.Find("GameUI/StairwayUserbility").transform.gameObject;

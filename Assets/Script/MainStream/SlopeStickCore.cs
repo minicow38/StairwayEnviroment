@@ -944,7 +944,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
         MainGameManager.OnDead = false;
-        MainGameManager. PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = MainGameManager.Coin.ToString();
+        
 
 
         Vector3 restart =
@@ -1061,8 +1061,9 @@ public float AdvancePredictedSplineDriveReadOnly(
                 }
 
                 AndroidOneOnly.pharseCoin = MainGameManager.Coin;
-                
-               // AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
+               AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
+               
+               MainGameManager.OnDead = true;
                 MainGameManager.core.BeginCommandOnTouch = false;
 
                 MainGameManager.core.Earliest=false;
