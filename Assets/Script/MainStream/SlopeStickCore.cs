@@ -33,6 +33,9 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float StickJerk = 3000f;
     const float ReleaseHold = .02f;
     const float NaturalReleaseEnd = .90f;
+    
+    public static readonly string CallForBestScore = "CallForBestScore";
+
 
     [SerializeField] NearestKnotDetector knotDetector;
     [SerializeField] LayerMask groundMask = ~0;
@@ -1062,6 +1065,12 @@ public float AdvancePredictedSplineDriveReadOnly(
 
                 AndroidOneOnly.pharseCoin = MainGameManager.Coin;
                AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
+               if (MainGameManager.PointToPlane > AndroidOneOnly.bestScore)
+               {
+                   PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
+                   AndroidOneOnly.bestScore = MainGameManager.PointToPlane;
+               }
+
                
                MainGameManager.OnDead = true;
                 MainGameManager.core.BeginCommandOnTouch = false;

@@ -2253,8 +2253,6 @@ MonoBehaviour:
   reSubject: {fileID: 0}
   displayScore: {fileID: 0}
   displayCoin: {fileID: 0}
-  CurrentPointToPlane: 0
-  CurrentCoin: 0
   initRotation: 0
   VisualRoatationPlayer: {x: 0, y: 0, z: 0}
 --- !u!114 &245788445

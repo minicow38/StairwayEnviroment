@@ -8,6 +8,8 @@ public class GettingTraffic_Corn : MonoBehaviour
 {
     public GameObject PhysicsMul;
     public GameObject RendererMul;
+    public static readonly string CallForBestScore = "CallForBestScore";
+
 
     public MainGameManager mainGameManager;
    // public TextMeshUGUI textMesh
@@ -91,6 +93,12 @@ public class GettingTraffic_Corn : MonoBehaviour
         Debug.Log("B : 待機開始 " + Time.timeScale);
         AndroidOneOnly.pharseCoin = MainGameManager.Coin;
         AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
+        if (MainGameManager.PointToPlane > AndroidOneOnly.bestScore)
+        {
+            PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
+            AndroidOneOnly.bestScore = MainGameManager.PointToPlane;
+        }
+
 
         yield return new WaitForSeconds(2f);
         
