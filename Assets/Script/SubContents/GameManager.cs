@@ -25,7 +25,7 @@ public class MainGameManager : MonoBehaviour
     
     public static GameObject PreviewIconRoot;
     public int CurrentPointToPlane = 0;
-    public int CurrentCoin = 0;
+    public static int CurrentCoin = 0;
     public static int lastTouch = 0;
     public static int Coin = 0;
     public static bool OnDead = false;
@@ -62,8 +62,7 @@ public class MainGameManager : MonoBehaviour
         DropOut.SetActive(false);
 
 
-        TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
-            AndroidOneOnly.bestScore.ToString("");
+        TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.bestScore.ToString("");
         displayScore = GameObject.Find("StairwayUserbility/Score/").transform.GetComponent<TextMeshProUGUI>();
         displayCoin = GameObject.Find("StairwayUserbility/Coin/").transform.GetComponent<TextMeshProUGUI>();
         Userbility = GameObject.Find("GameUI/StairwayUserbility").transform.gameObject;

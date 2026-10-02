@@ -89,7 +89,7 @@ public class GettingTraffic_Corn : MonoBehaviour
         MainGameManager.DropOut.SetActive(true);
 
         Debug.Log("B : 待機開始 " + Time.timeScale);
-        
+        AndroidOneOnly.pharseCoin = MainGameManager.Coin;
         
         yield return new WaitForSeconds(2f);
         

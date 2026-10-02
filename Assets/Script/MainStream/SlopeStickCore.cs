@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections;
+using TMPro;
 using System.Text.RegularExpressions;
 using Sirenix.OdinInspector;
 
@@ -943,6 +944,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
         MainGameManager.OnDead = false;
+        MainGameManager. PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = MainGameManager.Coin.ToString();
+
 
         Vector3 restart =
             startSlab.transform.position;
@@ -1057,7 +1060,9 @@ public float AdvancePredictedSplineDriveReadOnly(
                     StartCoroutine(Recover());
                 }
 
-                MainGameManager.OnDead = true;
+                AndroidOneOnly.pharseCoin = MainGameManager.Coin;
+                
+               // AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
                 MainGameManager.core.BeginCommandOnTouch = false;
 
                 MainGameManager.core.Earliest=false;

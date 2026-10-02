@@ -2,6 +2,12 @@ using UnityEngine;
 using System.Collections.Generic;
 using Sirenix.OdinInspector;
 
+public interface IVisualProxyBindable
+{
+    void BindVisualProxy(Transform proxy);
+    void UnbindVisualProxy();
+}
+
 /// <summary>
 /// InSubject-only, visual-only Stairway equalizer (Unity 2022.3 / built-in API).
 /// InSubject remains the only motion authority. SlopeStickCore is read-only and optional:
@@ -12,7 +18,7 @@ using Sirenix.OdinInspector;
 /// Main motion authority: InSubject only. Output coordinates follow CorrespondSubject.
 /// Subject is a read-only visual-space anchor / rotation reference.
 /// No physics force, velocity, or Rigidbody state is written.
-/// If the assigned visualTarget has a Rigidbody, only its mesh/sprite presentation
+/// If the assigned visualTarget has a Rigidbody, its mesh/sprite/trail presentation
 /// is copied into an independent visual proxy under the same parent. The original
 /// Rigidbody, Collider, and motion scripts remain untouched.
 /// </summary>
@@ -44,6 +50,15 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     }
 
     readonly List<RendererBinding> rendererBindings = new List<RendererBinding>();
+
+    sealed class ProxyTrailBinding
+    {
+        public TrailRenderer source;
+        public TrailRenderer display;
+        public bool primed;
+    }
+
+    readonly List<ProxyTrailBinding> proxyTrailBindings = new List<ProxyTrailBinding>();
     GameObject generatedDisplay;
     [Header("Subject-space coordinate map (auto-resolves CorrespondSubject)")]
     [SerializeField] CorrespondSubject coordinateSource;
@@ -571,7 +586,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         int count = CopyPresentation(visualTarget, display);
         if (count == 0)
         {
-            Debug.LogError("[ExampleBVE][PROXY_EMPTY] No MeshRenderer+MeshFilter or SpriteRenderer " +
+            Debug.LogError("[ExampleBVE][PROXY_EMPTY] No MeshRenderer+MeshFilter, SpriteRenderer, or TrailRenderer " +
                 "was found beneath Visual Target. Existing renderers have not been hidden.", this);
             ReleaseGeneratedDisplay();
             outputMode = "NoCopyableRenderer";
@@ -595,6 +610,32 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
     int CopyPresentation(Transform source, Transform destination)
     {
         int copied = 0;
+
+        // TrailRenderer is presentation too. The original TrailRenderer is later hidden
+        // together with the original mesh, so create a renderer-only trail on the proxy.
+        TrailRenderer sourceTrail = source.GetComponent<TrailRenderer>();
+        if (sourceTrail)
+        {
+            TrailRenderer displayTrail = destination.gameObject.AddComponent<TrailRenderer>();
+            CopyTrailSettings(sourceTrail, displayTrail);
+            displayTrail.enabled = sourceTrail.enabled;
+
+            // Do not emit until the proxy has received its first predictedVisualWorld pose.
+            // This prevents a long one-frame line from the source position to the proxy position.
+            displayTrail.emitting = false;
+            displayTrail.Clear();
+
+            TrackOriginal(sourceTrail);
+            BindRenderer(sourceTrail, displayTrail);
+            proxyTrailBindings.Add(new ProxyTrailBinding
+            {
+                source = sourceTrail,
+                display = displayTrail,
+                primed = false
+            });
+            copied++;
+        }
+
         MeshRenderer sourceMesh = source.GetComponent<MeshRenderer>();
         MeshFilter sourceFilter = source.GetComponent<MeshFilter>();
         if (sourceMesh && sourceFilter && sourceFilter.sharedMesh)
@@ -627,6 +668,11 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             BindRenderer(sourceSprite, renderer);
             copied++;
         }
+
+        // Control scripts stay on the source object. They only receive the matching
+        // renderer-only proxy node, so Rigidbody/Collider authority never moves.
+        BindProxyComponents(source, destination);
+
         for (int i = 0; i < source.childCount; i++)
         {
             Transform child = source.GetChild(i);
@@ -641,6 +687,59 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             copied += CopyPresentation(child, dst);
         }
         return copied;
+    }
+
+    static void CopyTrailSettings(TrailRenderer source, TrailRenderer display)
+    {
+        if (!source || !display) return;
+
+        display.time = source.time;
+        display.minVertexDistance = source.minVertexDistance;
+        display.widthMultiplier = source.widthMultiplier;
+        display.widthCurve = source.widthCurve;
+        display.colorGradient = source.colorGradient;
+        display.numCornerVertices = source.numCornerVertices;
+        display.numCapVertices = source.numCapVertices;
+        display.alignment = source.alignment;
+        display.textureMode = source.textureMode;
+        display.generateLightingData = source.generateLightingData;
+        display.shadowBias = source.shadowBias;
+
+        // Never let a temporary trail destroy the whole generated display object.
+        display.autodestruct = false;
+
+        display.sharedMaterials = source.sharedMaterials;
+        display.shadowCastingMode = source.shadowCastingMode;
+        display.receiveShadows = source.receiveShadows;
+        display.lightProbeUsage = source.lightProbeUsage;
+        display.reflectionProbeUsage = source.reflectionProbeUsage;
+        display.sortingLayerID = source.sortingLayerID;
+        display.sortingOrder = source.sortingOrder;
+    }
+
+    static void SyncTrailAppearance(TrailRenderer source, TrailRenderer display)
+    {
+        if (!source || !display) return;
+
+        // Do not mirror enabled/emitting/time here. Those are runtime control values
+        // owned by the source-side trail controller. Only presentation is mirrored.
+        display.minVertexDistance = source.minVertexDistance;
+        display.widthMultiplier = source.widthMultiplier;
+        display.widthCurve = source.widthCurve;
+        display.colorGradient = source.colorGradient;
+        display.numCornerVertices = source.numCornerVertices;
+        display.numCapVertices = source.numCapVertices;
+        display.alignment = source.alignment;
+        display.textureMode = source.textureMode;
+        display.generateLightingData = source.generateLightingData;
+        display.shadowBias = source.shadowBias;
+        display.sharedMaterials = source.sharedMaterials;
+        display.shadowCastingMode = source.shadowCastingMode;
+        display.receiveShadows = source.receiveShadows;
+        display.lightProbeUsage = source.lightProbeUsage;
+        display.reflectionProbeUsage = source.reflectionProbeUsage;
+        display.sortingLayerID = source.sortingLayerID;
+        display.sortingOrder = source.sortingOrder;
     }
 
     void TrackOriginal(Renderer renderer)
@@ -661,9 +760,10 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         });
     }
 
-    // MainGameManager continues to edit the ORIGINAL BallVisualEqualizer Renderer.
-    // The proxy is what the camera sees, so mirror presentation state every LateUpdate.
-    // IMPORTANT: do NOT copy Renderer.enabled here. The original is intentionally hidden.
+    // External systems may continue editing the ORIGINAL presentation components.
+    // The proxy is what the camera sees, so mirror appearance every LateUpdate.
+    // IMPORTANT: runtime control values such as Renderer.enabled, Trail.time and
+    // Trail.emitting are not mirrored here.
     void SyncPresentationFromOriginal()
     {
         for (int i = 0; i < rendererBindings.Count; i++)
@@ -671,6 +771,15 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             RendererBinding binding = rendererBindings[i];
             if (binding == null || !binding.source || !binding.display)
                 continue;
+
+            TrailRenderer sourceTrail = binding.source as TrailRenderer;
+            TrailRenderer displayTrail = binding.display as TrailRenderer;
+
+            if (sourceTrail && displayTrail)
+            {
+                SyncTrailAppearance(sourceTrail, displayTrail);
+                continue;
+            }
 
             MeshRenderer sourceMesh = binding.source as MeshRenderer;
             MeshRenderer displayMesh = binding.display as MeshRenderer;
@@ -706,13 +815,57 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         }
     }
 
+    void PrimeProxyTrails(bool poseWritten)
+    {
+        for (int i = 0; i < proxyTrailBindings.Count; i++)
+        {
+            ProxyTrailBinding binding = proxyTrailBindings[i];
+            if (binding == null || !binding.source || !binding.display || binding.primed)
+                continue;
+
+            if (!poseWritten)
+            {
+                binding.display.emitting = false;
+                continue;
+            }
+
+            // The proxy is now at predictedVisualWorld. Start from this exact point so
+            // no one-frame line is drawn from the hidden source Rigidbody position.
+            binding.display.Clear();
+            binding.display.time = binding.source.time;
+            binding.display.emitting = binding.source.emitting;
+            binding.primed = true;
+        }
+    }
+
+    static void BindProxyComponents(Transform source, Transform destination)
+    {
+        MonoBehaviour[] behaviours = source.GetComponents<MonoBehaviour>();
+        for (int i = 0; i < behaviours.Length; i++)
+            if (behaviours[i] is IVisualProxyBindable bindable)
+                bindable.BindVisualProxy(destination);
+    }
+
+    void UnbindProxyComponents()
+    {
+        if (!visualTarget) return;
+
+        MonoBehaviour[] behaviours = visualTarget.GetComponentsInChildren<MonoBehaviour>(true);
+        for (int i = 0; i < behaviours.Length; i++)
+            if (behaviours[i] is IVisualProxyBindable bindable)
+                bindable.UnbindVisualProxy();
+    }
+
     void ReleaseGeneratedDisplay()
     {
+        UnbindProxyComponents();
+
         for (int i = 0; i < originalRenderers.Count; i++)
             if (originalRenderers[i]) originalRenderers[i].enabled = originalRendererStates[i];
         originalRenderers.Clear();
         originalRendererStates.Clear();
         rendererBindings.Clear();
+        proxyTrailBindings.Clear();
         actualDisplayTarget = null;
         if (generatedDisplay)
         {
@@ -1231,6 +1384,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
         }
         // Map carrier + presentation offset together using CorrespondSubject's map.
         UpdateCoordinateDiagnostics(inSubject.transform.position, presentedOffset);
+        bool wroteDisplayPose = false;
         if (outputWritable && IsSafeDisplayTarget(actualDisplayTarget))
         {
             actualDisplayTarget.position = predictedVisualWorld;
@@ -1242,8 +1396,13 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour
             }
             else if (addVisualRoll)
                 actualDisplayTarget.rotation = roll * rotationOffset;
+
+            wroteDisplayPose = true;
         }
+
+        // Prime TrailRenderer only AFTER the proxy pose is written. Runtime trail control
+        // stays on the source-side controller and targets both source and proxy trails.
+        PrimeProxyTrails(wroteDisplayPose);
         DiagnosticSample();
     }
 }
-
