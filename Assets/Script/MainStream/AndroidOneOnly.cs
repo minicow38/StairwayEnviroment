@@ -90,9 +90,9 @@ public class AndroidOneOnly : MonoBehaviour
             PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
 
 
-            if (MainGameManager.PointToPlane > bestScore)
+            if (MainGameManager.CurrentPointToPlane > bestScore)
             {
-                PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
+                PlayerPrefs.SetInt(CallForBestScore, MainGameManager.CurrentPointToPlane);
             }
 
             string stringPlus = "";

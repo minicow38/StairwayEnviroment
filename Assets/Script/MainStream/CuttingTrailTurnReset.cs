@@ -1,7 +1,7 @@
 using UnityEngine;
 
 [DisallowMultipleComponent]
-public sealed class BallVisualTrailTurnReset : MonoBehaviour, IVisualProxyBindable
+public sealed class BallVisualTrailTurnReset : MonoBehaviour
 {
     [SerializeField] private TrailRenderer trailRenderer;
     [SerializeField] private CorrespondSubject correspondSubject;

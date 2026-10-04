@@ -113,8 +113,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     static readonly int[] InitialStartPattern =
     {
-        -1, 0, -1, 0, -1, 0, -1, 0, -1,
-        0, -1, 0, -1, 0, -3, -3,0
+        -1, 0, -5, 0, -5, 0, -5, 0, -5,
+        0, -5, 0, -5, 0, -5, 0,-5
     };
 
     public int startDashDot = 0;
@@ -442,7 +442,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
             startPattern.AddRange(new int[]
             {
-                -1, 0, -1, 0, -1, 0, -1, 0, -1
+                -5, 0, -5, 0, -5, 0, -5, 0, -5
             });
         }
 

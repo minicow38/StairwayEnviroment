@@ -1,4 +1,4 @@
-using UnityEngine;
+/*using UnityEngine;
 
 /// <summary>
 /// EqualizerFuture vertical-boundary provider.
@@ -3296,3 +3296,4 @@ public sealed class EqualizerFutureAsyncPos : MonoBehaviour
             IsFinite(value.z);
     }
 }
+*/

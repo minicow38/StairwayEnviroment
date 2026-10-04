@@ -1065,10 +1065,10 @@ public float AdvancePredictedSplineDriveReadOnly(
 
                 AndroidOneOnly.pharseCoin = MainGameManager.Coin;
                AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
-               if (MainGameManager.PointToPlane > AndroidOneOnly.bestScore)
+               if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
                {
-                   PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
-                   AndroidOneOnly.bestScore = MainGameManager.PointToPlane;
+                   PlayerPrefs.SetInt(CallForBestScore, MainGameManager.CurrentPointToPlane);
+                   AndroidOneOnly.bestScore = MainGameManager.CurrentPointToPlane;
                }
 
                
@@ -2891,4 +2891,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         return t * t * t * (t * (t * 6f - 15f) + 10f);
     }
     
+}
+
+public interface IVisualProxyBindable
+{
+    void BindVisualProxy(Transform proxy);
+    void UnbindVisualProxy();
 }

@@ -93,10 +93,10 @@ public class GettingTraffic_Corn : MonoBehaviour
         Debug.Log("B : 待機開始 " + Time.timeScale);
         AndroidOneOnly.pharseCoin = MainGameManager.Coin;
         AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
-        if (MainGameManager.PointToPlane > AndroidOneOnly.bestScore)
+        if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
         {
             PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
-            AndroidOneOnly.bestScore = MainGameManager.PointToPlane;
+            AndroidOneOnly.bestScore = MainGameManager.CurrentPointToPlane;
         }
 
 

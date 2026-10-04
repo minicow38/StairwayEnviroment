@@ -13,7 +13,7 @@ OcclusionCullingSettings:
 --- !u!104 &2
 RenderSettings:
   m_ObjectHideFlags: 0
-  serializedVersion: 9
+  serializedVersion: 10
   m_Fog: 0
   m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
   m_FogMode: 3
@@ -38,12 +38,12 @@ RenderSettings:
   m_ReflectionIntensity: 1
   m_CustomReflection: {fileID: 0}
   m_Sun: {fileID: 0}
+  m_IndirectSpecularColor: {r: 0.18028378, g: 0.22571412, b: 0.30692285, a: 1}
   m_UseRadianceAmbientProbe: 0
 --- !u!157 &3
 LightmapSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 12
-  m_GIWorkflowMode: 1
   m_GISettings:
     serializedVersion: 2
     m_BounceScale: 1
@@ -66,9 +66,6 @@ LightmapSettings:
     m_LightmapParameters: {fileID: 0}
     m_LightmapsBakeMode: 1
     m_TextureCompression: 1
-    m_FinalGather: 0
-    m_FinalGatherFiltering: 1
-    m_FinalGatherRayCount: 256
     m_ReflectionCompression: 2
     m_MixedBakeMode: 2
     m_BakeBackend: 1
@@ -238,7 +235,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 50892150}
-  - component: {fileID: 50892153}
   - component: {fileID: 50892152}
   - component: {fileID: 50892151}
   m_Layer: 0
@@ -247,7 +243,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &50892150
 Transform:
   m_ObjectHideFlags: 0
@@ -275,110 +271,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 24eb7396d09f2df4a9d53e370bee2f33, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  directionSource: {fileID: 0}
-  equalizerSync: {fileID: 0}
-  correspondSubject: {fileID: 0}
-  slopeStickCore: {fileID: 0}
-  initialCY: 0
-  observeFirstWavePeak: 1
-  peakFitWindowSamples: 6
-  minimumPeakSampleSeparationMeters: 0.015
-  minimumAscentSlopePerMeter: 0.02
-  maximumPreApexLeadFractionOfFirstWave: 0.18
-  maximumPeakFitRmseMeters: 0.03
-  maximumPeakExtrapolationMeters: 0.25
-  minimumPeakRiseAboveInitialCYMeters: 0.01
-  minimumConcavityMagnitude: 0.001
-  allowPostApexFallback: 1
-  useLocalTaylorPreApex: 1
-  requireDecreasingSpatialSlope: 1
-  minimumTaylorCurvatureMagnitude: 0.01
-  maximumReliableFitPeakDisagreementMeters: 0.4
-  requireReliableBroadFitAgreement: 1
-  observeReleaseDiagnostics: 1
-  logPreApexSolver: 1
-  preApexRejectLogIntervalSeconds: 0.08
-  preApexInvalidationToleranceMeters: 0.03
-  minimumCandidateConfirmationSeparationMeters: 0.08
-  candidatePeakDistanceToleranceMeters: 0.2
-  candidatePeakCYToleranceMeters: 0.1
-  requiredStableCandidateComparisons: 1
-  candidateTrajectoryResidualToleranceMeters: 0.06
-  requireAscendingObservationForCandidateConfirmation: 1
-  useInstantaneousSpatialSlopeConfirmation: 1
-  minimumInstantaneousCarrierSpatialSpeed: 0.5
-  instantaneousSpatialSlopeAbsoluteTolerance: 0.18
-  instantaneousSpatialSlopeRelativeTolerance: 0.5
-  instantaneousPeakDistanceToleranceMeters: 0.18
-  drawCompletionGizmo: 1
-  completionGizmoRadius: 0.06
-  firstWavePeakReady: 0
-  firstWavePeakVerified: 0
-  firstWavePeakSolvedPreApex: 0
-  firstWavePeakRevision: 0
-  observedSectionKey: -9223372036854775808
-  currentRelativeCY: 0
-  currentRelativeVerticalVelocity: 0
-  currentSectionDistanceMeters: 0
-  currentSpatialCYSlope: 0
-  observedFirstWavePeakCY: 0
-  observedFirstWavePeakProgress01: 0
-  predictedPeakDistanceMeters: 0
-  predictedPeakLeadMeters: 0
-  peakFitRmseMeters: 0
-  peakFitSpanMeters: 0
-  firstWaveSawAscent: 0
-  localTaylorValid: 0
-  localTaylorSlope: 0
-  localTaylorCurvature: 0
-  localTaylorPeakLeadMeters: 0
-  localTaylorPeakDistanceMeters: 0
-  localTaylorPeakCY: 0
-  reliableBroadFitValid: 0
-  reliableBroadPeakDistanceMeters: 0
-  reliableBroadPeakCY: 0
-  reliableBroadFitRmse: 0
-  broadVsLocalPeakDistanceError: 0
-  preApexCandidateState: 0
-  preApexCandidateActive: 0
-  preApexCandidateStableComparisons: 0
-  preApexCandidateObservationS: 0
-  preApexCandidatePeakS: 0
-  preApexCandidatePeakCY: 0
-  preApexCandidatePeakLeadMeters: 0
-  preApexCandidateSlope: 0
-  preApexCandidateCurvature: 0
-  preApexCandidateLastDistanceDelta: 0
-  preApexCandidateLastCYDelta: 0
-  preApexCandidateExpectedCYAtObservation: 0
-  preApexCandidateObservationResidualMeters: 0
-  preApexCandidateExpectedSlopeAtObservation: 0
-  preApexCandidateObservedSlopeAtObservation: 0
-  preApexCandidateConfirmedByObservation: 0
-  instantaneousSpatialSlopeValid: 0
-  instantaneousCarrierSpatialSpeed: 0
-  instantaneousCarrierCenterVerticalVelocity: 0
-  instantaneousEqualizerVerticalVelocityPhysics: 0
-  instantaneousRelativeCYVelocity: 0
-  instantaneousMeasuredSpatialSlope: 0
-  instantaneousTaylorSlopeError: 0
-  instantaneousTaylorSlopeTolerance: 0
-  instantaneousVelocityPeakLeadMeters: 0
-  instantaneousVelocityPeakDistanceMeters: 0
-  instantaneousVelocityPeakDistanceErrorMeters: 0
-  preApexCandidateConfirmedByInstantaneousSlope: 0
-  verifiedFirstWavePeakCY: 0
-  verifiedFirstWavePeakProgress01: 0
-  firstWavePeakVerificationErrorMeters: 0
-  releaseObserved: 0
-  releaseAlreadyActiveAtSectionStart: 0
-  releaseProgress01: 0
-  releaseSectionDistanceMeters: 0
-  releaseRelativeCY: 0
-  releaseRelativeVerticalVelocity: 0
-  releaseObservedPhase: 0
-  completionPointPhysicsValid: 0
-  completionPointPhysics: {x: 0, y: 0, z: 0}
 --- !u!114 &50892152
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -391,794 +283,58 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: de0d19857c896c0438e578aa9fbd1213, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  inSubjectBody: {fileID: 0}
+  source: {fileID: 0}
   knotDetector: {fileID: 156220176}
-  directionTeacherSource: {fileID: 50892153}
-  verticalBoundarySource: {fileID: 50892151}
-  collisionStageRoot: {fileID: 350604442}
-  analysisSampleCount: 97
-  waveAmplitude: 0.45
-  inSubjectV0DirectionInfluence: 0.35
-  inSubjectV0DirectionFade01: 0.15
-  imitateReferenceSplineTangent: 1
-  referenceArcLengthSamples: 96
-  referenceNewtonIterations: 4
-  referenceNewtonHalfWindowU: 0.12
-  referenceTangentBlend: 0.7
-  directionMetricScaleFraction: 0.15
-  directionMetricTangentWeight: 1
-  directionMetricNormalWeight: 0.1
-  directionMetricBinormalWeight: 1
-  applicableMinimumValidSampleRatio: 0.6
-  weakMinimumValidSampleRatio: 0.25
-  applicableMaximumMeanDirectionMetric: 1
-  weakMaximumMeanDirectionMetric: 2
-  applicableMinimumMeanForwardDot: 0.6
-  weakMinimumMeanForwardDot: 0.2
-  minimumReferenceForwardDot: 0.1
-  maximumWaveTangentAngleDegrees: 20
-  minimumForwardSpeed: 0.5
-  maximumPredictionTimeSeconds: 3
-  useFirstWaveCYBoundary: 1
-  refreshFromObservedFirstWavePeak: 1
-  appliedInitialCY: 0
-  firstWavePeakCorrectionActive: 0
-  consumedFirstWavePeakRevision: -1
-  firstWavePeakProgress01: 0
-  firstWavePeakTargetCY: 0
-  firstWavePeakPredictedCYBeforeCorrection: 0
-  firstWavePeakErrorBeforeCorrection: 0
-  useDefiniteIntegralPositionReconstruction: 0
-  definiteIntegralApplied: 0
-  definiteIntegralUsingCYBoundary: 0
-  definiteIntegralAppliedDirectionVersion: -1
-  definiteIntegralAnchorC: {x: 0, y: 0, z: 0}
-  definiteIntegralEndOffset: {x: 0, y: 0, z: 0}
-  definiteIntegralEndOffsetMagnitude: 0
-  predictedSpecificEnergyLossJPerKg: 0
-  predictedLossFreeSectionDuration: 0
-  predictedDifferentialEnergyTimeLossSeconds: 0
-  predictedDifferentialEnergyTimeLossRatio: 0
-  meanSpecificEnergyLossGradientJPerKgPerMeter: 0
-  peakSpecificEnergyLossPowerWattsPerKg: 0
-  maximumEnergyBalanceResidualJPerKg: 0
-  splineContainer: {fileID: 0}
-  retainedFutureSplineCount: 0
-  generateDirectionCYOnlySpline: 1
-  directionCYOnlyInitialCY: 0
-  directionCYOnlyOutputKnotCount: 5
-  directionCYOnlySplineContainer: {fileID: 0}
-  directionCYOnlyConsumedRawBasisVersion: -1
-  directionCYOnlyGeneratedSectionKey: -9223372036854775808
-  directionCYOnlyGeneratedKnotCount: 0
-  directionCYOnlyAppliedCY: 0
-  directionCYOnlyStartPointPhysics: {x: 0, y: 0, z: 0}
-  directionCYOnlyEndPointPhysics: {x: 0, y: 0, z: 0}
-  directionCYOnlyIntegratedArcLength: 0
-  retainedDirectionCYOnlySplineCount: 0
-  directionReady: 0
-  directionVersion: 0
-  rawDirectionBasisVersion: 0
-  generatedSplineIndex: -1
-  generatedSectionIndex: -1
+  generatedPhysicsRoot: {fileID: 0}
+  generatedVisualPlayer: {fileID: 0}
+  lookAheadDistance: 8
+  timingConfirmationSeparationMeters: 0.08
+  timingEntryDistanceToleranceMeters: 0.2
+  timingMinimumApproachMeters: 0.02
+  minimumDirectionAlignment: 0.8
+  minimumPredictionSpeed: 1
+  totalKnotTarget: 65
+  retainGroupCount: 2
+  includeInitialCY: 1
+  startMarkerScale: 0.12
+  observedMinimumSampleDistance: 0.01
+  observedTipCubeScale: 0.14
+  maximumEntrySimulationSteps: 96
+  carrierSettleDistance: 1.5
+  maxPredictedPlanarAcceleration: 35
+  enableLog: 1
+  currentCandidate: 
+  lastGeneratedGroup: 
+  predictionRevision: 0
+  generatedSplineCount: 0
   generatedKnotCount: 0
-  activeSectionLength: 0
-  predictedTimeToSlopeEntry: 0
-  predictedEntryTangentSpeed: 0
-  predictedSectionDuration: 0
-  capturedInSubjectClearance: 0
-  builtWithReferenceTeacher: 0
-  directionTeacherState: 0
-  teacherApplicabilityScore: 0
-  teacherApplicabilityAuthorityScale: 0
-  teacherValidSampleRatio: 0
-  teacherMeanDirectionMetric: 0
-  teacherMeanForwardDot: 0
-  teacherSeedAvailableSamples: 0
-  teacherProjectedSamples: 0
-  referenceMatchedSamples: 0
-  referenceAverageAngleDegrees: 0
-  referenceMaximumAngleDegrees: 0
-  referenceMaximumDistanceMeters: 0
-  rawTeacherSamples: 0
-  teacherMonotoneAdjustedSamples: 0
-  rawTeacherAverageAngleDegrees: 0
-  rawTeacherMaximumAngleDegrees: 0
-  finalTeacherAngleSamples: 0
-  finalTeacherAverageAngleDegrees: 0
-  finalTeacherMaximumAngleDegrees: 0
-  finalTeacherMaximumSampleIndex: -1
-  finalTeacherMaximumSampleU: 0
-  finalTeacherMaximumRawTeacherU: 0
-  finalTeacherMaximumMappedTeacherU: 0
-  finalTeacherMaximumTeacherDistanceMeters: 0
-  finalTeacherMaximumMappedDistanceMeters: 0
-  finalTeacherMaximumDeltaS: 0
-  finalTeacherMaximumDeltaN: 0
-  finalTeacherMaximumDeltaB: 0
-  finalTeacherMaximumDirectionMetric: 0
-  finalTeacherMaximumDistanceConfidence: 0
-  finalTeacherMaximumForwardConfidence: 0
-  finalTeacherMaximumGain: 0
-  finalTeacherMaximumRawAngleDegrees: 0
-  generatedStairWayParentName: 
-  enableAnalyticLimitWarning: 1
-  limitRequiredConsecutiveMatches: 3
-  limitAverageAngleDegrees: 2
-  limitMaximumAngleDegrees: 5
-  limitMaximumDistanceMeters: 0.25
-  limitConsecutiveMatches: 0
-  limitCandidate: 0
---- !u!114 &50892153
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 50892149}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: cedee718140d91542881b6da82c9fede, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  physicsSplineRoot: {fileID: 0}
-  retainCompletedStairSplines: 1
-  freezeOnSlopeEntry: 0
-  continuousRealtimePrediction: 1
-  rebuildWhileOnSlope: 1
-  useLiveEqualizerBoundaryOnSlope: 1
-  minimumLiveTangentialSpeed: 0.5
-  maximumPredictedTangentialAcceleration: 80
-  tangentialAccelerationFilter01: 0.25
-  maximumPredictionTimeSeconds: 3
-  enableSparseRecedingPrediction: 1
-  predictionLookaheadTimeSeconds: 0.18
-  minimumPredictionLookaheadMeters: 1.2
-  maximumPredictionLookaheadMeters: 4
-  minimumPredictionRefreshSeconds: 0.06
-  maximumPredictionRefreshSeconds: 0.15
-  minimumTravelBeforePredictionRefreshMeters: 0.15
-  minimumNormalChangeBeforePredictionRefreshMeters: 0.08
-  minimumNormalVelocityChangeBeforePredictionRefresh: 0.75
-  predictionErrorHorizonsSeconds:
-  - 0.05
-  - 0.1
-  - 0.2
-  - 0.4
-  predictionProbeIssueIntervalSeconds: 0.05
-  slopeCore: {fileID: 0}
-  knotDetector: {fileID: 0}
-  correspondSubject: {fileID: 0}
-  ballVisualDrive: {fileID: 0}
-  equalizerSync: {fileID: 0}
-  collectFutureSamples: 1
-  samplePlanePreRollSeconds: 0.35
-  minimumSampleIntervalSeconds: 0
-  maximumSampleSingleStepPositionJumpMeters: 4
-  sampleStuckSpeedThresholdMetersPerSecond: 0.05
-  sampleStuckPositionDeltaThresholdMeters: 0.002
-  sampleStuckDurationSeconds: 0.6
-  incidentFutureLeadSeconds: 0.18
-  minimumPFToPTProgress01: 0.08
-  useIncidentFutureBoundary: 1
-  baseCenterClearanceRadiusMultiplier: 4
-  neutralClearanceRequiredStableFrames: 5
-  neutralClearanceMaximumNormalSpeed: 0.5
-  neutralClearanceMaximumWindowSpreadR: 0.2
-  neutralClearanceLearningRate: 0.1
-  neutralClearanceMaximumInnovationR: 1
-  boundaryResidualLengthMeters: 1.5
-  minimumBoundaryResidualLengthMeters: 0.35
-  largeResidualLocalizationThresholdMeters: 0.75
-  useGuideTransportForPMPL: 1
-  guideTransportBlend01: 1
-  preserveDriveLateralIntent: 1
-  inSubjectWeight: 0.5
-  ballVisualWeight: 0.3
-  equalizerWeight: 0.2
-  planeNormalBridgeAuthority: 0.3
-  maximumInitialBridgeOffset: 2
-  spatialWavesPerStair: 4
-  fallbackAnalyticWaveAmplitudeMeters: 0.45
-  spatialDecayPerMeter: 0.22
-  spatialTemplateBinCount: 64
-  minimumTemplateRunsPerBin: 2
-  spatialTemplateBlend01: 1
-  sparseTemplateBaseSamplesPerRun: 8
-  maximumRoughnessEventSamplesPerRun: 6
-  roughnessEventThreshold: 0.22
-  minimumRoughnessEventProgressSeparation01: 0.035
-  maximumTemplateNormalResidualPerRunMeters: 0.25
-  maximumTemplateLearningRate: 0.08
-  templateResidualBaseSoftLimitMeters: 0.65
-  templateRoughnessAllowanceMeters: 0.45
-  maximumRoughnessProtectedKnots: 6
-  roughnessProtectedKnotThreshold: 0.2
-  upperContactSearchSpacingR: 0.25
-  upperContactMinimumSearchSamples: 16
-  upperContactMaximumSearchSamples: 48
-  upperContactRootBisectionIterations: 12
-  upperContactGrazingGapR: 0.15
-  upperContactToiValidationGapR: 0.25
-  upperContactProtectedHalfWidthMeters: 0.12
-  upperContactStartOverlapGapR: 0.05
-  upperContactStartNeighborhoodU: 0.01
-  upperContactMinimumImpactSpeed: 0.1
-  upperContactMinimumImpactEnergyJ: 0.01
-  upperContactRuntimeArmGraceSeconds: 0.06
-  residualTangentialAccelerationDecayMeters: 3
-  mechanicalIntegrationSubsteps: 16
-  mechanicalNormalPredictionMode: 1
-  mechanicalNormalRequiredStableFrames: 4
-  mechanicalNormalRearmDelaySeconds: 0.08
-  mechanicalNormalMaximumStepMeters: 4
-  mechanicalNormalMaximumAbsoluteSpeed: 120
-  mechanicalNormalMaximumAbsoluteNormalSpeed: 80
-  maximumPredictedNormalAcceleration: 250
-  normalAccelerationFilter01: 0.25
-  mechanicalNormalResidualAccelerationDecaySeconds: 0.12
-  mechanicalNormalFullAuthoritySeconds: 0.1
-  mechanicalNormalFadeEndSeconds: 0.28
-  mechanicalNormalMaximumOffsetR: 8
-  mechanicalNormalMaximumCarrierAcceleration: 200
-  enableMechanicalNormalShadowLogs: 1
-  mechanicalNormalShadowLogHorizonSeconds: 0.1
-  mechanicalNormalShadowLogIntervalSeconds: 0.5
-  enableMechanicalNormalOscillator: 1
-  mechanicalNormalSpringStrength: 420
-  mechanicalNormalDamper: 18
-  mechanicalNormalGravityCompensation: 1
-  mechanicalNormalReferenceAccelerationFeedForward: 1
-  mechanicalNormalControllerAccelerationLimit: 450
-  mechanicalNormalControllerJerkLimit: 2500
-  mechanicalNormalFutureEntryDelaySeconds: 0.08
-  mechanicalNormalFutureEntryBlendSeconds: 0.12
-  mechanicalNormalResidualAccelerationAuthority01: 0.1
-  mechanicalNormalEnableUpperReflectionInShadow: 1
-  mechanicalNormalShadowUpperRestitutionScale: 1
-  mechanicalNormalTurningSpeedEpsilon: 0.05
-  predictionArcLengthSamples: 96
-  baselineOnlyDiagnostic: 0
-  enableSpatialWave: 1
-  phaseDivisionsPerWave: 4
-  bezierTangentScale: 1
-  createSplineExtrude: 1
-  splineMaterial: {fileID: 0}
-  splineRadius: 0.025
-  splineSides: 6
-  splineSegmentsPerUnit: 4
-  virtualUpperRuntimeMode: 0
-  virtualUpperEnabled: 1
-  autoArmVirtualUpperOnSlopeEntry: 1
-  legacyUpperColliderSafety: {fileID: 0}
-  historicalUpperRestitution01: 0.92
-  historicalDecayGammaPerSecond: 13.45
-  historicalWaveTimeDecayInfluence: 0.35
-  historicalPresentationCeilingR:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 4
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 3.8
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 2
-      value: 3.3
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 3
-      value: 2.5
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 4
-      value: 2.059
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 5
-      value: 1.241
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 6
-      value: 0.8
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 9
-      value: 0.8
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  historicalEnvelopeReferenceWaveCount: 8
-  historicalPreferredUpperPeriodSeconds: 0.1
-  virtualUpperContactModel: 2
-  virtualUpperActivationShellR: 0.015
-  virtualUpperVelocityLeadSteps: 0.5
-  virtualUpperReleaseGapR: 0.04
-  virtualUpperContactFrequencyHz: 14
-  deriveVirtualUpperDampingFromRestitution: 1
-  explicitVirtualUpperDampingRatio: 0.08
-  hybridImplicitShare: 0.7
-  huntCrossleyExponent: 1.5
-  huntReferenceCompressionR: 0.08
-  impedanceStartR: 0.002
-  impedanceFullR: 0.08
-  maximumVirtualUpperAcceleration: 900
-  maximumVirtualUpperJerk: 30000
-  adaptiveSubstepChiMax: 0.18
-  maxInternalSubsteps: 8
-  enforceRestitutionEnergyCap: 1
-  maximumUpperGeometryTrackingSpeed: 80
-  measuredUpperGeometryVelocityBlend01: 0.7
-  enableVirtualUpperImpactLogs: 1
-  drawVirtualUpperGizmos: 1
-  virtualUpperGizmoRadius: 0.04
-  enableMinimalDebugLog: 1
-  logBuildFailureReason: 0
-  terminalValidationToleranceMeters: 0.02
-  activeSourceSplineIndex: -1
-  activeSourceSectionIndex: -1
-  pfSlopeProgress01: 0
-  ptSlopeProgress01: 0
-  predictedForwardSpeed: 0
-  estimatedTimeToPT: 0
-  estimatedTimeToSlopeExit: 0
-  estimatedTimeToPL: 0
-  initialNormalBridge: 0
-  initialSideBridge: 0
-  initialWaveAmplitude: 0
-  subjectMappingResidualMeters: 0
-  referenceCenterClearanceMeters: 0
-  incidentBoundaryNormalSpeed: 0
-  incidentBoundarySideSpeed: 0
-  maxBuiltBridgeNormalMeters: 0
-  maxBuiltWaveMeters: 0
-  maxBuiltTotalNormalOffsetMeters: 0
-  futureSamplePhase: 0
-  lastFutureSampleCompletionKind: 0
-  currentFutureSampleValid: 0
-  lastFutureSampleInvalidReason: 
-  acceptedFutureSampleCount: 0
-  rejectedFutureSampleCount: 0
-  currentRawFutureSamplePointCount: 0
-  latestFlattenedFutureSamplePointCount: 0
-  currentFutureSampleStuckSeconds: 0
-  latestValidFlattenedSample: []
-  spatialTemplateBins:
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  - runs: 0
-    meanDeltaN: 0
-    meanDnDs: 0
-    meanRoughness: 0
-    m2DeltaN: 0
-  spatialTemplateAcceptedRuns: 0
-  spatialTemplateFilledBins: 0
-  spatialTemplateReady: 0
-  lastSpatialTemplateAuthority01: 0
-  lastPredictionArcLengthMeters: 0
-  currentPredictionLookaheadMeters: 0
-  lastPredictionRefreshAgeSeconds: 0
-  predictionRefreshCount: 0
-  lastSparseTemplateContributionCount: 0
-  lastRoughnessProtectedKnotCount: 0
-  lastUpperContactProtectedKnotCount: 0
-  lastUpperContactCandidateU: -1
-  lastUpperContactCandidateGapMeters: Infinity
-  lastUpperContactCandidateClosingSpeed: 0
-  lastUpperContactCandidateEnergyJ: 0
-  lastUpperContactCandidateSource: 
-  lastUpperContactSearchSampleCount: 0
-  lastUpperContactCandidateRejectReason: 
-  virtualUpperArmed: 0
-  virtualUpperContactActive: 0
-  virtualUpperImpactCount: 0
-  currentVirtualUpperU: 0
-  currentVirtualUpperGapMeters: 0
-  currentVirtualUpperPenetrationMeters: 0
-  currentVirtualUpperRelativeNormalSpeed: 0
-  currentVirtualUpperForceNewton: 0
-  currentVirtualUpperImpedance01: 0
-  currentVirtualUpperSpanR: 0
-  currentVirtualUpperSpanMeters: 0
-  observedVirtualUpperPeriodSeconds: 0
-  lastVirtualUpperIncomingSpeed: 0
-  lastVirtualUpperOutgoingSpeed: 0
-  lastVirtualUpperEnergyRetention: 0
-  rejectedVirtualUpperImpactCount: 0
-  lastVirtualUpperRejectedImpactReason: 
-  currentVirtualUpperDiagnostic:
-    valid: 0
-    u: 0
-    carrierCenterVisual: {x: 0, y: 0, z: 0}
-    upperCenterVisual: {x: 0, y: 0, z: 0}
-    tangentVisual: {x: 0, y: 0, z: 0}
-    normalVisual: {x: 0, y: 0, z: 0}
-    sideVisual: {x: 0, y: 0, z: 0}
-    ceilingR: 0
-    retention01: 0
-    spanR: 0
-    spanMeters: 0
-    signedGapMeters: 0
-    penetrationMeters: 0
-    relativeNormalSpeed: 0
-    impedance01: 0
-    predictedImpulseNs: 0
-  lastBuiltKnots: []
-  liveEqualizerTangentialSpeed: 0
-  liveEqualizerNormalSpeed: 0
-  liveEqualizerSideSpeed: 0
-  liveEqualizerTangentialAcceleration: 0
-  liveEqualizerResidualTangentialAcceleration: 0
-  liveEqualizerNormalAcceleration: 0
-  liveEqualizerResidualNormalAcceleration: 0
-  liveEqualizerNormalOffsetMeters: 0
-  liveEqualizerSideOffsetMeters: 0
-  mechanicalNormalStateValid: 0
-  mechanicalNormalStableFrames: 0
-  mechanicalNormalLastStepMeters: 0
-  mechanicalNormalInvalidReason: 
-  lastMechanicalPlanValid: 0
-  lastMechanicalInitialRelativeNormalSpeed: 0
-  lastMechanicalResidualNormalAcceleration: 0
-  predictionErrors: []
-  mechanicalNormalPredictionErrors: []
+  predictedMultiplier: 0
+  predictedWaveCount: 0
+  predictedSectionLength: 0
+  predictedEntryTime: 0
+  predictedEntrySlopeDegrees: 0
+  predictedEntryRoughness: 0
+  predictedEntryNormalSpeed: 0
+  predictedA1: 0
+  predictedA2: 0
+  predictedA3: 0
+  candidateForwardDistance: 0
+  candidateLateralDistance: 0
+  candidateVerticalError: 0
+  candidateAlignment: 0
+  tangentNormalDot: 0
+  mappedFirstPoint: {x: 0, y: 0, z: 0}
+  mappedFirstBallPoint: {x: 0, y: 0, z: 0}
+  ballLateralAxis: {x: 0, y: 0, z: 0}
+  ballLateralShift: {x: 0, y: 0, z: 0}
+  observedKnotCount: 0
+  observedPathLength: 0
+  observedLatestPoint: {x: 0, y: 0, z: 0}
+  observedCurrentStairGroup: 
+  timingCandidateActive: 0
+  timingConfirmed: 0
+  timingSpatialSeparation: 0
+  timingEntryDistanceError: 0
 --- !u!1 &64372314
 GameObject:
   m_ObjectHideFlags: 0
@@ -1192,7 +348,6 @@ GameObject:
   - component: {fileID: 64372318}
   - component: {fileID: 64372317}
   - component: {fileID: 64372320}
-  - component: {fileID: 64372321}
   - component: {fileID: 64372322}
   - component: {fileID: 64372324}
   - component: {fileID: 64372323}
@@ -1257,6 +412,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -1317,269 +474,6 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 0
---- !u!114 &64372321
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 64372314}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: db73936e6b954431da04a6f079d87951, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  ballVisual: {fileID: 0}
-  slopeCore: {fileID: 0}
-  correspondSubject: {fileID: 0}
-  subjectTransform: {fileID: 0}
-  subjectBody: {fileID: 0}
-  ballVisualEqualizer: {fileID: 0}
-  ballVisualEqualizerCollider: {fileID: 0}
-  negativeEnvelope: {fileID: 0}
-  waveTimingMode: 1
-  spatialWavesPerStair: 3
-  spatialCarrierHeightFractionOfEnvelope: 0.05
-  usePreferredHalfPeriodGuidance: 1
-  preferredHalfPeriodSeconds: 0.08
-  preferredHalfPeriodFeedForwardBlend01: 0.35
-  spatialWaveAccelerationBudget: 450
-  spatialWaveJerkBudget: 2500
-  spatialWaveFeedForward: 1
-  useSpatialCurvatureAdaptation: 1
-  spatialReferenceTangentSpeed: 16
-  spatialCurvatureSafety01: 0.85
-  spatialCurvatureLookAheadSeconds: 0.06
-  spatialCurvatureMaxGroundSpeedBlend01: 0.35
-  includeSpatialProgressAccelerationFeedForward: 1
-  maximumSpatialDomainAccelerationRate: 80
-  spatialCatchUpSpeedHeadroom01: 0.75
-  spatialMaximumCatchUpAcceleration: 180
-  spatialGoalVelocityAcceleration: 160
-  naturalConnectAverageFrames: 5
-  naturalConnectAverageSeconds: 0.08
-  naturalConnectMaximumWaitSeconds: 0.18
-  naturalConnectBlendSeconds: 0.12
-  naturalConnectMinimumEnvelopeNormalSpeed: 0.05
-  useContinuousNormalSupportHandoff: 1
-  continuousNormalSupportMaximumAcceleration: 120
-  rideSpringStrength: 180
-  rideSpringDamper: 18
-  useHybridPassiveNormalDamping: 1
-  rigidbodyPassiveDampingShare01: 0.5
-  gravityCompensation: 1
-  maximumRideAcceleration: 450
-  maximumRideJerk: 3000
-  rideEquilibrium01: 0.5
-  enableLogicalPhysicalHandoff: 1
-  authorityHandoffMaxJerk: 900
-  physicalLowerMeasurementOutgoingSpeed: 0.05
-  physicalLowerMinimumDescendingSpeed: 0.25
-  supportKinematicsMaximumCenterJumpR: 2.5
-  supportKinematicsMaximumMeasuredSpeed: 80
-  supportKinematicsMaximumMeasuredAcceleration: 600
-  goalVelocityAcceleration: 80
-  catchUpPositionTime: 0.25
-  maximumCatchUpAcceleration: 90
-  maximumTransportJerk: 1400
-  catchUpSpeedHeadroom01: 0.35
-  lateralSpringStrength: 12
-  lateralDamper: 5
-  logMeasurements: 0
-  minimumObservedCycleSeconds: 0
-  upperPeakRearmHeight01: 0.35
-  enableUpperReflectionGovernor: 0
-  upperReflectionRestitutionCap01: 0.85
-  upperReflectionGovernorMinimumIncomingSpeed: 1
-  upperReflectionResolveMaxFixedSteps: 3
-  usePostUpperDirectionalMemory: 1
-  postUpperDirectionalReferenceSpeedFraction: 0.72
-  postUpperDirectionalResponseTime: 0.08
-  postUpperDirectionalMaximumAcceleration: 90
-  postUpperDirectionalHalfLifeSeconds: 0.2
-  postUpperLateralAlignmentShare01: 0.35
-  postUpperLateralResponseTime: 0.12
-  postUpperSmoothAssistStartBudgetRatio: 0.3
-  postUpperSmoothAssistFullBudgetRatio: 0.72
-  postUpperSmoothAssistSpeedRatioInfluence: 0.35
-  useMicroModalOscillation: 1
-  microModalAccelerationShare01: 0.08
-  microModalEntryKick: 0.22
-  microModalUpperKick: 0.55
-  microModalLowerKick: 0.42
-  microModalImpactReferenceSpeed: 6
-  microModalVelocityResidualDriveGain: 0.18
-  microModalVelocityResidualReferenceSpeed: 2
-  microModalDampingRatio: 0.14
-  microModalDuffingBeta: 0.07
-  microModalFrequencyRatio1: 2.6
-  microModalFrequencyRatio2: 4.1
-  microModalFrequencyRatio3: 5.7
-  microModalMaximumFrequencyHz: 10
-  microModalGrazingBoost01: 0.12
-  microModalGrazingDistance01: 0.14
-  microModalGrazingVelocityScale: 0.8
-  applyPhysicalLowerImpactEnergyLoss: 1
-  minimumPhysicalLowerEnergyRetention01: 0.05
-  physicalLowerEnergyResolveMaxFixedSteps: 6
-  enableTerminalSpatialTransportAssist: 1
-  terminalSpatialTransportAssistStartProgress01: 0.8
-  terminalSpatialTransportAssistMultiplier: 1.5
-  equalizerControlMode: 0
-  gen3BaseSpanR: 4
-  gen3SpanRetention01: 0.82
-  gen3MinimumSpanR: 1.25
-  gen3IlcGain: 0.18
-  gen3IlcClampR: 0.75
-  gen3IlcDeadBandR: 0.04
-  gen3LowerActivationR: 0.06
-  gen3LowerLeadSteps: 1
-  gen3LowerFrequencyHz: 6.5
-  gen3LowerDampingRatio: 0.9
-  gen3ImplicitShare01: 0.72
-  gen3HuntExponent: 1.5
-  gen3HuntDissipation: 0.08
-  gen3HuntReferenceCompressionR: 0.25
-  gen3ImpedanceStartR: 0.01
-  gen3ImpedanceFullR: 0.25
-  gen3MaximumLowerAcceleration: 320
-  gen3MaximumNormalJerk: 6000
-  gen3AdaptiveSubstepChiMax: 0.25
-  gen3MaximumInternalSubsteps: 8
-  gen3ReferenceGovernorSafety01: 0.92
-  gen3UseEnergyTank: 1
-  gen3EnergyTankCapacityMultiplier: 1.25
-  gen3MinimumEnergyTankCapacityJoule: 0.25
-  gen3InitialEnergyTankFill01: 0.15
-  gen3EnergyRecoveryEfficiency01: 0.9
-  resumeSynchronizationSnapDistance: 0.05
-  emergencyReacquireMinimumDuration: 0.18
-  emergencyReacquireMaximumDuration: 0.75
-  emergencyReacquirePreferredRelativeSpeed: 24
-  synchronized: 1
-  phase: 0
-  emergencyVisualRecoveryActive: 0
-  postTurnHermiteBridgeActive: 0
-  emergencyVisualRecoveryDuration: 0
-  emergencyVisualRecoveryProgress01: 0
-  emergencyVisualRecoveryInitialDistance: 0
-  waveCycleIndex: 0
-  observedNaturalPeriodSeconds: 0
-  rideTargetHeight: 0
-  rideActualHeight: 0
-  ridePositionError: 0
-  rideRelativeNormalVelocity: 0
-  rideSupportNormalVelocity: 0
-  rideSupportNormalAcceleration: 0
-  springAcceleration: 0
-  damperAcceleration: 0
-  gravityCompensationAcceleration: 0
-  requiredCatchUpSpeed: 0
-  spatialRawDomainProgress01: 0
-  spatialDomainProgress01: 0
-  spatialDomainAdvanceRate01PerSecond: 0
-  spatialDomainAccelerationRate01PerSecond2: 0
-  spatialSpeedRatio: 1
-  spatialAccelerationBudgetScale: 1
-  spatialJerkBudgetScale: 1
-  spatialCurvatureMeasuredForwardSpeed: 0
-  spatialCurvatureDesignSpeed: 0
-  spatialCurvatureLookAheadDistance: 0
-  spatialCurvatureWaveNumberPerMeter: 0
-  spatialCurvatureKappaMaxPerMeter: 0
-  spatialCurvatureRequestedHeightMeters: 0
-  spatialCurvatureAllowedHeightMeters: 0
-  spatialCurvatureClampRatio01: 1
-  spatialCurvatureLimited: 0
-  spatialFeedForwardVelocity: 0
-  spatialFeedForwardAcceleration: 0
-  terminalSpatialTransportAssist01: 0
-  spatialMonotonicHoldActive: 0
-  spatialWavePhase01: 0
-  spatialReferencePeriodSeconds: 0
-  spatialCarrierHeightMeters: 0
-  spatialCarrierFeasibility01: 1
-  spatialPathHalfPeriodSeconds: 0
-  spatialGuidedHalfPeriodSeconds: 0
-  spatialPathAngularSpeed: 0
-  spatialGuidedAngularSpeed: 0
-  spatialHalfPeriodFeedForwardBlendApplied01: 0
-  spatialCarrierHeightBeforeFeasibility: 0
-  spatialSubjectTimeToGo: 0
-  spatialRequiredArrivalSpeed: 0
-  spatialArrivalFeasibility01: 1
-  upperPeakArmed: 1
-  normalAuthorityZone: 0
-  normalLogicalAuthority01: 1
-  normalTargetAccelerationBeforeAuthority: 0
-  normalTargetAccelerationAfterAuthority: 0
-  normalActiveJerkLimit: 0
-  physicalUpperSeenSinceLastLower: 0
-  physicalLowerContactActive: 0
-  rideSupportFrameContinuous: 1
-  lastPhysicalLowerIncomingNormalSpeed: 0
-  lastPhysicalLowerOutgoingNormalSpeed: 0
-  lastPhysicalLowerEnergyRetention01: 1
-  sourceCanonicalNormalSpeed: 0
-  logicalLaunchNormalSpeed: 0
-  logicalLaunchEnergyJoule: 0
-  logicalLaunchAppliedMultiplier: 1
-  logicalLaunchReferenceTangentSpeed: 0
-  naturalConnectSamplingActive: 0
-  naturalConnectBlendActive: 0
-  naturalConnectSampleCount: 0
-  naturalConnectSamplingElapsed: 0
-  naturalConnectBlendElapsed: 0
-  naturalConnectControlAuthority01: 1
-  naturalConnectAveragedVelocity: {x: 0, y: 0, z: 0}
-  naturalConnectAveragedSubjectVelocity: {x: 0, y: 0, z: 0}
-  naturalConnectAveragedNormal: {x: 0, y: 1, z: 0}
-  naturalConnectAveragedTangent: {x: 0, y: 0, z: 1}
-  naturalConnectMeasuredRelativeNormalSpeed: 0
-  naturalConnectMeasuredEnergyJoule: 0
-  continuousNormalSupportCaptured: 0
-  continuousNormalSupportActive: 0
-  continuousNormalSupportCapturedAcceleration: 0
-  continuousNormalSupportWeight01: 0
-  continuousNormalSupportAppliedAcceleration: 0
-  continuousNormalSupportEndReason: None
-  effectiveRideSpringDamper: 0
-  activeTargetNormalDriveAcceleration: 0
-  totalPassiveNormalDampingAcceleration: 0
-  controllerPassiveDampingAcceleration: 0
-  rigidbodyPassiveDampingAcceleration: 0
-  rigidbodyPassiveDampingAppliedAcceleration: 0
-  rigidbodyPassiveDampingShareApplied01: 0
-  lastUpperIncomingNormalSpeed: 0
-  upperReflectionCount: 0
-  lastUpperReflectionFixedTime: -1
-  lastUpperOutgoingNormalSpeed: 0
-  lastImpactEnergyRetention01: 1
-  postUpperDirectionalMemoryActive: 0
-  postUpperCapturedTangent: {x: 0, y: 0, z: 1}
-  postUpperCapturedNormal: {x: 0, y: 1, z: 0}
-  postUpperCapturedLateral: {x: 1, y: 0, z: 0}
-  postUpperDirectionalTargetSpeed: 0
-  postUpperDirectionalWeight01: 0
-  postUpperDirectionalAppliedAcceleration: 0
-  postUpperLateralAppliedAcceleration: 0
-  postUpperHybridAccelerationDemand: 0
-  postUpperHybridAccelerationBudget: 0
-  postUpperHybridAccelerationRatio: 0
-  postUpperHybridSmoothAssist01: 0
-  gen3EventPhase: 0
-  gen3CurrentCycleTargetSpanR: 4
-  gen3ObservedUpperSpanR: 0
-  gen3IlcCorrectionR: 0
-  gen3Impedance01: 0
-  gen3AdaptiveSubsteps: 1
-  gen3GovernedNormalSpeed: 0
-  gen3NormalAccelerationState: 0
-  gen3VirtualLowerForceNewton: 0
-  gen3VirtualLowerPenetrationMeters: 0
-  gen3EnergyTankJoule: 0
-  gen3EnergyTankCapacityJoule: 0
-  gen3PassivityScale01: 1
 --- !u!114 &64372322
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1597,7 +491,6 @@ MonoBehaviour:
   autoCreateDisplayForRigidbody: 1
   hideOriginalRendererWhileTesting: 1
   actualDisplayTarget: {fileID: 0}
-  outputMode: Uninitialized
   coordinateSource: {fileID: 572935013}
   physicsFrame: {fileID: 0}
   visualFrame: {fileID: 0}
@@ -1616,16 +509,13 @@ MonoBehaviour:
   roughFollowHz: 12
   roughnessReference: 0.4
   autoBeginOnDownhill: 1
-  autoEndAtLanding: 1
+  autoEndAtSection: 1
   sectionLength: 9.9
-  slopeSectionSource: {fileID: 0}
-  repeatLengthMultiplierThreshold: 1.35
-  repeatPairDamping: 0.92
-  minimumRepeatAmplitudeRatio: 0.18
-  landingConfirmSeconds: 0.04
   entrySlopeDegrees: 12
   minimumEntryPlanarSpeed: 2
   teleportThreshold: 2.5
+  initialStartPatternMultiplier: 1
+  targetSlopeProgressPerecent: 0.42857143
   initialCY: 0
   initialHeight: 0.4
   fallbackInitialNormalSpeed: 3.1367
@@ -1636,10 +526,11 @@ MonoBehaviour:
   laterApexFraction: 0.5
   dampingPerMeter: 0.035
   exitDamping: 9
-  maximumFirstWaveHeight: 0.58
-  maximumVisibleLiftNormal: 0.45
-  maximumVisibleDropNormal: 0.24
-  maximumCenterHeightAboveGround: 1.03
+  referencePlanarSpeed: 18
+  motionHeightInfluence: 0.06
+  patternVariation: 0.08
+  terminalBounceRatio: 0.22
+  terminalBounceDuration: 0.32
   firstRoughness: 0.06
   secondRoughness: 0.16
   thirdRoughness: 0.09
@@ -1654,28 +545,38 @@ MonoBehaviour:
   maximumJerk: 1400
   entryBlendSeconds: 0.12
   softenVisualWave: 1
-  impactSmoothSeconds: 0.02
-  flightSmoothSeconds: 0.055
-  contactBlendFraction: 0.2
-  resetDisplayOnSharpTurn: 1
-  displayTurnResetDegrees: 65
+  impactSmoothSeconds: 0.015
+  flightSmoothSeconds: 0.035
+  contactBlendFraction: 0.16
+  adaptiveVisualFilter: 1
+  adaptiveSpeedGain: 1.4
+  adaptiveDerivativeHz: 8
+  adaptiveMinimumSmoothSeconds: 0.008
+  resetFilterOnSharpNormalChange: 1
+  filterNormalResetDegrees: 65
+  enableDebugLog: 1
+  debugPeriodicState: 1
+  debugWaveTransitions: 1
+  debugProbeTransitions: 1
+  debugLogInterval: 0.25
   active: 0
   exiting: 0
   probeValid: 0
   firstWavePeakReady: 0
   waveIndex: -1
-  waveCycleIndex: -1
-  plannedWaveCount: 3
+  waveType: -1
+  activeWaveCount: 3
+  repeat23ChunkCount: 0
+  recursiveChunkIndex: -1
   firstWavePeakRevision: 0
   traveled: 0
   progress01: 0
-  phase: 0
   currentAmplitude: 0
-  landingPlanValid: 0
-  plannedLandingDistance: 9.9
-  runtimeWaveLength: 3.3
-  sourceSectionLength: 0
-  sourceSectionStartProgress01: 0
+  efLocal01: 0
+  fgLocal01: 0
+  signedFLimit: 0
+  fSide: 0
+  fDistance01: 0
   slope0: 0
   slope1: 0
   slope2: 0
@@ -1690,12 +591,9 @@ MonoBehaviour:
   presentedOffset: 0
   presentedSpeed: 0
   presentationSmoothSeconds: 0
-  entryRawNormalSpeed: 0
-  entryActualRiseSpeed: 0
-  entryUnclampedHeight: 0
-  visibleUpperLimit: 0
-  guardedTargetOffset: 0
-  heightGuardActive: 0
+  adaptiveVisualSpeed: 0
+  adaptiveCutoffHz: 0
+  currentWaveLocal01: 0
   visualFilterResetCount: 0
   upperNormal: 0
   lowerNormal: 0
@@ -1704,31 +602,23 @@ MonoBehaviour:
   tangent: {x: 0, y: 0, z: 1}
   normal: {x: 0, y: 1, z: 0}
   binormal: {x: 1, y: 0, z: 0}
-  mappedCarrierWorld: {x: 0, y: 0, z: 0}
-  subjectWorld: {x: 0, y: 0, z: 0}
-  predictedVisualWorld: {x: 0, y: 0, z: 0}
-  mappedSubjectGap: 0
-  outputGapBeforeWrite: 0
-  roundTripError: 0
-  mappingMode: Uninitialized
   outputWritable: 0
-  probeWasValid: 0
   sampledHeights:
   - 0
   - 0
   - 0
   - 0
-  sampledSurfaces:
-  - 
-  - 
-  - 
-  - 
-  logEvents: 1
-  logCoordinates: 1
-  logWaveSamples: 1
-  logProbeTransitions: 1
-  logIntervalSeconds: 0.25
-  coordinateWarningMeters: 0.1
+  effectiveSectionLength: 0
+  effectiveFBoundary: 0
+  recursiveA1: 0
+  recursiveA2: 0
+  recursiveA3: 0
+  motionPattern: 0
+  motionCharacter01: 0
+  entryPlanarSpeed: 0
+  entryAlignment01: 0
+  terminalAmplitude: 0
+  terminalOffset: 0
 --- !u!114 &64372323
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1764,10 +654,12 @@ TrailRenderer:
   m_ReflectionProbeUsage: 0
   m_RayTracingMode: 0
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 4828111422837996123, guid: cddbd6eb7c6cc9e4e9ba614ecd8d6a70, type: 3}
+  - {fileID: 2100000, guid: 1a941b9c7cc1eab45ac54eb85d9b5318, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -2488,15 +1380,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -2690,12 +1584,12 @@ MonoBehaviour:
   m_RequiresColorTexture: 0
   m_Version: 2
   m_TaaSettings:
-    m_Quality: 3
-    m_FrameInfluence: 0.1
-    m_JitterScale: 1
-    m_MipBias: 0
-    m_VarianceClampScale: 0.9
-    m_ContrastAdaptiveSharpening: 0
+    quality: 3
+    frameInfluence: 0.1
+    jitterScale: 1
+    mipBias: 0
+    varianceClampScale: 0.9
+    contrastAdaptiveSharpening: 0
 --- !u!114 &330585548
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2809,6 +1703,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -3095,6 +1991,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -3318,6 +2216,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -3670,6 +2570,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -3860,15 +2762,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -4032,15 +2936,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -4183,7 +3089,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -7511558181221131132, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
-      propertyPath: m_Materials.Array.data[0]
+      propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: b0ca5be8dd38e9840bf2523b6729b1df, type: 2}
     - target: {fileID: 919132149155446097, guid: 784f0ca18fbb84046b59c3d361f3b044,
@@ -4759,15 +3665,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -4928,6 +3836,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -5077,15 +3987,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -5211,15 +4123,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -5335,6 +4249,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -5745,12 +4661,12 @@ MonoBehaviour:
   m_RequiresColorTexture: 0
   m_Version: 2
   m_TaaSettings:
-    m_Quality: 3
-    m_FrameInfluence: 0.1
-    m_JitterScale: 1
-    m_MipBias: 0
-    m_VarianceClampScale: 0.9
-    m_ContrastAdaptiveSharpening: 0
+    quality: 3
+    frameInfluence: 0.1
+    jitterScale: 1
+    mipBias: 0
+    varianceClampScale: 0.9
+    contrastAdaptiveSharpening: 0
 --- !u!20 &1123622084
 Camera:
   m_ObjectHideFlags: 0
@@ -5917,15 +4833,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -6008,6 +4926,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -6320,6 +5240,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -6440,6 +5362,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -6571,6 +5495,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -6855,6 +5781,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -7033,7 +5961,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -7511558181221131132, guid: 784f0ca18fbb84046b59c3d361f3b044,
         type: 3}
-      propertyPath: m_Materials.Array.data[0]
+      propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: b0ca5be8dd38e9840bf2523b6729b1df, type: 2}
     - target: {fileID: 919132149155446097, guid: 784f0ca18fbb84046b59c3d361f3b044,
@@ -7268,15 +6196,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -7404,15 +6334,17 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_enableWordWrapping: 0
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 1
+  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
+  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -7558,7 +6490,6 @@ MonoBehaviour:
   autoCreateDisplayForRigidbody: 1
   hideOriginalRendererWhileTesting: 1
   actualDisplayTarget: {fileID: 0}
-  outputMode: Uninitialized
   coordinateSource: {fileID: 0}
   physicsFrame: {fileID: 0}
   visualFrame: {fileID: 0}
@@ -7577,16 +6508,13 @@ MonoBehaviour:
   roughFollowHz: 12
   roughnessReference: 0.4
   autoBeginOnDownhill: 1
-  autoEndAtLanding: 1
+  autoEndAtSection: 1
   sectionLength: 9.9
-  slopeSectionSource: {fileID: 0}
-  repeatLengthMultiplierThreshold: 1.35
-  repeatPairDamping: 0.92
-  minimumRepeatAmplitudeRatio: 0.18
-  landingConfirmSeconds: 0.04
   entrySlopeDegrees: 12
   minimumEntryPlanarSpeed: 2
   teleportThreshold: 2.5
+  initialStartPatternMultiplier: 1
+  targetSlopeProgressPerecent: 0.42857143
   initialCY: 0
   initialHeight: 0.45
   fallbackInitialNormalSpeed: 3.1367
@@ -7597,10 +6525,11 @@ MonoBehaviour:
   laterApexFraction: 0.5
   dampingPerMeter: 0.02
   exitDamping: 9
-  maximumFirstWaveHeight: 0.65
-  maximumVisibleLiftNormal: 0.52
-  maximumVisibleDropNormal: 0.28
-  maximumCenterHeightAboveGround: 1.1
+  referencePlanarSpeed: 18
+  motionHeightInfluence: 0.06
+  patternVariation: 0.08
+  terminalBounceRatio: 0.22
+  terminalBounceDuration: 0.32
   firstRoughness: 0.08
   secondRoughness: 0.22
   thirdRoughness: 0.12
@@ -7618,25 +6547,35 @@ MonoBehaviour:
   impactSmoothSeconds: 0.015
   flightSmoothSeconds: 0.035
   contactBlendFraction: 0.16
-  resetDisplayOnSharpTurn: 1
-  displayTurnResetDegrees: 65
+  adaptiveVisualFilter: 1
+  adaptiveSpeedGain: 1.4
+  adaptiveDerivativeHz: 8
+  adaptiveMinimumSmoothSeconds: 0.008
+  resetFilterOnSharpNormalChange: 1
+  filterNormalResetDegrees: 65
+  enableDebugLog: 1
+  debugPeriodicState: 1
+  debugWaveTransitions: 1
+  debugProbeTransitions: 1
+  debugLogInterval: 0.25
   active: 0
   exiting: 0
   probeValid: 0
   firstWavePeakReady: 0
   waveIndex: -1
-  waveCycleIndex: -1
-  plannedWaveCount: 3
+  waveType: -1
+  activeWaveCount: 3
+  repeat23ChunkCount: 0
+  recursiveChunkIndex: -1
   firstWavePeakRevision: 0
   traveled: 0
   progress01: 0
-  phase: 0
   currentAmplitude: 0
-  landingPlanValid: 0
-  plannedLandingDistance: 9.9
-  runtimeWaveLength: 3.3
-  sourceSectionLength: 0
-  sourceSectionStartProgress01: 0
+  efLocal01: 0
+  fgLocal01: 0
+  signedFLimit: 0
+  fSide: 0
+  fDistance01: 0
   slope0: 0
   slope1: 0
   slope2: 0
@@ -7651,12 +6590,9 @@ MonoBehaviour:
   presentedOffset: 0
   presentedSpeed: 0
   presentationSmoothSeconds: 0
-  entryRawNormalSpeed: 0
-  entryActualRiseSpeed: 0
-  entryUnclampedHeight: 0
-  visibleUpperLimit: 0
-  guardedTargetOffset: 0
-  heightGuardActive: 0
+  adaptiveVisualSpeed: 0
+  adaptiveCutoffHz: 0
+  currentWaveLocal01: 0
   visualFilterResetCount: 0
   upperNormal: 0
   lowerNormal: 0
@@ -7665,31 +6601,23 @@ MonoBehaviour:
   tangent: {x: 0, y: 0, z: 1}
   normal: {x: 0, y: 1, z: 0}
   binormal: {x: 1, y: 0, z: 0}
-  mappedCarrierWorld: {x: 0, y: 0, z: 0}
-  subjectWorld: {x: 0, y: 0, z: 0}
-  predictedVisualWorld: {x: 0, y: 0, z: 0}
-  mappedSubjectGap: 0
-  outputGapBeforeWrite: 0
-  roundTripError: 0
-  mappingMode: Uninitialized
   outputWritable: 0
-  probeWasValid: 0
   sampledHeights:
   - 0
   - 0
   - 0
   - 0
-  sampledSurfaces:
-  - 
-  - 
-  - 
-  - 
-  logEvents: 1
-  logCoordinates: 1
-  logWaveSamples: 1
-  logProbeTransitions: 1
-  logIntervalSeconds: 0.25
-  coordinateWarningMeters: 0.1
+  effectiveSectionLength: 0
+  effectiveFBoundary: 0
+  recursiveA1: 0
+  recursiveA2: 0
+  recursiveA3: 0
+  motionPattern: 0
+  motionCharacter01: 0
+  entryPlanarSpeed: 0
+  entryAlignment01: 0
+  terminalAmplitude: 0
+  terminalOffset: 0
 --- !u!135 &1842262368
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -7728,6 +6656,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -8031,6 +6961,8 @@ MeshRenderer:
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
