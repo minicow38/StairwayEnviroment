@@ -459,6 +459,18 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         if (sourceTrail) {
             TrailRenderer displayTrail = destination.gameObject.AddComponent<TrailRenderer>();
             CopyTrailSettings(sourceTrail, displayTrail);
+            
+            TrailLengthController lengthController =
+                source.GetComponent<TrailLengthController>();
+
+            if (lengthController)
+                lengthController.SetTrail(displayTrail);
+
+            BallVisualTrailTurnReset turnReset =
+                source.GetComponent<BallVisualTrailTurnReset>();
+
+            if (turnReset)
+                turnReset.SetTrail(displayTrail);
             displayTrail.enabled = sourceTrail.enabled;
             displayTrail.emitting = false;
             displayTrail.Clear();

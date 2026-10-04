@@ -1,46 +1,37 @@
 using UnityEngine;
 
 [DisallowMultipleComponent]
-public sealed class TrailLengthController : MonoBehaviour, IVisualProxyBindable
+public sealed class TrailLengthController : MonoBehaviour
 {
-    [SerializeField] private TrailRenderer trail;
     [SerializeField] private Rigidbody targetBody;
 
     [SerializeField] private float targetLength = 0.8f;
     [SerializeField] private float minTime = 0.03f;
     [SerializeField] private float maxTime = 0.20f;
 
-    private TrailRenderer proxyTrail;
+    private TrailRenderer trail;
     private bool holdTime;
     private float heldTime;
 
     void Awake()
     {
-        if (!trail)
-            trail = GetComponent<TrailRenderer>();
-
         if (!targetBody)
             targetBody = GetComponent<Rigidbody>();
     }
 
-    public void BindVisualProxy(Transform proxy)
+    public void SetTrail(TrailRenderer targetTrail)
     {
-        proxyTrail = proxy ? proxy.GetComponent<TrailRenderer>() : null;
-
-        if (trail && proxyTrail)
-            proxyTrail.time = trail.time;
-    }
-
-    public void UnbindVisualProxy()
-    {
-        proxyTrail = null;
+        trail = targetTrail;
     }
 
     public void HoldTrailTime(float minimumTime)
     {
+        if (!trail)
+            return;
+
         holdTime = true;
-        heldTime = Mathf.Max(CurrentTime(), minimumTime);
-        ApplyTime(heldTime);
+        heldTime = Mathf.Max(trail.time, minimumTime);
+        trail.time = heldTime;
     }
 
     public void ReleaseTrailTime()
@@ -51,9 +42,12 @@ public sealed class TrailLengthController : MonoBehaviour, IVisualProxyBindable
 
     void Update()
     {
+        if (!trail)
+            return;
+
         if (holdTime)
         {
-            ApplyTime(heldTime);
+            trail.time = heldTime;
             return;
         }
 
@@ -62,34 +56,16 @@ public sealed class TrailLengthController : MonoBehaviour, IVisualProxyBindable
 
     void UpdateTrailTime()
     {
-        if (!targetBody)
+        if (!trail || !targetBody)
             return;
 
         float speed = targetBody.velocity.magnitude;
-        float time = speed < 0.01f
+
+        trail.time = speed < 0.01f
             ? maxTime
-            : Mathf.Clamp(targetLength / speed, minTime, maxTime);
-
-        ApplyTime(time);
-    }
-
-    float CurrentTime()
-    {
-        if (trail)
-            return trail.time;
-
-        if (proxyTrail)
-            return proxyTrail.time;
-
-        return maxTime;
-    }
-
-    void ApplyTime(float time)
-    {
-        if (trail)
-            trail.time = time;
-
-        if (proxyTrail)
-            proxyTrail.time = time;
+            : Mathf.Clamp(
+                targetLength / speed,
+                minTime,
+                maxTime);
     }
 }
