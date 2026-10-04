@@ -436,14 +436,22 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // ============================================================
         else
         {
-            // ここから先だけEmitする。名前番号はnextArcSlabIndex /
-            // nextStairwayIndexが保持しているため、17の次は18から続く。
             ContinuousPattern = startPattern.Count;
 
-            startPattern.AddRange(new int[]
+            int[] nextPattern =
             {
-                -5, 0, -5, 0, -5, 0, -5, 0, -5
-            });
+                -1, -1, -1,
+                -1, -1, -1,
+                -1, -1, -1
+            };
+
+            for (int i = 0; i < nextPattern.Length; i++)
+            {
+                int multiplier = UnityEngine.Random.Range(0, 6);
+                nextPattern[i] *= multiplier;
+            }
+
+            startPattern.AddRange(nextPattern);
         }
 
         EnsureWorkingBuffers();
@@ -1837,7 +1845,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             ? UnityEngine.Random.Range(0, ShiftObj.Length)
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
         float localX = ShiftObj[widthObj].x;
-        bool onPylon = value < 2;
+        bool onPylon = value < 1;
         bool generated = false;
 
         if (onPylon && PylonPrefab && ActiveStairway1 && ActiveStairway2)
