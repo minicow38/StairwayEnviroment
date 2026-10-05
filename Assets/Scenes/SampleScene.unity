@@ -283,7 +283,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: de0d19857c896c0438e578aa9fbd1213, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  source: {fileID: 0}
+  source: {fileID: 64372322}
   knotDetector: {fileID: 156220176}
   generatedPhysicsRoot: {fileID: 0}
   generatedVisualPlayer: {fileID: 0}
@@ -631,7 +631,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5129f7960e33af34b9400ec071551a35, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  trail: {fileID: 64372324}
   targetBody: {fileID: 64372320}
   targetLength: 0.8
   minTime: 0.03
@@ -772,9 +771,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 454ff96f465bdd34fbed65136ca5225d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  trailRenderer: {fileID: 64372324}
   correspondSubject: {fileID: 572935013}
-  turnHoldTime: 2
 --- !u!1 &122906458
 GameObject:
   m_ObjectHideFlags: 0
@@ -5878,7 +5875,6 @@ Transform:
   - {fileID: 572935009}
   - {fileID: 64372315}
   - {fileID: 1206713371}
-  - {fileID: 1842262366}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &1501976662
@@ -6438,259 +6434,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1842262365
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1842262366}
-  - component: {fileID: 1842262370}
-  - component: {fileID: 1842262369}
-  - component: {fileID: 1842262368}
-  - component: {fileID: 1842262367}
-  m_Layer: 0
-  m_Name: SpoilBallViisual
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 0
---- !u!4 &1842262366
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1842262365}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 1492337658}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1842262367
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1842262365}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: cf06f638ced3fa648bee0ad72f677983, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  inSubject: {fileID: 1083418863}
-  visualTarget: {fileID: 1842262366}
-  autoCreateDisplayForRigidbody: 1
-  hideOriginalRendererWhileTesting: 1
-  actualDisplayTarget: {fileID: 0}
-  coordinateSource: {fileID: 0}
-  physicsFrame: {fileID: 0}
-  visualFrame: {fileID: 0}
-  subjectRotation: {fileID: 572935009}
-  followSubjectRotation: 1
-  addVisualRoll: 0
-  visualRadius: 0.5
-  rotationFollowHz: 8
-  surfaceLayers:
-    serializedVersion: 2
-    m_Bits: 16383
-  probeSpacing: 0.45
-  probeHeight: 2
-  probeDepth: 8
-  frameFollowHz: 10
-  roughFollowHz: 12
-  roughnessReference: 0.4
-  autoBeginOnDownhill: 1
-  autoEndAtSection: 1
-  sectionLength: 9.9
-  entrySlopeDegrees: 12
-  minimumEntryPlanarSpeed: 2
-  teleportThreshold: 2.5
-  initialStartPatternMultiplier: 1
-  targetSlopeProgressPerecent: 0.42857143
-  initialCY: 0
-  initialHeight: 0.45
-  fallbackInitialNormalSpeed: 3.1367
-  energyBlend: 0.35
-  restitution: 0.86
-  lowerRatio: 0.75
-  firstApexFraction: 0.82
-  laterApexFraction: 0.5
-  dampingPerMeter: 0.02
-  exitDamping: 9
-  referencePlanarSpeed: 18
-  motionHeightInfluence: 0.06
-  patternVariation: 0.08
-  terminalBounceRatio: 0.22
-  terminalBounceDuration: 0.32
-  firstRoughness: 0.08
-  secondRoughness: 0.22
-  thirdRoughness: 0.12
-  measuredRoughnessGain: 0.1
-  signedRoughAccelerationGain: 90
-  accelerationResidualGain: 0.18
-  residualLowPassHz: 2
-  springK: 420
-  damperC: 18
-  maximumResidual: 0.2
-  maximumAcceleration: 450
-  maximumJerk: 2500
-  entryBlendSeconds: 0.1
-  softenVisualWave: 1
-  impactSmoothSeconds: 0.015
-  flightSmoothSeconds: 0.035
-  contactBlendFraction: 0.16
-  adaptiveVisualFilter: 1
-  adaptiveSpeedGain: 1.4
-  adaptiveDerivativeHz: 8
-  adaptiveMinimumSmoothSeconds: 0.008
-  resetFilterOnSharpNormalChange: 1
-  filterNormalResetDegrees: 65
-  enableDebugLog: 1
-  debugPeriodicState: 1
-  debugWaveTransitions: 1
-  debugProbeTransitions: 1
-  debugLogInterval: 0.25
-  active: 0
-  exiting: 0
-  probeValid: 0
-  firstWavePeakReady: 0
-  waveIndex: -1
-  waveType: -1
-  activeWaveCount: 3
-  repeat23ChunkCount: 0
-  recursiveChunkIndex: -1
-  firstWavePeakRevision: 0
-  traveled: 0
-  progress01: 0
-  currentAmplitude: 0
-  efLocal01: 0
-  fgLocal01: 0
-  signedFLimit: 0
-  fSide: 0
-  fDistance01: 0
-  slope0: 0
-  slope1: 0
-  slope2: 0
-  signedCurvature: 0
-  roughness: 0
-  filteredRoughness: 0
-  baseOffset: 0
-  residualOffset: 0
-  residualSpeed: 0
-  residualAcceleration: 0
-  visualOffset: 0
-  presentedOffset: 0
-  presentedSpeed: 0
-  presentationSmoothSeconds: 0
-  adaptiveVisualSpeed: 0
-  adaptiveCutoffHz: 0
-  currentWaveLocal01: 0
-  visualFilterResetCount: 0
-  upperNormal: 0
-  lowerNormal: 0
-  firstWavePeakCY: 0
-  firstWavePeakProgress01: 0
-  tangent: {x: 0, y: 0, z: 1}
-  normal: {x: 0, y: 1, z: 0}
-  binormal: {x: 1, y: 0, z: 0}
-  outputWritable: 0
-  sampledHeights:
-  - 0
-  - 0
-  - 0
-  - 0
-  effectiveSectionLength: 0
-  effectiveFBoundary: 0
-  recursiveA1: 0
-  recursiveA2: 0
-  recursiveA3: 0
-  motionPattern: 0
-  motionCharacter01: 0
-  entryPlanarSpeed: 0
-  entryAlignment01: 0
-  terminalAmplitude: 0
-  terminalOffset: 0
---- !u!135 &1842262368
-SphereCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1842262365}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Radius: 0.5
-  m_Center: {x: 0, y: 0, z: 0}
---- !u!23 &1842262369
-MeshRenderer:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1842262365}
-  m_Enabled: 1
-  m_CastShadows: 1
-  m_ReceiveShadows: 1
-  m_DynamicOccludee: 1
-  m_StaticShadowCaster: 0
-  m_MotionVectors: 1
-  m_LightProbeUsage: 1
-  m_ReflectionProbeUsage: 1
-  m_RayTracingMode: 2
-  m_RayTraceProcedural: 0
-  m_RayTracingAccelStructBuildFlagsOverride: 0
-  m_RayTracingAccelStructBuildFlags: 1
-  m_RenderingLayerMask: 1
-  m_RendererPriority: 0
-  m_Materials:
-  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
-  m_StaticBatchInfo:
-    firstSubMesh: 0
-    subMeshCount: 0
-  m_StaticBatchRoot: {fileID: 0}
-  m_ProbeAnchor: {fileID: 0}
-  m_LightProbeVolumeOverride: {fileID: 0}
-  m_ScaleInLightmap: 1
-  m_ReceiveGI: 1
-  m_PreserveUVs: 0
-  m_IgnoreNormalsForChartDetection: 0
-  m_ImportantGI: 0
-  m_StitchLightmapSeams: 1
-  m_SelectedEditorRenderState: 3
-  m_MinimumChartSize: 4
-  m_AutoUVMaxDistance: 0.5
-  m_AutoUVMaxAngle: 89
-  m_LightmapParameters: {fileID: 0}
-  m_SortingLayerID: 0
-  m_SortingLayer: 0
-  m_SortingOrder: 0
-  m_AdditionalVertexStreams: {fileID: 0}
---- !u!33 &1842262370
-MeshFilter:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1842262365}
-  m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
 --- !u!1001 &1847646707
 PrefabInstance:
   m_ObjectHideFlags: 0

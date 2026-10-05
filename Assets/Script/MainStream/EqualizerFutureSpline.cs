@@ -82,6 +82,8 @@ using UnityEngine.Splines;
     FieldInfo observedDisplayTargetField;
     Vector3 observedLastPoint;
     bool hasObservedLastPoint;
+    Vector3 observedGroupStartPoint;
+    bool hasObservedGroupStartPoint;
     readonly List<ObservedStairNode> observedStairNodes = new List<ObservedStairNode>();
     struct ObservedStairNode
     {
@@ -92,6 +94,9 @@ using UnityEngine.Splines;
     sealed class GeneratedGroup
     {
         public string name;
+        public Vector3 referenceTWorld;
+        public Vector3 referenceNWorld;
+        public bool ballAlignedToObserved;
         public readonly List<SplineContainer> splines = new List<SplineContainer>();
     }
     struct StairPair
@@ -913,7 +918,10 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         WavePlan plan = CreateWavePlan(group.Count,entry);
         GeneratedGroup generated = new GeneratedGroup
         {
-            name = groupName
+            name = groupName,
+            referenceTWorld = PhysicsDirectionToVisual(group[0],stairT),
+            referenceNWorld = PhysicsDirectionToVisual(group[0],stairN),
+            ballAlignedToObserved = false
         };
 
         generatedSplineCount = 0;
@@ -937,14 +945,19 @@ return generatedPhysicsRoot && generatedVisualPlayer;
                 knotPerPart);
         }
 
-        ballLateralShift = ResolveBallLateralShift(
-            group[0],
-            basePoints[0][0],
-            stairT,
-            stairN,
-            out Vector3 lateralAxis);
-
-        ballLateralAxis = lateralAxis;
+        // FutureBallSpline は予測時には1本目と完全に同じ位置で作る。
+        // 横位置は実際の Observed が StairWayN_0 に入った時点で、
+        // 同じ StairWay ローカル空間から一度だけ確定する。
+        Vector3 visualT0 = NormalizeSafe(
+            generated.referenceTWorld,
+            Vector3.forward);
+        Vector3 visualN0 = NormalizeSafe(
+            Vector3.ProjectOnPlane(generated.referenceNWorld,visualT0),
+            Vector3.up);
+        ballLateralAxis = NormalizeSafe(
+            Vector3.Cross(visualN0,visualT0),
+            Vector3.Cross(Vector3.up,visualT0));
+        ballLateralShift = Vector3.zero;
 
         for (int i = 0;i < group.Count;i++)
         {
@@ -1018,55 +1031,6 @@ return generatedPhysicsRoot && generatedVisualPlayer;
                 $"knots={generatedKnotCount}",
                 this);
         }
-    }
-
-    Vector3 ResolveBallLateralShift(
-        StairPair pair,
-        Vector3 baseStart,
-        Vector3 stairT,
-        Vector3 stairN,
-        out Vector3 lateralAxis)
-    {
-        // 2本目は1本目と同じ進行位置・同じ法線高さを保つ。
-        // 違うのは横軸B上の位置だけ。
-        Vector3 visualT = NormalizeSafe(
-            PhysicsDirectionToVisual(pair,stairT),
-            Vector3.forward);
-
-        Vector3 visualN = PhysicsDirectionToVisual(pair,stairN);
-        visualN = NormalizeSafe(
-            Vector3.ProjectOnPlane(visualN,visualT),
-            Vector3.up);
-
-        lateralAxis = NormalizeSafe(
-            Vector3.Cross(visualN,visualT),
-            Vector3.Cross(Vector3.up,visualT));
-
-        Vector3 visualBallPosition = PhysicsToVisual(
-            pair,
-            body.position);
-
-        float lateralDistance = Vector3.Dot(
-            visualBallPosition - baseStart,
-            lateralAxis);
-
-        if (enableLog)
-        {
-            Vector3 shift = lateralAxis * lateralDistance;
-            Debug.Log(
-                $"[EqualizerFutureSpline][BALL_LATERAL_REFERENCE] " +
-                $"visualBall={visualBallPosition:F4} " +
-                $"baseStart={baseStart:F4} " +
-                $"T={visualT:F4} " +
-                $"N={visualN:F4} " +
-                $"B={lateralAxis:F4} " +
-                $"distance={lateralDistance:F4} " +
-                $"dotT={Vector3.Dot(shift,visualT):F6} " +
-                $"dotN={Vector3.Dot(shift,visualN):F6}",
-                this);
-        }
-
-        return lateralAxis * lateralDistance;
     }
 
     static Vector3[] TranslatePoints(Vector3[] sourcePoints,Vector3 shift)
@@ -1443,14 +1407,27 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         if (string.IsNullOrEmpty(observedCurrentStairGroup))
         {
             observedCurrentStairGroup = groupName;
+            observedGroupStartPoint = point;
+            hasObservedGroupStartPoint = true;
+            TryAlignFutureBallSplineToObserved(groupName,observedGroupStartPoint);
             return;
         }
 
-        if (groupName == observedCurrentStairGroup) return;
+        if (groupName == observedCurrentStairGroup)
+        {
+            // Future prediction がわずかに遅れて生成された場合にも、
+            // 最初に保存した Observed 始点で一度だけ再試行する。
+            if (hasObservedGroupStartPoint)
+                TryAlignFutureBallSplineToObserved(groupName,observedGroupStartPoint);
+            return;
+        }
 
         string previousGroup = observedCurrentStairGroup;
         observedCurrentStairGroup = groupName;
+        observedGroupStartPoint = point;
+        hasObservedGroupStartPoint = true;
         ResetObservedSpline(point);
+        TryAlignFutureBallSplineToObserved(groupName,observedGroupStartPoint);
 
         if (enableLog)
         {
@@ -1458,6 +1435,117 @@ return generatedPhysicsRoot && generatedVisualPlayer;
                 $"[EqualizerFutureSpline][OBSERVED_NEXT_STAIR_ZERO] " +
                 $"from={previousGroup} to={groupName} point={point:F4}",
                 this);
+        }
+    }
+
+    bool TryAlignFutureBallSplineToObserved(
+        string groupName,
+        Vector3 observedWorldPoint)
+    {
+        GeneratedGroup generated = FindGeneratedGroup(groupName);
+        if (generated == null || generated.ballAlignedToObserved)
+            return generated != null;
+
+        if (generated.splines.Count < 2) return false;
+
+        SplineContainer baseSpline = generated.splines[0];
+        SplineContainer ballSpline = generated.splines[1];
+        if (!baseSpline || !ballSpline ||
+            baseSpline.Spline == null || baseSpline.Spline.Count == 0 ||
+            ballSpline.Spline == null || ballSpline.Spline.Count == 0)
+        {
+            return false;
+        }
+
+        // スクリーンショットの方針どおり、Observed と Future の基準点を
+        // 同じ StairWayN_0 ローカル空間へ落としてから差を取る。
+        Transform stairFrame = baseSpline.transform;
+        Vector3 baseWorld = stairFrame.TransformPoint(
+            ToVector3(baseSpline.Spline[0].Position));
+        Vector3 baseLocal = stairFrame.InverseTransformPoint(baseWorld);
+        Vector3 observedLocal = stairFrame.InverseTransformPoint(observedWorldPoint);
+        Vector3 deltaLocal = observedLocal - baseLocal;
+
+        Vector3 localT = NormalizeSafe(
+            stairFrame.InverseTransformDirection(generated.referenceTWorld),
+            Vector3.forward);
+        Vector3 localN = stairFrame.InverseTransformDirection(
+            generated.referenceNWorld);
+        localN = NormalizeSafe(
+            Vector3.ProjectOnPlane(localN,localT),
+            Vector3.up);
+        Vector3 localB = NormalizeSafe(
+            Vector3.Cross(localN,localT),
+            Vector3.Cross(Vector3.up,localT));
+
+        // 進行方向Tと法線Nは一切動かさず、横方向B成分だけ残す。
+        float lateralDistanceLocal = Vector3.Dot(deltaLocal,localB);
+        Vector3 lateralLocal = localB * lateralDistanceLocal;
+        Vector3 worldShift = stairFrame.TransformVector(lateralLocal);
+
+        for (int i = 1;i < generated.splines.Count;i += 2)
+        {
+            SplineContainer target = generated.splines[i];
+            if (!target || target.Spline == null) continue;
+            TranslateSplineKnotsWorld(target,worldShift);
+        }
+
+        generated.ballAlignedToObserved = true;
+        ballLateralAxis = NormalizeSafe(
+            stairFrame.TransformDirection(localB),
+            Vector3.right);
+        ballLateralShift = worldShift;
+        mappedFirstPoint = baseWorld;
+        mappedFirstBallPoint = baseWorld + worldShift;
+
+        Transform marker = FindDescendant(
+            ballSpline.transform,
+            "BallStartKnot");
+        if (marker) marker.position = mappedFirstBallPoint;
+
+        if (enableLog)
+        {
+            Debug.Log(
+                $"[EqualizerFutureSpline][BALL_LATERAL_OBSERVED_LOCAL] " +
+                $"group={groupName} " +
+                $"baseLocal={baseLocal:F4} " +
+                $"observedLocal={observedLocal:F4} " +
+                $"deltaLocal={deltaLocal:F4} " +
+                $"T={localT:F4} N={localN:F4} B={localB:F4} " +
+                $"lateralLocal={lateralLocal:F4} " +
+                $"worldShift={worldShift:F4} " +
+                $"dotT={Vector3.Dot(lateralLocal,localT):F6} " +
+                $"dotN={Vector3.Dot(lateralLocal,localN):F6}",
+                this);
+        }
+
+        return true;
+    }
+
+    GeneratedGroup FindGeneratedGroup(string groupName)
+    {
+        for (int i = history.Count - 1;i >= 0;i--)
+        {
+            GeneratedGroup generated = history[i];
+            if (generated != null && generated.name == groupName)
+                return generated;
+        }
+        return null;
+    }
+
+    static void TranslateSplineKnotsWorld(
+        SplineContainer container,
+        Vector3 worldShift)
+    {
+        Transform frame = container.transform;
+        Vector3 localShift = frame.InverseTransformVector(worldShift);
+        Spline spline = container.Spline;
+
+        for (int i = 0;i < spline.Count;i++)
+        {
+            BezierKnot knot = spline[i];
+            knot.Position += ToFloat3(localShift);
+            spline[i] = knot;
         }
     }
 
@@ -1728,6 +1816,11 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         }
         return Vector3.forward;
     }
+    static Vector3 ToVector3(float3 v)
+    {
+        return new Vector3(v.x,v.y,v.z);
+    }
+
     static float3 ToFloat3(Vector3 v)
     {
         return new float3(v.x,v.y,v.z);
