@@ -11,15 +11,10 @@ using UnityEngine.Splines;
     const BindingFlags FieldFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     [Header("Read Only Source")] [SerializeField] ExampleBallVisualEqualizer source;
     [SerializeField] NearestKnotDetector knotDetector;
+    [SerializeField] CorrespondSubject correspondSubject;
     [Header("Generated Roots")] [SerializeField] Transform generatedPhysicsRoot;
     [SerializeField] Transform generatedVisualPlayer;
     [Header("Flat -> Stair Candidate")] [SerializeField,Min(.5f)] float lookAheadDistance = 8f;
-    [Tooltip("AsyncPosと同じく、フレーム数ではなく実距離で候補を確認する。")]
-    [SerializeField,Min(.001f)] float timingConfirmationSeparationMeters = .08f;
-    [Tooltip("2回の観測で予測された階段入口距離がこの差以内なら確定する。")]
-    [SerializeField,Min(.001f)] float timingEntryDistanceToleranceMeters = .20f;
-    [Tooltip("確認時に nextSlope 距離が最低これだけ減っていることを要求する。")]
-    [SerializeField,Min(.001f)] float timingMinimumApproachMeters = .02f;
     [SerializeField,Range(0f,1f)] float minimumDirectionAlignment =.80f;
     [SerializeField,Min(.1f)] float minimumPredictionSpeed = 1f;
     [Header("Spline")] [SerializeField,Range(17,161)] int totalKnotTarget = 65;
@@ -30,7 +25,12 @@ using UnityEngine.Splines;
     [Tooltip("BallVisualEqualizerの実表示位置を1本のSplineとして後追い記録する。") ]
     [SerializeField,Min(.001f)] float observedMinimumSampleDistance = .01f;
     [SerializeField,Min(.01f)] float observedTipCubeScale = .14f;
-    [Header("Prediction")] [Tooltip("Probe simulation safety limit.")] [SerializeField,Range(16,128)] int maximumEntrySimulationSteps = 96;
+    [Header("Prediction")]
+    [Tooltip("平面上で測ったBall中心の支持高さを追従する速さ。")]
+    [SerializeField,Range(.5f,20f)] float supportHeightFollowHz = 6f;
+    [Tooltip("支持高さの瞬間値が推定値からこれ以上外れたら外れ値として無視する。")]
+    [SerializeField,Min(.05f)] float supportHeightOutlierTolerance = .40f;
+    [Tooltip("Probe simulation safety limit.")] [SerializeField,Range(16,128)] int maximumEntrySimulationSteps = 96;
     [Tooltip("How quickly the predicted body direction settles from flat entry to stair tangent.")] [SerializeField,Range(.25f,4f)] float carrierSettleDistance = 1.5f;
     [Tooltip("Planar acceleration estimate used only before stair entry.")] [SerializeField,Range(0f,60f)] float maxPredictedPlanarAcceleration = 35f;
     [Header("Debug")] [SerializeField] bool enableLog = true;
@@ -56,20 +56,32 @@ using UnityEngine.Splines;
     [SerializeField] float tangentNormalDot;
     [SerializeField] Vector3 mappedFirstPoint;
     [SerializeField] Vector3 mappedFirstBallPoint;
-    [SerializeField] Vector3 ballLateralAxis;
-    [SerializeField] Vector3 ballLateralShift;
+    [SerializeField] float stableSupportHeight;
+    [SerializeField] bool hasStableSupportHeight;
     [SerializeField] int observedKnotCount;
     [SerializeField] float observedPathLength;
     [SerializeField] Vector3 observedLatestPoint;
     [SerializeField] string observedCurrentStairGroup = "";
+    [SerializeField] string observedFutureComparedSpline = "";
+    [SerializeField] Vector3 observedFutureAnchorWorld;
+    [SerializeField] Vector3 observedFutureRawDelta;
+    [SerializeField] bool observedFutureAlignmentApplied;
+    [SerializeField] Vector3 observedFutureConfirmedTangent;
+    [SerializeField] Vector3 observedFutureConfirmedNormal;
+    [SerializeField] float observedFutureEntryFrameRotationDegrees;
+    [SerializeField] float observedFutureTangentErrorDegrees;
+    [SerializeField] float observedFutureMaxTangentCorrection;
+    [SerializeField] float observedFutureMaxNormalCorrection;
+    [SerializeField] float observedFutureAnchorError;
+    [SerializeField] string observedWaveEntryGroup = "";
+    [SerializeField] Vector3 observedWaveEntryPoint;
+    [SerializeField] Vector3 observedWaveEntryTangent;
+    [SerializeField] Vector3 observedWaveEntryNormal;
+    [SerializeField] Vector3 observedWaveEntryVelocity;
+    [SerializeField] float observedWaveEntryForwardSpeed;
+    [SerializeField] int observedWaveEntryRevision;
     [SerializeField] bool timingCandidateActive;
-    [SerializeField] bool timingConfirmed;
-    [SerializeField] float timingSpatialSeparation;
-    [SerializeField] float timingEntryDistanceError;
     long timingCandidateSectionKey = long.MinValue;
-    float timingCandidateSectionS;
-    float timingCandidateEntryS;
-    float timingCandidateNextSlopeDistance;
     readonly HashSet<string> generatedGroups = new HashSet<string>();
     readonly List<GeneratedGroup> history = new List<GeneratedGroup>();
     Rigidbody body;
@@ -82,8 +94,14 @@ using UnityEngine.Splines;
     FieldInfo observedDisplayTargetField;
     Vector3 observedLastPoint;
     bool hasObservedLastPoint;
-    Vector3 observedGroupStartPoint;
-    bool hasObservedGroupStartPoint;
+    bool courseGuideStateInitialized;
+    bool previousGuideWasSlope;
+    bool courseRecognitionArmed;
+    bool courseSawVisualTurn;
+    bool previousSourceActive;
+    bool waveEntryPointCapturePending;
+    bool hasObservedWaveEntry;
+    Vector3 observedWaveEntryBinormal;
     readonly List<ObservedStairNode> observedStairNodes = new List<ObservedStairNode>();
     struct ObservedStairNode
     {
@@ -91,13 +109,26 @@ using UnityEngine.Splines;
         public string group;
         public int index;
     }
+    sealed class GeneratedPart
+    {
+        public SplineContainer future;
+        public SplineContainer ball;
+
+        // Generation-time normal decomposition in the visual-parent local frame.
+        // Keeping this local makes it survive later VisualPlayerRoot turns.
+        public Vector3[] predictedNormalLocal;
+        public Vector3[] carrierTangentLocal;
+        public float[] normalDistance;
+        public float[] traveledDistance;
+    }
     sealed class GeneratedGroup
     {
         public string name;
-        public Vector3 referenceTWorld;
-        public Vector3 referenceNWorld;
-        public bool ballAlignedToObserved;
+        public bool alignmentApplied;
+        public Vector3 alignmentDeltaWorld;
+        public float predictedEntryForwardSpeed;
         public readonly List<SplineContainer> splines = new List<SplineContainer>();
+        public readonly List<GeneratedPart> parts = new List<GeneratedPart>();
     }
     struct StairPair
     {
@@ -118,6 +149,7 @@ using UnityEngine.Splines;
         public float roughness;
         public float curvature;
         public float gradient;
+        public float supportHeight;
     }
     struct WavePlan
     {
@@ -164,6 +196,7 @@ using UnityEngine.Splines;
         if (!ResolveReferences()) return;
 
         UpdateAccelerationEstimate();
+        UpdateObservedWaveEntryState();
 
         if (!TryConfirmFlatToStairTiming(
                 out NearestKnotDetector.GuideFrame flatGuide,
@@ -219,8 +252,7 @@ using UnityEngine.Splines;
         // Timing is already authoritative from NearestKnotDetector.
         // Do not use StairWayN_0.transform.position as the spatial entry E:
         // in a multi-piece stair N_0 is placed inside the section, not at
-        // the section boundary.  Anchor E to the canonical future slope
-        // sample and transport the current lane/height offsets onto it.
+        // the section boundary. Anchor E to the canonical future slope sample.
         AnchorPredictionToSlopeEntry(
             flatGuide,
             slopeEntry,
@@ -250,6 +282,7 @@ using UnityEngine.Splines;
         EnsureObservedSpline();
         if (!observedSpline) return;
 
+        FinalizeObservedWaveEntryPoint(point);
         UpdateObservedTipCube(point);
         UpdateObservedStairRetention(point);
         AppendObservedPoint(point);
@@ -265,6 +298,7 @@ using UnityEngine.Splines;
         if (!knotDetector) knotDetector = body.GetComponent<NearestKnotDetector>();
         if (!knotDetector) knotDetector = FindObjectOfType<NearestKnotDetector>();
         if (!knotDetector) return false;
+        if (!correspondSubject) correspondSubject = FindObjectOfType<CorrespondSubject>();
         if (!generatedPhysicsRoot)
         {
             GameObject root = GameObject.Find("__GeneratedPhysics");
@@ -284,8 +318,12 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         guide = knotDetector.CurrentGuide;
         slopeEntry = default;
 
-        // SlopeStickCore系の最小条件:
-        // 「まだFlat」「ただし次がSlope」を入口予測の起点にする。
+        UpdateStableFlatSupportHeight(guide);
+
+        // FutureSpline は「未来予測」なので、Flat上で nextIsSlope が
+        // 有効になった最初の瞬間に生成する。
+        // 以前の 2回観測 / 0.08m 確認待ちは、生成を1 FixedUpdate以上
+        // 遅らせるだけだったため、予測生成のゲートから外した。
         if (!guide.valid ||
             guide.isSlope ||
             !guide.nextIsSlope ||
@@ -313,91 +351,65 @@ return generatedPhysicsRoot && generatedVisualPlayer;
                 slopeEntry.splineIndex,
                 slopeEntry.sectionIndex);
 
-        // AsyncPos系の考え方:
-        // FixedUpdate回数ではなく、section上を実際に何m進んだかで確認する。
-        float currentS =
-            guide.distanceFromSectionStart;
+        bool newCandidate =
+            !timingCandidateActive ||
+            sectionKey != timingCandidateSectionKey;
 
-        float predictedEntryS =
-            currentS +
-            guide.distanceToNextSlope;
+        timingCandidateActive = true;
+        timingCandidateSectionKey = sectionKey;
 
-        if (!timingCandidateActive ||
-            sectionKey != timingCandidateSectionKey)
-        {
-            timingCandidateActive = true;
-            timingConfirmed = false;
-            timingCandidateSectionKey = sectionKey;
-            timingCandidateSectionS = currentS;
-            timingCandidateEntryS = predictedEntryS;
-            timingCandidateNextSlopeDistance = guide.distanceToNextSlope;
-            timingSpatialSeparation = 0f;
-            timingEntryDistanceError = 0f;
-            return false;
-        }
-
-        timingSpatialSeparation =
-            currentS -
-            timingCandidateSectionS;
-
-        if (timingSpatialSeparation <
-            timingConfirmationSeparationMeters)
-        {
-            return false;
-        }
-
-        timingEntryDistanceError =
-            Mathf.Abs(
-                predictedEntryS -
-                timingCandidateEntryS);
-
-        float approach =
-            timingCandidateNextSlopeDistance -
-            guide.distanceToNextSlope;
-
-        if (timingEntryDistanceError >
-                timingEntryDistanceToleranceMeters ||
-            approach <
-                timingMinimumApproachMeters)
-        {
-            // 候補自体は捨てず、今の空間観測を新しい基準にする。
-            timingCandidateSectionS = currentS;
-            timingCandidateEntryS = predictedEntryS;
-            timingCandidateNextSlopeDistance = guide.distanceToNextSlope;
-            timingSpatialSeparation = 0f;
-            return false;
-        }
-
-        if (timingConfirmed)
-            return true;
-
-        timingConfirmed = true;
-
-        if (enableLog)
+        if (enableLog && newCandidate)
         {
             Debug.Log(
-                $"[EqualizerFutureSpline][ENTRY_TIMING_CONFIRMED] " +
+                $"[EqualizerFutureSpline][ENTRY_TIMING_PREDICTED] " +
                 $"spline={slopeEntry.splineIndex} " +
                 $"section={slopeEntry.sectionIndex} " +
                 $"nextSlope={guide.distanceToNextSlope:F3}m " +
-                $"separation={timingSpatialSeparation:F3}m " +
-                $"entrySError={timingEntryDistanceError:F3}m",
+                $"immediate=True",
                 this);
         }
 
         return true;
     }
 
+    void UpdateStableFlatSupportHeight(
+        NearestKnotDetector.GuideFrame guide)
+    {
+        if (!guide.valid || guide.isSlope || !body) return;
+
+        // Flat上の支持高さはWorld Upで測る。
+        // guide.normal は入口接近時に傾き始める場合があるため、ここでは使わない。
+        float measured = body.position.y - guide.point.y;
+        if (!IsFinite(measured) || measured <= .01f || measured > 3f)
+            return;
+
+        if (!hasStableSupportHeight)
+        {
+            stableSupportHeight = measured;
+            hasStableSupportHeight = true;
+            return;
+        }
+
+        if (Mathf.Abs(measured - stableSupportHeight) >
+            supportHeightOutlierTolerance)
+        {
+            return;
+        }
+
+        float alpha = FollowAlpha(
+            supportHeightFollowHz,
+            Mathf.Max(.001f,Time.fixedDeltaTime));
+
+        stableSupportHeight = Mathf.Lerp(
+            stableSupportHeight,
+            measured,
+            alpha);
+    }
+
     void ResetTimingCandidate()
     {
         timingCandidateActive = false;
-        timingConfirmed = false;
         timingCandidateSectionKey = long.MinValue;
-        timingCandidateSectionS = 0f;
-        timingCandidateEntryS = 0f;
-        timingCandidateNextSlopeDistance = 0f;
-        timingSpatialSeparation = 0f;
-        timingEntryDistanceError = 0f;
     }
 
     bool TryResolvePhysicsZeroFromSlopeEntry(
@@ -550,124 +562,56 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         NearestKnotDetector.GuideSample slopeEntry,
         ref EntryPrediction prediction)
     {
-        Vector3 flatN =
-            NormalizeSafe(
-                flatGuide.normal,
-                Vector3.up);
+        Vector3 flatT = NormalizeSafe(
+            Vector3.ProjectOnPlane(flatGuide.tangent,Vector3.up),
+            Vector3.ProjectOnPlane(body.velocity,Vector3.up));
 
-        if (Vector3.Dot(
-                flatN,
-                Vector3.up) < 0f)
-        {
-            flatN = -flatN;
-        }
-
-        Vector3 flatT =
-            Vector3.ProjectOnPlane(
-                flatGuide.tangent,
-                flatN);
-
-        flatT =
-            NormalizeSafe(
-                flatT,
-                body.velocity);
-
-        if (Vector3.Dot(
-                flatT,
-                body.velocity) < 0f)
-        {
+        if (Vector3.Dot(flatT,body.velocity) < 0f)
             flatT = -flatT;
-        }
 
-        Vector3 flatB =
-            Vector3.Cross(
-                flatN,
-                flatT);
+        Vector3 flatB = NormalizeSafe(
+            Vector3.Cross(Vector3.up,flatT),
+            Vector3.right);
 
-        flatB =
-            NormalizeSafe(
-                flatB,
-                Vector3.right);
+        // 入口の向きは完成した45度法線へ即スナップせず、
+        // PredictExampleEntryState が未来シミュレーションしたT/Nを使う。
+        Vector3 predictedT = NormalizeSafe(
+            prediction.tangent,
+            slopeEntry.tangent);
 
-        flatT =
-            Vector3.Cross(
-                flatB,
-                flatN)
-            .normalized;
+        Vector3 predictedN = NormalizeSafe(
+            Vector3.ProjectOnPlane(prediction.normal,predictedT),
+            slopeEntry.normal);
 
-        Vector3 currentOffset =
-            body.position -
-            flatGuide.point;
+        if (Vector3.Dot(predictedN,Vector3.up) < 0f)
+            predictedN = -predictedN;
 
-        float sideOffset =
-            Vector3.Dot(
-                currentOffset,
-                flatB);
+        Vector3 predictedB = NormalizeSafe(
+            Vector3.Cross(predictedN,predictedT),
+            flatB);
 
-        float normalOffset =
-            Vector3.Dot(
-                currentOffset,
-                flatN);
+        if (Vector3.Dot(predictedB,flatB) < 0f)
+            predictedB = -predictedB;
 
-        Vector3 entryN =
-            NormalizeSafe(
-                slopeEntry.normal,
-                flatN);
+        predictedT = NormalizeSafe(
+            Vector3.Cross(predictedB,predictedN),
+            predictedT);
 
-        if (Vector3.Dot(
-                entryN,
-                Vector3.up) < 0f)
-        {
-            entryN = -entryN;
-        }
+        float supportHeight = hasStableSupportHeight
+            ? stableSupportHeight
+            : Mathf.Max(.01f,body.position.y - flatGuide.point.y);
 
-        Vector3 entryT =
-            Vector3.ProjectOnPlane(
-                slopeEntry.tangent,
-                entryN);
-
-        entryT =
-            NormalizeSafe(
-                entryT,
-                prediction.tangent);
-
-        if (Vector3.Dot(
-                entryT,
-                flatT) < 0f)
-        {
-            entryT = -entryT;
-        }
-
-        Vector3 entryB =
-            Vector3.Cross(
-                entryN,
-                entryT);
-
-        entryB =
-            NormalizeSafe(
-                entryB,
-                flatB);
-
-        entryT =
-            Vector3.Cross(
-                entryB,
-                entryN)
-            .normalized;
-
-        // Canonical section entry + the same lane and body-height offsets
-        // that SlopeStickCore currently observes on the flat.
+        // 1本目はPhysicsSplineRootの中心線 + 予測法線方向の支持高さ。
+        // 横laneはここへ混ぜない。
         prediction.position =
             slopeEntry.point +
-            entryB * sideOffset +
-            entryN * normalOffset;
+            predictedN * supportHeight;
 
-        // Geometry is now exactly at the future section entry.  Keep the
-        // already-predicted normal/roughness/velocity for wave dynamics.
-        prediction.heading =
-            flatT;
-
-        prediction.distanceToBoundary =
-            0f;
+        prediction.tangent = predictedT;
+        prediction.normal = predictedN;
+        prediction.heading = flatT;
+        prediction.distanceToBoundary = 0f;
+        prediction.supportHeight = supportHeight;
 
         if (enableLog)
         {
@@ -675,10 +619,11 @@ return generatedPhysicsRoot && generatedVisualPlayer;
                 $"[EqualizerFutureSpline][ENTRY_ANCHOR] " +
                 $"guidePoint={flatGuide.point:F4} " +
                 $"slopePoint={slopeEntry.point:F4} " +
-                $"sideOffset={sideOffset:F4} " +
-                $"normalOffset={normalOffset:F4} " +
+                $"supportHeight={supportHeight:F4} " +
                 $"anchoredPos={prediction.position:F4} " +
-                $"entryT={entryT:F4} entryN={entryN:F4}",
+                $"predictedT={predictedT:F4} " +
+                $"predictedN={predictedN:F4} " +
+                $"predictedB={predictedB:F4}",
                 this);
         }
     }
@@ -784,7 +729,11 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         }
         return stairN;
     }
-    bool PredictExampleEntryState(Transform physicsZero,Vector3 stairT,Vector3 stairN,out EntryPrediction prediction)
+    bool PredictExampleEntryState(
+        Transform physicsZero,
+        Vector3 stairT,
+        Vector3 stairN,
+        out EntryPrediction prediction)
     {
         prediction = default;
         Vector3 planarVelocity = Vector3.ProjectOnPlane(body.velocity,Vector3.up);
@@ -815,6 +764,8 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         float referenceSpeed = Mathf.Max(1f,ReadFloat("referencePlanarSpeed",18f));
         float maxSpeed = referenceSpeed * 1.35f;
         float dt = Mathf.Max(.005f,Time.fixedDeltaTime);
+        // T/NはObserved snapshotから受け取らない。
+        // 現在のExampleBVE安定フレームを開始点にして未来側で発展させる。
         Vector3 simT = NormalizeSafe(source.StableT,heading);
         Vector3 simN = NormalizeSafe(source.StableN,Vector3.up);
         float filteredRoughness = Mathf.Max(0f,source.Roughness);
@@ -822,6 +773,8 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         float distance = 0f;
         float time = 0f;
         Vector3 boundaryPoint = physicsZero.position;
+        // 未来予測の原点は常にPhysics body。Observed表示位置は使わない。
+        Vector3 simulationOrigin = body.position;
         float accelerationAlongHeading = Vector3.Dot(filteredPlanarAcceleration,heading);
         accelerationAlongHeading = Mathf.Clamp(accelerationAlongHeading,-maxPredictedPlanarAcceleration,maxPredictedPlanarAcceleration);
         for (int step = 0;step < maximumEntrySimulationSteps;step++)
@@ -829,8 +782,8 @@ return generatedPhysicsRoot && generatedVisualPlayer;
             float predictedSpeed = Mathf.Clamp(startSpeed + accelerationAlongHeading * time,minimumPredictionSpeed,Mathf.Max(startSpeed,maxSpeed));
             distance += predictedSpeed * dt;
             time += dt;
-            Vector3 simulatedPosition = body.position + heading * distance;
-            simulatedPosition.y = body.position.y;
+            Vector3 simulatedPosition = simulationOrigin + heading * distance;
+            simulatedPosition.y = simulationOrigin.y;
             float bodyX = Vector3.Dot(simulatedPosition - boundaryPoint,stairHorizontal);
             float projectedProbeStep = probeSpacing * headingToStair;
             float h0 = IdealSurfaceHeight(bodyX - 1.5f * projectedProbeStep,grade);
@@ -886,12 +839,13 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         }
         float thresholdGradient = Mathf.Tan(entrySlopeDegrees * Mathf.Deg2Rad);
         float triggerX = (3f * probeSpacing * thresholdGradient / grade) - 1.5f * probeSpacing * headingToStair;
-        float currentX = Vector3.Dot(body.position - boundaryPoint,stairHorizontal);
-        float closingSpeed = Mathf.Max(.1f,Vector3.Dot(planarVelocity,stairHorizontal));
+        float currentX = Vector3.Dot(simulationOrigin - boundaryPoint,stairHorizontal);
+        Vector3 predictedPlanarVelocity = heading * startSpeed;
+        float closingSpeed = Mathf.Max(.1f,Vector3.Dot(predictedPlanarVelocity,stairHorizontal));
         float remainingX = triggerX - currentX;
         float fallbackTime = Mathf.Max(0f,remainingX / closingSpeed);
-        Vector3 fallbackPosition = body.position + heading * startSpeed * fallbackTime;
-        fallbackPosition.y = body.position.y;
+        Vector3 fallbackPosition = simulationOrigin + heading * startSpeed * fallbackTime;
+        fallbackPosition.y = simulationOrigin.y;
         Vector3 fallbackT = NormalizeSafe(heading + Vector3.up * -thresholdGradient,stairT);
         Vector3 fallbackN = NormalizeSafe(Vector3.ProjectOnPlane(Vector3.up,fallbackT),stairN);
         prediction.position = fallbackPosition;
@@ -918,10 +872,7 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         WavePlan plan = CreateWavePlan(group.Count,entry);
         GeneratedGroup generated = new GeneratedGroup
         {
-            name = groupName,
-            referenceTWorld = PhysicsDirectionToVisual(group[0],stairT),
-            referenceNWorld = PhysicsDirectionToVisual(group[0],stairN),
-            ballAlignedToObserved = false
+            name = groupName
         };
 
         generatedSplineCount = 0;
@@ -931,9 +882,15 @@ return generatedPhysicsRoot && generatedVisualPlayer;
             6,
             Mathf.CeilToInt((totalKnotTarget - 1) / (float)group.Count) + 1);
 
-        // 1本目だけを従来の物理・波計算から作る。
-        // 2本目ではこの計算を一切やり直さない。
+        // FutureSplineだけを物理・波計算から作る。
+        // FutureBallは後からObservedの波開始フレーム T0/N0 へ合わせるため、
+        // 各Knotの予測法線・carrier接線・(支持高さ+波高)・進行距離を保存する。
         Vector3[][] basePoints = new Vector3[group.Count][];
+        Vector3[][] predictedNormalsLocal = new Vector3[group.Count][];
+        Vector3[][] carrierTangentsLocal = new Vector3[group.Count][];
+        float[][] normalDistances = new float[group.Count][];
+        float[][] traveledDistances = new float[group.Count][];
+
         for (int i = 0;i < group.Count;i++)
         {
             basePoints[i] = BuildBasePartPoints(
@@ -942,23 +899,18 @@ return generatedPhysicsRoot && generatedVisualPlayer;
                 stairT,
                 stairN,
                 entry,
-                knotPerPart);
+                knotPerPart,
+                out predictedNormalsLocal[i],
+                out carrierTangentsLocal[i],
+                out normalDistances[i],
+                out traveledDistances[i]);
         }
 
-        // FutureBallSpline は予測時には1本目と完全に同じ位置で作る。
-        // 横位置は実際の Observed が StairWayN_0 に入った時点で、
-        // 同じ StairWay ローカル空間から一度だけ確定する。
-        Vector3 visualT0 = NormalizeSafe(
-            generated.referenceTWorld,
-            Vector3.forward);
-        Vector3 visualN0 = NormalizeSafe(
-            Vector3.ProjectOnPlane(generated.referenceNWorld,visualT0),
-            Vector3.up);
-        ballLateralAxis = NormalizeSafe(
-            Vector3.Cross(visualN0,visualT0),
-            Vector3.Cross(Vector3.up,visualT0));
-        ballLateralShift = Vector3.zero;
-
+        // FutureBallSplineは最初はFutureSplineと完全同形・同位置。
+        // rawDeltaはFlat上の最寄り判定では確定しない。
+        // 実際に次のSlopeへ入り、必要なVisualFrame旋回が完了した後だけ、
+        // まずObservedの波開始フレームへFutureBall入口を再構築し、
+        // その再構築後AnchorとObservedEntryPointのWorld差分だけを1回適用する。
         for (int i = 0;i < group.Count;i++)
         {
             StairPair pair = group[i];
@@ -972,21 +924,29 @@ return generatedPhysicsRoot && generatedVisualPlayer;
                 basePoints[i],
                 fallbackT);
 
-            Vector3[] ballPoints =
-                TranslatePoints(basePoints[i],ballLateralShift);
-
             SplineContainer ballSpline =
                 CreateSpline(pair.visual,groupName,pair.index,true);
 
             BuildSplineFromPoints(
                 ballSpline,
-                ballPoints,
+                basePoints[i],
                 fallbackT);
+
+            generated.parts.Add(
+                new GeneratedPart
+                {
+                    future = baseSpline,
+                    ball = ballSpline,
+                    predictedNormalLocal = predictedNormalsLocal[i],
+                    carrierTangentLocal = carrierTangentsLocal[i],
+                    normalDistance = normalDistances[i],
+                    traveledDistance = traveledDistances[i]
+                });
 
             if (pair.index == 0)
             {
                 mappedFirstPoint = basePoints[i][0];
-                mappedFirstBallPoint = ballPoints[0];
+                mappedFirstBallPoint = basePoints[i][0];
 
                 CreateStartMarker(
                     ballSpline,
@@ -1000,6 +960,10 @@ return generatedPhysicsRoot && generatedVisualPlayer;
             generatedKnotCount +=
                 baseSpline.Spline.Count + ballSpline.Spline.Count;
         }
+
+        generated.predictedEntryForwardSpeed = Mathf.Max(
+            0f,
+            Vector3.Dot(entry.velocity,entry.tangent));
 
         generatedGroups.Add(groupName);
         history.Add(generated);
@@ -1021,26 +985,15 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         if (enableLog)
         {
             Debug.Log(
-                $"[EqualizerFutureSpline][PARALLEL_BALL_SPLINE] " +
+                $"[EqualizerFutureSpline][FUTURE_BALL_INITIAL] " +
                 $"group={groupName} parts={group.Count} " +
-                $"lateralAxis={ballLateralAxis:F4} " +
-                $"lateralShift={ballLateralShift:F4} " +
+                $"mode=IdentityCopy alignmentPending=True " +
                 $"baseFirst={mappedFirstPoint:F4} " +
                 $"ballFirst={mappedFirstBallPoint:F4} " +
                 $"splines={generatedSplineCount} " +
                 $"knots={generatedKnotCount}",
                 this);
         }
-    }
-
-    static Vector3[] TranslatePoints(Vector3[] sourcePoints,Vector3 shift)
-    {
-        Vector3[] translated = new Vector3[sourcePoints.Length];
-        for (int i = 0;i < sourcePoints.Length;i++)
-        {
-            translated[i] = sourcePoints[i] + shift;
-        }
-        return translated;
     }
 
     WavePlan CreateWavePlan(int multiplier,EntryPrediction entry)
@@ -1112,9 +1065,17 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         Vector3 stairT,
         Vector3 stairN,
         EntryPrediction entry,
-        int knotCount)
+        int knotCount,
+        out Vector3[] predictedNormalLocal,
+        out Vector3[] carrierTangentLocal,
+        out float[] normalDistance,
+        out float[] traveledDistance)
     {
         Vector3[] points = new Vector3[knotCount];
+        predictedNormalLocal = new Vector3[knotCount];
+        carrierTangentLocal = new Vector3[knotCount];
+        normalDistance = new float[knotCount];
+        traveledDistance = new float[knotCount];
         float startProgress = pair.index / (float)plan.multiplier;
         float endProgress = (pair.index + 1) / (float)plan.multiplier;
 
@@ -1141,6 +1102,27 @@ return generatedPhysicsRoot && generatedVisualPlayer;
             }
 
             points[i] = PhysicsToVisual(pair,physicsPoint);
+
+            Vector3 visualNormal = NormalizeSafe(
+                PhysicsDirectionToVisual(pair,waveN),
+                pair.visual.up);
+
+            Vector3 visualTangent = NormalizeSafe(
+                PhysicsDirectionToVisual(pair,carrierT),
+                pair.visual.forward);
+
+            predictedNormalLocal[i] =
+                pair.visual.InverseTransformDirection(visualNormal);
+
+            carrierTangentLocal[i] =
+                pair.visual.InverseTransformDirection(visualTangent);
+
+            // supportHeight is the existing ball-center/support offset.
+            // Rotate it together with the wave; do not add another radius.
+            normalDistance[i] =
+                entry.supportHeight + wave;
+
+            traveledDistance[i] = traveled;
         }
 
         return points;
@@ -1395,158 +1377,742 @@ return generatedPhysicsRoot && generatedVisualPlayer;
         }
     }
 
-    void UpdateObservedStairRetention(Vector3 point)
+    void UpdateObservedWaveEntryState()
     {
-        if (!TryGetClosestObservedStair(out string groupName,out int childIndex))
-            return;
+        bool active = source && source.IsActive;
 
-        // 3本目は StairWayN_0 を保持境界にする。
-        // N_1,N_2... に進んでも消さず、次の別Groupの _0 が最寄りになった時だけ入れ替える。
-        if (childIndex != 0) return;
-
-        if (string.IsNullOrEmpty(observedCurrentStairGroup))
+        if (active && !previousSourceActive)
         {
-            observedCurrentStairGroup = groupName;
-            observedGroupStartPoint = point;
-            hasObservedGroupStartPoint = true;
-            TryAlignFutureBallSplineToObserved(groupName,observedGroupStartPoint);
-            return;
+            Vector3 fallbackVelocity =
+                body ? body.velocity : Vector3.forward;
+
+            Vector3 entryT = NormalizeSafe(
+                source.StableT,
+                fallbackVelocity);
+
+            Vector3 entryN = NormalizeSafe(
+                Vector3.ProjectOnPlane(source.StableN,entryT),
+                Vector3.up);
+
+            if (Vector3.Dot(entryN,Vector3.up) < 0f)
+                entryN = -entryN;
+
+            Vector3 entryB = NormalizeSafe(
+                Vector3.Cross(entryN,entryT),
+                source.StableB);
+
+            if (source.StableB.sqrMagnitude > Eps &&
+                Vector3.Dot(entryB,source.StableB) < 0f)
+            {
+                entryB = -entryB;
+            }
+
+            entryT = NormalizeSafe(
+                Vector3.Cross(entryB,entryN),
+                entryT);
+
+            Vector3 entryVelocity =
+                body ? body.velocity : Vector3.zero;
+
+            string entryGroup = "";
+            if (TryGetClosestObservedStair(
+                    out string closestGroup,
+                    out int closestIndex) &&
+                closestIndex == 0)
+            {
+                entryGroup = closestGroup;
+            }
+            else if (!string.IsNullOrEmpty(lastGeneratedGroup))
+            {
+                entryGroup = lastGeneratedGroup;
+            }
+
+            observedWaveEntryGroup = entryGroup;
+            observedWaveEntryTangent = entryT;
+            observedWaveEntryNormal = entryN;
+            observedWaveEntryBinormal = entryB;
+            observedWaveEntryVelocity = entryVelocity;
+            observedWaveEntryForwardSpeed =
+                Vector3.Dot(entryVelocity,entryT);
+            observedWaveEntryRevision++;
+
+            // actualDisplayTarget は ExampleBVE の LateUpdate 後に確定する。
+            // FixedUpdate では T/N/velocity だけをラッチし、同じフレームの
+            // 表示位置 P0 はこのクラスの LateUpdate で受け取る。
+            waveEntryPointCapturePending = true;
+            hasObservedWaveEntry = false;
         }
 
-        if (groupName == observedCurrentStairGroup)
-        {
-            // Future prediction がわずかに遅れて生成された場合にも、
-            // 最初に保存した Observed 始点で一度だけ再試行する。
-            if (hasObservedGroupStartPoint)
-                TryAlignFutureBallSplineToObserved(groupName,observedGroupStartPoint);
+        previousSourceActive = active;
+    }
+
+    void FinalizeObservedWaveEntryPoint(Vector3 point)
+    {
+        if (!waveEntryPointCapturePending)
             return;
+
+        observedWaveEntryPoint = point;
+
+        if (string.IsNullOrEmpty(observedWaveEntryGroup))
+        {
+            if (TryGetClosestObservedStair(
+                    out string closestGroup,
+                    out int closestIndex) &&
+                closestIndex == 0)
+            {
+                observedWaveEntryGroup = closestGroup;
+            }
+            else if (!string.IsNullOrEmpty(lastGeneratedGroup))
+            {
+                observedWaveEntryGroup = lastGeneratedGroup;
+            }
         }
 
-        string previousGroup = observedCurrentStairGroup;
-        observedCurrentStairGroup = groupName;
-        observedGroupStartPoint = point;
-        hasObservedGroupStartPoint = true;
-        ResetObservedSpline(point);
-        TryAlignFutureBallSplineToObserved(groupName,observedGroupStartPoint);
+        waveEntryPointCapturePending = false;
+        hasObservedWaveEntry = true;
 
         if (enableLog)
         {
             Debug.Log(
-                $"[EqualizerFutureSpline][OBSERVED_NEXT_STAIR_ZERO] " +
-                $"from={previousGroup} to={groupName} point={point:F4}",
+                $"[EqualizerFutureSpline][WAVE_ENTRY_CAPTURE] " +
+                $"revision={observedWaveEntryRevision} " +
+                $"group={observedWaveEntryGroup} " +
+                $"point={observedWaveEntryPoint:F4} " +
+                $"T={observedWaveEntryTangent:F4} " +
+                $"N={observedWaveEntryNormal:F4} " +
+                $"B={observedWaveEntryBinormal:F4} " +
+                $"velocity={observedWaveEntryVelocity:F4} " +
+                $"forwardSpeed={observedWaveEntryForwardSpeed:F3}",
                 this);
         }
     }
 
-    bool TryAlignFutureBallSplineToObserved(
-        string groupName,
-        Vector3 observedWorldPoint)
+    void UpdateObservedStairRetention(Vector3 point)
     {
-        GeneratedGroup generated = FindGeneratedGroup(groupName);
-        if (generated == null || generated.ballAlignedToObserved)
-            return generated != null;
+        if (!knotDetector) return;
 
-        if (generated.splines.Count < 2) return false;
+        NearestKnotDetector.GuideFrame guide =
+            knotDetector.CurrentGuide;
 
-        SplineContainer baseSpline = generated.splines[0];
-        SplineContainer ballSpline = generated.splines[1];
-        if (!baseSpline || !ballSpline ||
-            baseSpline.Spline == null || baseSpline.Spline.Count == 0 ||
-            ballSpline.Spline == null || ballSpline.Spline.Count == 0)
+        if (!guide.valid)
+            return;
+
+        bool isSlope = guide.isSlope;
+        bool turning = IsVisualFrameTurning();
+
+        if (!courseGuideStateInitialized)
         {
-            return false;
+            courseGuideStateInitialized = true;
+            previousGuideWasSlope = isSlope;
+
+            // 初回も含め、次に実際のSlopeへ入った時点を認識点にする。
+            courseRecognitionArmed = true;
         }
 
-        // スクリーンショットの方針どおり、Observed と Future の基準点を
-        // 同じ StairWayN_0 ローカル空間へ落としてから差を取る。
-        Transform stairFrame = baseSpline.transform;
-        Vector3 baseWorld = stairFrame.TransformPoint(
-            ToVector3(baseSpline.Spline[0].Position));
-        Vector3 baseLocal = stairFrame.InverseTransformPoint(baseWorld);
-        Vector3 observedLocal = stairFrame.InverseTransformPoint(observedWorldPoint);
-        Vector3 deltaLocal = observedLocal - baseLocal;
+        // 角度やforwardから「曲がるはず」と予測しない。
+        // 前回のコース確定後にVisualFrame旋回が実際に起きたかだけを記録する。
+        if (turning)
+            courseSawVisualTurn = true;
 
-        Vector3 localT = NormalizeSafe(
-            stairFrame.InverseTransformDirection(generated.referenceTWorld),
+        // Stair -> Flat に出たら、次コースの認識を必ず待ち状態へ戻す。
+        // Flat上では最寄りStairWayを使ってrawDeltaを確定しない。
+        if (previousGuideWasSlope && !isSlope)
+            courseRecognitionArmed = true;
+
+        // rawDeltaを取るのは「実際にSlope上」「旋回は終了済み」の両方を満たす時だけ。
+        // 直進コースではturningが一度もtrueにならないので、そのままここへ入る。
+        // 曲がるコースではturning中は待ち、falseへ戻った後にここへ入る。
+        if (courseRecognitionArmed &&
+            isSlope &&
+            !turning)
+        {
+            if (!TryGetClosestObservedStair(
+                    out string groupName,
+                    out int childIndex))
+            {
+                previousGuideWasSlope = isSlope;
+                return;
+            }
+
+            // 実際に次のStairWayの先頭区間へ入った時だけ確定する。
+            if (childIndex != 0)
+            {
+                previousGuideWasSlope = isSlope;
+                return;
+            }
+
+            // Futureがまだ生成されていないなら、この認識は消費しない。
+            if (!TryGetGeneratedGroup(
+                    groupName,
+                    out GeneratedGroup generated) ||
+                generated.parts.Count == 0)
+            {
+                previousGuideWasSlope = isSlope;
+                return;
+            }
+
+            string previousGroup =
+                observedCurrentStairGroup;
+
+            bool groupChanged =
+                string.IsNullOrEmpty(previousGroup) ||
+                groupName != previousGroup;
+
+            if (groupChanged)
+            {
+                observedCurrentStairGroup = groupName;
+
+                if (!string.IsNullOrEmpty(previousGroup))
+                    ResetObservedSpline(point);
+            }
+
+            // FutureBall は「コース確定時の現在フレーム」ではなく、
+            // ExampleBVE が実際に波を開始した瞬間の P0/T0/N0 を使う。
+            // これにより旋回完了待ちで初期条件が上書きされるのを防ぐ。
+            if (!hasObservedWaveEntry)
+            {
+                previousGuideWasSlope = isSlope;
+                return;
+            }
+
+            if (string.IsNullOrEmpty(observedWaveEntryGroup))
+                observedWaveEntryGroup = groupName;
+
+            if (observedWaveEntryGroup != groupName)
+            {
+                previousGuideWasSlope = isSlope;
+                return;
+            }
+
+            string courseMode =
+                courseSawVisualTurn
+                    ? "TurnCompleted"
+                    : "StraightNoTurn";
+
+            Vector3 confirmedObservedTangent = NormalizeSafe(
+                observedWaveEntryTangent,
+                source ? source.StableT : guide.tangent);
+
+            Vector3 confirmedObservedNormal = NormalizeSafe(
+                Vector3.ProjectOnPlane(
+                    observedWaveEntryNormal,
+                    confirmedObservedTangent),
+                guide.normal);
+
+            if (Vector3.Dot(confirmedObservedNormal,Vector3.up) < 0f)
+                confirmedObservedNormal = -confirmedObservedNormal;
+
+            ApplyObservedAlignmentToFutureBall(
+                groupName,
+                observedWaveEntryPoint,
+                confirmedObservedTangent,
+                confirmedObservedNormal,
+                observedWaveEntryForwardSpeed);
+
+            if (!generated.alignmentApplied)
+            {
+                previousGuideWasSlope = isSlope;
+                return;
+            }
+
+            if (enableLog)
+            {
+                Debug.Log(
+                    $"[EqualizerFutureSpline][COURSE_CONFIRMED] " +
+                    $"group={groupName} " +
+                    $"mode={courseMode} " +
+                    $"turnSeen={courseSawVisualTurn} " +
+                    $"turning={turning} " +
+                    $"point={point:F4} " +
+                    $"entryPoint={observedWaveEntryPoint:F4} " +
+                    $"confirmedT={confirmedObservedTangent:F4} " +
+                    $"confirmedN={confirmedObservedNormal:F4} " +
+                    $"entryForwardSpeed={observedWaveEntryForwardSpeed:F3}",
+                    this);
+
+                if (groupChanged &&
+                    !string.IsNullOrEmpty(previousGroup))
+                {
+                    Debug.Log(
+                        $"[EqualizerFutureSpline][OBSERVED_NEXT_STAIR_ZERO] " +
+                        $"from={previousGroup} to={groupName} " +
+                        $"point={point:F4} " +
+                        $"course={courseMode}",
+                        this);
+                }
+            }
+
+            courseRecognitionArmed = false;
+            courseSawVisualTurn = false;
+            hasObservedWaveEntry = false;
+        }
+
+        previousGuideWasSlope = isSlope;
+    }
+
+    bool IsVisualFrameTurning()
+    {
+        return
+            correspondSubject != null &&
+            correspondSubject.IsVisualFrameTurning;
+    }
+
+    void ApplyObservedAlignmentToFutureBall(
+        string groupName,
+        Vector3 observedAnchorWorld,
+        Vector3 observedTangentWorld,
+        Vector3 observedNormalWorld,
+        float observedForwardSpeed)
+    {
+        if (string.IsNullOrEmpty(groupName))
+            return;
+
+        if (!TryGetGeneratedGroup(groupName,out GeneratedGroup generated) ||
+            generated.parts.Count == 0)
+        {
+            if (enableLog)
+            {
+                Debug.Log(
+                    $"[EqualizerFutureSpline][OBSERVED_FUTURE_DELTA] " +
+                    $"group={groupName} found=False observedAnchor={observedAnchorWorld:F4}",
+                    this);
+            }
+            return;
+        }
+
+        if (generated.alignmentApplied)
+            return;
+
+        GeneratedPart anchorPart = generated.parts[0];
+        if (!TryGetFirstKnotWorldPoint(
+                anchorPart.future,
+                out Vector3 futureAnchorWorld))
+        {
+            return;
+        }
+
+        observedTangentWorld = NormalizeSafe(
+            observedTangentWorld,
             Vector3.forward);
-        Vector3 localN = stairFrame.InverseTransformDirection(
-            generated.referenceNWorld);
-        localN = NormalizeSafe(
-            Vector3.ProjectOnPlane(localN,localT),
+
+        observedNormalWorld = NormalizeSafe(
+            Vector3.ProjectOnPlane(
+                observedNormalWorld,
+                observedTangentWorld),
             Vector3.up);
-        Vector3 localB = NormalizeSafe(
-            Vector3.Cross(localN,localT),
-            Vector3.Cross(Vector3.up,localT));
 
-        // 進行方向Tと法線Nは一切動かさず、横方向B成分だけ残す。
-        float lateralDistanceLocal = Vector3.Dot(deltaLocal,localB);
-        Vector3 lateralLocal = localB * lateralDistanceLocal;
-        Vector3 worldShift = stairFrame.TransformVector(lateralLocal);
+        if (Vector3.Dot(observedNormalWorld,Vector3.up) < 0f)
+            observedNormalWorld = -observedNormalWorld;
 
-        for (int i = 1;i < generated.splines.Count;i += 2)
+        // Nだけを後から回す方式は、Tが違う区間でProjectOnPlaneにより
+        // 補正がほぼ消える場合があった。今回は波開始時の実測 T0/N0 を
+        // 1つの直交フレームとして扱い、FutureBallの入口側だけを補正する。
+        bool rebuiltEntryFrame =
+            RebuildFutureBallEntryFrame(
+                generated,
+                observedTangentWorld,
+                observedNormalWorld,
+                out Vector3 predictedAnchorTangentWorld,
+                out Vector3 predictedAnchorNormalWorld,
+                out float tangentErrorDegrees,
+                out float normalErrorDegrees,
+                out float entryFrameRotationDegrees,
+                out float maxTangentCorrection,
+                out float maxNormalCorrection);
+
+        // T/N再構築後のFutureBall先頭点を位置合わせの基準にする。
+        // P0は最後にrawDeltaだけで一致させ、フレーム補正量は消さない。
+        Vector3 correctedBallAnchorBeforeWorld =
+            futureAnchorWorld;
+
+        if (!TryGetFirstKnotWorldPoint(
+                anchorPart.ball,
+                out correctedBallAnchorBeforeWorld))
         {
-            SplineContainer target = generated.splines[i];
-            if (!target || target.Spline == null) continue;
-            TranslateSplineKnotsWorld(target,worldShift);
+            correctedBallAnchorBeforeWorld =
+                futureAnchorWorld;
         }
 
-        generated.ballAlignedToObserved = true;
-        ballLateralAxis = NormalizeSafe(
-            stairFrame.TransformDirection(localB),
-            Vector3.right);
-        ballLateralShift = worldShift;
-        mappedFirstPoint = baseWorld;
-        mappedFirstBallPoint = baseWorld + worldShift;
+        Vector3 rawDelta =
+            observedAnchorWorld - correctedBallAnchorBeforeWorld;
 
-        Transform marker = FindDescendant(
-            ballSpline.transform,
-            "BallStartKnot");
-        if (marker) marker.position = mappedFirstBallPoint;
+        for (int i = 0;i < generated.parts.Count;i++)
+        {
+            GeneratedPart part = generated.parts[i];
+            if (!part.ball)
+                continue;
+
+            part.ball.transform.position += rawDelta;
+        }
+
+        generated.alignmentApplied = true;
+        generated.alignmentDeltaWorld = rawDelta;
+
+        TryGetFirstKnotWorldPoint(
+            anchorPart.ball,
+            out Vector3 ballAnchorWorld);
+
+        float reconstructionError =
+            Vector3.Distance(
+                ballAnchorWorld,
+                observedAnchorWorld);
+
+        Transform parent =
+            anchorPart.future && anchorPart.future.transform.parent
+                ? anchorPart.future.transform.parent
+                : null;
+
+        Vector3 expectedLocalShift =
+            parent
+                ? parent.InverseTransformVector(rawDelta)
+                : rawDelta;
+
+        Vector3 actualLocalShift =
+            anchorPart.ball && anchorPart.future
+                ? anchorPart.ball.transform.localPosition -
+                  anchorPart.future.transform.localPosition
+                : Vector3.zero;
+
+        float supportAtAnchor =
+            anchorPart.normalDistance != null &&
+            anchorPart.normalDistance.Length > 0
+                ? anchorPart.normalDistance[0]
+                : 0f;
+
+        float predictedForwardSpeed =
+            generated.predictedEntryForwardSpeed;
+
+        float forwardSpeedError =
+            observedForwardSpeed - predictedForwardSpeed;
+
+        observedFutureComparedSpline =
+            anchorPart.future ? anchorPart.future.name : "";
+        observedFutureAnchorWorld = futureAnchorWorld;
+        observedFutureRawDelta = rawDelta;
+        observedFutureAlignmentApplied = true;
+        observedFutureConfirmedTangent = observedTangentWorld;
+        observedFutureConfirmedNormal = observedNormalWorld;
+        observedFutureEntryFrameRotationDegrees = entryFrameRotationDegrees;
+        observedFutureTangentErrorDegrees = tangentErrorDegrees;
+        observedFutureMaxTangentCorrection = maxTangentCorrection;
+        observedFutureMaxNormalCorrection = maxNormalCorrection;
+        observedFutureAnchorError = reconstructionError;
+        mappedFirstBallPoint = ballAnchorWorld;
 
         if (enableLog)
         {
+            string parentName =
+                parent ? parent.name : "<none>";
+
             Debug.Log(
-                $"[EqualizerFutureSpline][BALL_LATERAL_OBSERVED_LOCAL] " +
+                $"[EqualizerFutureSpline][ENTRY_FRAME_ALIGNMENT] " +
                 $"group={groupName} " +
-                $"baseLocal={baseLocal:F4} " +
-                $"observedLocal={observedLocal:F4} " +
-                $"deltaLocal={deltaLocal:F4} " +
-                $"T={localT:F4} N={localN:F4} B={localB:F4} " +
-                $"lateralLocal={lateralLocal:F4} " +
-                $"worldShift={worldShift:F4} " +
-                $"dotT={Vector3.Dot(lateralLocal,localT):F6} " +
-                $"dotN={Vector3.Dot(lateralLocal,localN):F6}",
+                $"predictedT={predictedAnchorTangentWorld:F4} " +
+                $"observedT={observedTangentWorld:F4} " +
+                $"tangentErrorBefore={tangentErrorDegrees:F3} " +
+                $"predictedN={predictedAnchorNormalWorld:F4} " +
+                $"observedN={observedNormalWorld:F4} " +
+                $"normalErrorBefore={normalErrorDegrees:F3} " +
+                $"entryFrameRotationDeg={entryFrameRotationDegrees:F3} " +
+                $"predictedForwardSpeed={predictedForwardSpeed:F3} " +
+                $"observedForwardSpeed={observedForwardSpeed:F3} " +
+                $"forwardSpeedError={forwardSpeedError:F3} " +
+                $"maxTangentCorrection={maxTangentCorrection:F4} " +
+                $"maxNormalCorrection={maxNormalCorrection:F4} " +
+                $"entryFrameRebuilt={rebuiltEntryFrame}",
                 this);
+
+            Debug.Log(
+                $"[EqualizerFutureSpline][OBSERVED_FUTURE_DELTA] " +
+                $"group={groupName} " +
+                $"future={anchorPart.future.name} " +
+                $"ball={anchorPart.ball.name} " +
+                $"parent={parentName} " +
+                $"futureAnchor={futureAnchorWorld:F4} " +
+                $"correctedBallAnchorBefore={correctedBallAnchorBeforeWorld:F4} " +
+                $"observedAnchor={observedAnchorWorld:F4} " +
+                $"rawDelta={rawDelta:F4} " +
+                $"supportAtAnchor={supportAtAnchor:F4} " +
+                $"ballAnchorAfter={ballAnchorWorld:F4} " +
+                $"reconstructionError={reconstructionError:F6} " +
+                $"expectedLocalShift={expectedLocalShift:F4} " +
+                $"actualLocalShift={actualLocalShift:F4} " +
+                $"appliedToBall=True",
+                this);
+        }
+    }
+
+    bool RebuildFutureBallEntryFrame(
+        GeneratedGroup generated,
+        Vector3 observedTangentWorld,
+        Vector3 observedNormalWorld,
+        out Vector3 predictedAnchorTangentWorld,
+        out Vector3 predictedAnchorNormalWorld,
+        out float tangentErrorDegrees,
+        out float normalErrorDegrees,
+        out float entryFrameRotationDegrees,
+        out float maxTangentCorrection,
+        out float maxNormalCorrection)
+    {
+        predictedAnchorTangentWorld = Vector3.forward;
+        predictedAnchorNormalWorld = Vector3.up;
+        tangentErrorDegrees = 0f;
+        normalErrorDegrees = 0f;
+        entryFrameRotationDegrees = 0f;
+        maxTangentCorrection = 0f;
+        maxNormalCorrection = 0f;
+
+        if (generated == null || generated.parts.Count == 0)
+            return false;
+
+        GeneratedPart anchorPart = generated.parts[0];
+        if (!HasEntryFrameData(anchorPart))
+            return false;
+
+        predictedAnchorTangentWorld = NormalizeSafe(
+            anchorPart.future.transform.TransformDirection(
+                anchorPart.carrierTangentLocal[0]),
+            Vector3.forward);
+
+        predictedAnchorNormalWorld = NormalizeSafe(
+            Vector3.ProjectOnPlane(
+                anchorPart.future.transform.TransformDirection(
+                    anchorPart.predictedNormalLocal[0]),
+                predictedAnchorTangentWorld),
+            Vector3.up);
+
+        if (Vector3.Dot(predictedAnchorNormalWorld,Vector3.up) < 0f)
+            predictedAnchorNormalWorld = -predictedAnchorNormalWorld;
+
+        observedTangentWorld = NormalizeSafe(
+            observedTangentWorld,
+            predictedAnchorTangentWorld);
+
+        observedNormalWorld = NormalizeSafe(
+            Vector3.ProjectOnPlane(
+                observedNormalWorld,
+                observedTangentWorld),
+            predictedAnchorNormalWorld);
+
+        if (Vector3.Dot(observedNormalWorld,Vector3.up) < 0f)
+            observedNormalWorld = -observedNormalWorld;
+
+        tangentErrorDegrees = Vector3.Angle(
+            predictedAnchorTangentWorld,
+            observedTangentWorld);
+
+        normalErrorDegrees = Vector3.Angle(
+            predictedAnchorNormalWorld,
+            observedNormalWorld);
+
+        Quaternion predictedFrame =
+            Quaternion.LookRotation(
+                predictedAnchorTangentWorld,
+                predictedAnchorNormalWorld);
+
+        Quaternion observedFrame =
+            Quaternion.LookRotation(
+                observedTangentWorld,
+                observedNormalWorld);
+
+        Quaternion entryFrameDelta =
+            observedFrame * Quaternion.Inverse(predictedFrame);
+
+        entryFrameRotationDegrees =
+            Quaternion.Angle(
+                Quaternion.identity,
+                entryFrameDelta);
+
+        float settleDistance =
+            Mathf.Max(.25f,carrierSettleDistance);
+
+        for (int p = 0;p < generated.parts.Count;p++)
+        {
+            GeneratedPart part = generated.parts[p];
+            if (!HasEntryFrameData(part))
+                continue;
+
+            int count = Mathf.Min(
+                part.future.Spline.Count,
+                Mathf.Min(
+                    part.predictedNormalLocal.Length,
+                    Mathf.Min(
+                        part.carrierTangentLocal.Length,
+                        Mathf.Min(
+                            part.normalDistance.Length,
+                            part.traveledDistance.Length))));
+
+            if (count < 2)
+                continue;
+
+            Vector3[] correctedWorldPoints =
+                new Vector3[count];
+
+            for (int k = 0;k < count;k++)
+            {
+                BezierKnot futureKnot =
+                    part.future.Spline[k];
+
+                Vector3 futureWorld =
+                    part.future.transform.TransformPoint(
+                        ToVector3(futureKnot.Position));
+
+                Vector3 predictedT = NormalizeSafe(
+                    part.future.transform.TransformDirection(
+                        part.carrierTangentLocal[k]),
+                    predictedAnchorTangentWorld);
+
+                Vector3 predictedN = NormalizeSafe(
+                    Vector3.ProjectOnPlane(
+                        part.future.transform.TransformDirection(
+                            part.predictedNormalLocal[k]),
+                        predictedT),
+                    predictedAnchorNormalWorld);
+
+                if (Vector3.Dot(predictedN,Vector3.up) < 0f)
+                    predictedN = -predictedN;
+
+                float traveled =
+                    Mathf.Max(0f,part.traveledDistance[k]);
+
+                float u = Mathf.Clamp01(
+                    traveled / settleDistance);
+
+                float entryWeight =
+                    1f - Mathf.SmoothStep(0f,1f,u);
+
+                Quaternion localFrameDelta =
+                    Quaternion.Slerp(
+                        Quaternion.identity,
+                        entryFrameDelta,
+                        entryWeight);
+
+                Vector3 rotatedT =
+                    localFrameDelta * predictedT;
+
+                Vector3 rotatedN =
+                    localFrameDelta * predictedN;
+
+                Vector3 correctedT = NormalizeSafe(
+                    rotatedT,
+                    predictedT);
+
+                Vector3 correctedN = NormalizeSafe(
+                    Vector3.ProjectOnPlane(
+                        rotatedN,
+                        correctedT),
+                    rotatedN);
+
+                if (Vector3.Dot(correctedN,rotatedN) < 0f)
+                    correctedN = -correctedN;
+
+                // T補正は入口からの進行距離に対してのみ作用する。
+                // entryWeightが0になると元Futureへ滑らかに復帰するので、
+                // 後半の階段形状や別partを丸ごと回転させない。
+                Vector3 tangentCorrection =
+                    (correctedT - predictedT) * traveled;
+
+                Vector3 normalCorrection =
+                    (correctedN - predictedN) *
+                    part.normalDistance[k];
+
+                correctedWorldPoints[k] =
+                    futureWorld +
+                    tangentCorrection +
+                    normalCorrection;
+
+                maxTangentCorrection = Mathf.Max(
+                    maxTangentCorrection,
+                    tangentCorrection.magnitude);
+
+                maxNormalCorrection = Mathf.Max(
+                    maxNormalCorrection,
+                    normalCorrection.magnitude);
+            }
+
+            part.ball.transform.localPosition =
+                part.future.transform.localPosition;
+            part.ball.transform.localRotation =
+                part.future.transform.localRotation;
+            part.ball.transform.localScale =
+                part.future.transform.localScale;
+
+            Vector3 fallbackT = NormalizeSafe(
+                correctedWorldPoints[1] - correctedWorldPoints[0],
+                observedTangentWorld);
+
+            BuildSplineFromPoints(
+                part.ball,
+                correctedWorldPoints,
+                fallbackT);
+
+            Transform startMarker =
+                part.ball.transform.Find("BallStartKnot");
+
+            if (startMarker && p == 0)
+                startMarker.position = correctedWorldPoints[0];
         }
 
         return true;
     }
 
-    GeneratedGroup FindGeneratedGroup(string groupName)
+    static bool HasEntryFrameData(
+        GeneratedPart part)
+    {
+        return
+            part != null &&
+            part.future &&
+            part.ball &&
+            part.future.Spline != null &&
+            part.predictedNormalLocal != null &&
+            part.carrierTangentLocal != null &&
+            part.normalDistance != null &&
+            part.traveledDistance != null &&
+            part.predictedNormalLocal.Length > 0 &&
+            part.carrierTangentLocal.Length > 0 &&
+            part.normalDistance.Length > 0 &&
+            part.traveledDistance.Length > 0;
+    }
+
+    bool TryGetGeneratedGroup(
+        string groupName,
+        out GeneratedGroup generated)
     {
         for (int i = history.Count - 1;i >= 0;i--)
         {
-            GeneratedGroup generated = history[i];
-            if (generated != null && generated.name == groupName)
-                return generated;
+            GeneratedGroup candidate = history[i];
+            if (candidate != null && candidate.name == groupName)
+            {
+                generated = candidate;
+                return true;
+            }
         }
-        return null;
+
+        generated = null;
+        return false;
     }
 
-    static void TranslateSplineKnotsWorld(
+    static bool TryGetFirstKnotWorldPoint(
         SplineContainer container,
-        Vector3 worldShift)
+        out Vector3 worldPoint)
     {
-        Transform frame = container.transform;
-        Vector3 localShift = frame.InverseTransformVector(worldShift);
-        Spline spline = container.Spline;
+        worldPoint = Vector3.zero;
 
-        for (int i = 0;i < spline.Count;i++)
+        if (!container ||
+            container.Spline == null ||
+            container.Spline.Count == 0)
         {
-            BezierKnot knot = spline[i];
-            knot.Position += ToFloat3(localShift);
-            spline[i] = knot;
+            return false;
         }
+
+        BezierKnot knot =
+            container.Spline[0];
+
+        worldPoint =
+            container.transform.TransformPoint(
+                ToVector3(knot.Position));
+
+        return true;
     }
 
     bool TryGetClosestObservedStair(out string groupName,out int childIndex)

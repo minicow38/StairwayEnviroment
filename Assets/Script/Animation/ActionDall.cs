@@ -181,7 +181,7 @@ public class ActionDall : MonoBehaviour
             }
             var localAngle = col.transform.localEulerAngles;
 
-            transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y, localAngle.z);
+            transform.rotation = Quaternion.Euler(localAngle.x, localAngle.y+180, localAngle.z);
 
             transform.GetComponent<CapsuleCollider>().isTrigger = true;
             DollAttachGrond = col.transform;

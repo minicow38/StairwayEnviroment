@@ -86,7 +86,7 @@ public class GettingTraffic_Corn : MonoBehaviour
     IEnumerator delayResume()
     {
         Debug.Log("A : Coroutine開始");
-        yield return new WaitForSeconds(0.5f);
+        yield return new WaitForSeconds(0.125f);
 
         MainGameManager.DropOut.SetActive(true);
 
@@ -100,7 +100,7 @@ public class GettingTraffic_Corn : MonoBehaviour
         }
 
 
-        yield return new WaitForSeconds(2f);
+        yield return new WaitForSeconds(1f);
         
         MainGameManager.DropOut.SetActive(false);
 
