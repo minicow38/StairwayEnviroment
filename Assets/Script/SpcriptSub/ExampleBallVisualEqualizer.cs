@@ -459,18 +459,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         if (sourceTrail) {
             TrailRenderer displayTrail = destination.gameObject.AddComponent<TrailRenderer>();
             CopyTrailSettings(sourceTrail, displayTrail);
-            
-            TrailLengthController lengthController =
-                source.GetComponent<TrailLengthController>();
-
-            if (lengthController)
-                lengthController.SetTrail(displayTrail);
-
-            BallVisualTrailTurnReset turnReset =
-                source.GetComponent<BallVisualTrailTurnReset>();
-
-            if (turnReset)
-                turnReset.SetTrail(displayTrail);
             displayTrail.enabled = sourceTrail.enabled;
             displayTrail.emitting = false;
             displayTrail.Clear();
@@ -679,6 +667,10 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         currentWaveLocal01 = 1f;
         ResetVisualFilterState(0f);
         active = exiting = false;
+        // After a teleport/restart, require a new observed flat section before
+        // accepting the next automatic stair entry. Do not reuse old arming.
+        armed = false;
+        flatElapsed = 0f;
 
         lastDebugWaveIndex = int.MinValue;
         lastDebugFSide = 0;
@@ -689,6 +681,37 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
             "INIT",
             $"pos={inSubject.position:F4} vel={inSubject.velocity:F4} " +
             $"heading={heading:F4} T={tangent:F4} N={normal:F4} B={binormal:F4}");
+    }
+
+    // Called ONLY when a new flat-to-stair entry is accepted, never while
+    // advancing the waves along a stair. Rebuild from the *current* ground
+    // gradient and Rigidbody heading rather than parallel-transporting a
+    // possibly upside-down frame left by a turn or restart.
+    bool RebuildFrameAtStairEntry(Vector3 velocity) {
+        Vector3 planar = Vector3.ProjectOnPlane(velocity, Vector3.up);
+        if (planar.sqrMagnitude > .01f)
+            heading = planar.normalized;
+
+        Vector3 entryT = heading + Vector3.up * (probeValid ? gradient : 0f);
+        if (entryT.sqrMagnitude < Eps)
+            return false;
+        entryT.Normalize();
+
+        Vector3 entryN = Vector3.ProjectOnPlane(Vector3.up, entryT);
+        if (entryN.sqrMagnitude < Eps)
+            return false;
+        entryN.Normalize();
+
+        Vector3 oldN = normal;
+        tangent = entryT;
+        normal = entryN; // Up-facing support normal, including downhill slopes.
+        binormal = Vector3.Cross(normal, tangent).normalized;
+        previousNormal = normal;
+
+        DebugEvent("ENTRY_FRAME_RESET",
+            $"oldN={oldN:F4} T={tangent:F4} N={normal:F4} B={binormal:F4} " +
+            $"normalReversed={Vector3.Dot(oldN, normal) < 0f} gradient={gradient:F4}");
+        return true;
     }
 
 
@@ -982,7 +1005,17 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     public void BeginStair() {
         if (!Application.isPlaying || !initialized) return;
 
+        // An active stair program is never interrupted mid-wave. A finished
+        // (exiting) program may be superseded at the next genuine boundary.
+        if (active && !exiting) return;
+
         Vector3 v = inSubject.velocity;
+
+        if (!RebuildFrameAtStairEntry(v)) {
+            armed = false; // wait for a fresh flat-to-stair transition
+            DebugEvent("ENTRY_FRAME_INVALID", "Could not rebuild an up-facing frame; stair wave not started.");
+            return;
+        }
 
         // Keep the successful factor itself:
         // sample entry energy from the live probe normal once at BeginStair.
@@ -1177,28 +1210,36 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         DebugProbeTransition();
 
         Vector3 planar = Vector3.ProjectOnPlane(v, Vector3.up);
+        // Re-arm from an observed flat section, even while the previous wave
+        // is in its exit tail. Do not treat individual stair steps as entries.
+        if (!active || exiting) {
+            flatElapsed = probeValid && lastProbeSlopeDegrees < entrySlopeDegrees * .5f
+                ? flatElapsed + dt : 0f;
+            if (flatElapsed > .12f && Time.fixedTime - lastBegin > .4f)
+                armed = true;
+        }
+
         if (!active) {
             visualOffset = 0f;
             currentWaveLocal01 = 1f;
-            flatElapsed = lastProbeSlopeDegrees < entrySlopeDegrees * .5f
-                ? flatElapsed + dt : 0f;
-            if (flatElapsed > .12f && Time.fixedTime - lastBegin > .4f) armed = true;
-            if (autoBeginOnDownhill && armed && probeValid &&
-                lastProbeSlopeDegrees >= entrySlopeDegrees &&
-                planar.magnitude >= minimumEntryPlanarSpeed) {
-
-                SetInitialStartPatternMultiplier(
-                    ResolveCurrentStairMultiplier());
-
-                BeginStair();
-            }
-            if (!active) {
-                previousCarrier = p;
-                previousVelocity = v;
-                return;
-            }
-            displacement = Vector3.zero;
         }
+
+        bool beganNewStair = false;
+        if ((!active || exiting) && autoBeginOnDownhill && armed && probeValid &&
+            lastProbeSlopeDegrees >= entrySlopeDegrees &&
+            planar.magnitude >= minimumEntryPlanarSpeed) {
+
+            SetInitialStartPatternMultiplier(ResolveCurrentStairMultiplier());
+            BeginStair();
+            beganNewStair = active && !exiting;
+        }
+        if (!active) {
+            previousCarrier = p;
+            previousVelocity = v;
+            return;
+        }
+        if (beganNewStair)
+            displacement = Vector3.zero;
         elapsed += dt;
         if (exiting) exitElapsed += dt;
         float ds = Mathf.Max(0f, Vector3.Dot(displacement, tangent));

@@ -48,7 +48,7 @@ public class SpherePreviewManager : MonoBehaviour
     {
         if (ConvertedCoin)
         {
-            GameObject.Find("Main Camera/UICamera/CoinLimit").transform.GetChild(0)
+            GameObject.Find("Top/Image (1)/CoinLimit").transform.GetChild(0)
                     .GetComponent<TextMeshProUGUI>().text =
                 AndroidOneOnly.pharseCoin.ToString();
             ConvertedCoin = false;

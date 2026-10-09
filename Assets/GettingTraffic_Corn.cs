@@ -8,6 +8,7 @@ public class GettingTraffic_Corn : MonoBehaviour
 {
     public GameObject PhysicsMul;
     public GameObject RendererMul;
+    public GameObject ReSubject;
     public static readonly string CallForBestScore = "CallForBestScore";
 
 
@@ -90,6 +91,7 @@ public class GettingTraffic_Corn : MonoBehaviour
 
         MainGameManager.DropOut.SetActive(true);
 
+
         Debug.Log("B : 待機開始 " + Time.timeScale);
         AndroidOneOnly.pharseCoin = MainGameManager.Coin;
         AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
@@ -105,8 +107,9 @@ public class GettingTraffic_Corn : MonoBehaviour
         MainGameManager.DropOut.SetActive(false);
 
         MainGameManager.OnDead = true;
+        MainGameManager.reSubject.PointToPlane = 0;
 
-
+       // MainGameManager.TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =
         Debug.Log("C : 待機終了");
         //MainGameManager.core.Earliest=false;
         MainGameManager.OpenChunkStage = true;

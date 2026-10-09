@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using System.Text.RegularExpressions;
 using Unity.Mathematics;
@@ -21,7 +22,17 @@ public class OnClickChooseBall : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        
+        if (Input.GetKeyDown(KeyCode.P))
+        {
+            string path = Path.Combine(
+                Application.dataPath,
+                "../Screenshot_1080x1920.png"
+            );
+
+            ScreenCapture.CaptureScreenshot(path);
+
+            Debug.Log("Screenshot saved to: " + Path.GetFullPath(path));
+        }
     }
     public void OnClick()
     {

@@ -9,7 +9,7 @@ public class MainGameManager : MonoBehaviour
 
     public CoreStepInsertSplinePathNatural PiercingSpiral;
 
-    public CorrespondSubject reSubject;
+    public static CorrespondSubject reSubject;
     public TextMeshProUGUI displayScore;
     public TextMeshProUGUI displayCoin;
 
@@ -76,6 +76,7 @@ public class MainGameManager : MonoBehaviour
         GameObject.Find("VisualPlayerRoot/BallVisualEqualizer")
             .GetComponent<MeshRenderer>()
             .material = new Material(activeMaterial);
+
        
     }
 

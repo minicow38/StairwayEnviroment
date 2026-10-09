@@ -5,7 +5,6 @@ using UnityEngine;
 using TMPro;
 using UnityEngine.Splines;
 using System.Collections;
-using System.Text.RegularExpressions;
 using Object = UnityEngine.Object;
 
 //using System;
@@ -13,7 +12,9 @@ using Object = UnityEngine.Object;
 [DisallowMultipleComponent]
 public class CoreStepInsertSplinePathNatural : MonoBehaviour
 {
-    sealed class BoardPair
+    // Board生成中だけ使う一時ペア。
+    // classではなくstructにして、各BoardごとのManaged Object生成を避ける。
+    struct BoardPair
     {
         public Transform Physics;
         public Transform Visual;
@@ -197,11 +198,44 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     readonly HashSet<int> decoratedStairwayInstanceIds =
         new HashSet<int>();
 
+    // FunCharacter は ArcSlab 単位で独立して管理する。
+    // Random.Range(0,6) によって Stairway / ArcSlab の生成数が変動しても、
+    // 追加チャンクで新しく生成された ArcSlab を漏らさない。
+    readonly HashSet<int> decoratedArcSlabInstanceIds =
+        new HashSet<int>();
+
     bool rebuilding = false;
 
     // 再生成中に旧DelayStandOnObjectが残らないように管理する。
     Coroutine delayStandRoutine;
     Coroutine deathRestartRoutine;
+
+    // ============================================================
+    // Runtime caches / reusable buffers
+    // ============================================================
+    // FixedUpdateごとのFind/GetComponent/文字列再生成を避ける。
+    TextMeshProUGUI currentCoinText;
+    TextMeshProUGUI currentScoreText;
+    TextMeshProUGUI bestScoreText;
+    int shownCoin = int.MinValue;
+    int shownScore = int.MinValue;
+    int shownBest = int.MinValue;
+
+    // GetComponentsInChildren<T>() が返す配列を毎回生成しないための再利用List。
+    // Coin/Pylonなど既存の生成処理でも使うため、Renderer/Collider用は残す。
+    readonly List<Renderer> rendererBuffer = new List<Renderer>(32);
+    readonly List<Collider> colliderBuffer = new List<Collider>(32);
+
+    // Stage Boardの初期化では、Renderer/Collider/Joint/Transformを型別に何度も
+    // GetComponentsInChildrenする代わりに、一度だけComponent全体を走査する。
+    readonly List<Component> generatedComponentBuffer = new List<Component>(96);
+
+    // TakeBoard()のたびに BoardPair[] と BoardPair class を生成しないための再利用バッファ。
+    BoardPair[] boardPairBuffer = new BoardPair[Max];
+
+    // LayerMask.NameToLayer をBoard生成ごとに繰り返さない。
+    int slopeLayer = int.MinValue;
+    int visualStairwayLayer = int.MinValue;
 
     void FixedUpdate()
     {
@@ -230,9 +264,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             MainGameManager.OpenChunkStage = true;
             MainGameManager.LimitTouchingphase += ChunkTriggerStep;
         }
-        MainGameManager.PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = MainGameManager.Coin.ToString();
-        MainGameManager.TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.currentScore.ToString("");
-        MainGameManager.TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text =AndroidOneOnly.bestScore.ToString("");
+        UpdateUiIfChanged();
 
         if (MainGameManager.OpenChunkStage)
         {
@@ -246,20 +278,85 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             rebuilding = false;
         }
 
-        if (MainGameManager.OnDead)
+        if (MainGameManager.OnDead && deathRestartRoutine == null)
         {
-            reSubject.PointToPlane = 0;
+            MainGameManager.reSubject.PointToPlane = 0;
 
+            rebuilding = true;
             Start();
             rebuilding = false;
+        }
+    }
 
+    void UpdateUiIfChanged()
+    {
+        EnsureUiReferences();
+
+        int coin = MainGameManager.Coin;
+        int score = AndroidOneOnly.currentScore;
+        int best = AndroidOneOnly.bestScore;
+
+        if (currentCoinText && shownCoin != coin)
+        {
+            shownCoin = coin;
+            currentCoinText.text = coin.ToString();
+        }
+
+        if (currentScoreText && shownScore != score)
+        {
+            shownScore = score;
+            currentScoreText.text = score.ToString();
+        }
+
+        if (bestScoreText && shownBest != best)
+        {
+            shownBest = best;
+            bestScoreText.text = best.ToString();
+        }
+    }
+
+    void EnsureUiReferences()
+    {
+        if (!currentCoinText && MainGameManager.PreviewIconRoot)
+        {
+            Transform currentCoin =
+                MainGameManager.PreviewIconRoot.transform.Find("CurrentCoin");
+
+            if (currentCoin)
+            {
+                currentCoinText = currentCoin.GetComponent<TextMeshProUGUI>();
+                shownCoin = int.MinValue;
+            }
+        }
+
+        if (!currentScoreText && MainGameManager.TopLiteral)
+        {
+            Transform score =
+                MainGameManager.TopLiteral.transform.Find("Score");
+
+            if (score && score.childCount > 0)
+            {
+                currentScoreText = score.GetChild(0).GetComponent<TextMeshProUGUI>();
+                shownScore = int.MinValue;
+            }
+        }
+
+        if (!bestScoreText && MainGameManager.TopLiteral)
+        {
+            Transform best =
+                MainGameManager.TopLiteral.transform.Find("Best");
+
+            if (best && best.childCount > 0)
+            {
+                bestScoreText = best.GetChild(0).GetComponent<TextMeshProUGUI>();
+                shownBest = int.MinValue;
+            }
         }
     }
 
     [ContextMenu("RebuildSpline")]
     void Start()
     {
-        reSubject = GameObject.Find("subject").transform.GetComponent<CorrespondSubject>();
         for (int i = 1; i < InitialStartPattern.Length; i++)
         {
             if (InitialStartPattern[i] != 0)
@@ -342,6 +439,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             FirstShift = 0;
             nextDecorationStartIndex = 0;
             decoratedStairwayInstanceIds.Clear();
+            decoratedArcSlabInstanceIds.Clear();
 
             GameObject inSubjectObject =
                 GameObject.Find("InSubject");
@@ -376,9 +474,13 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (!Prepare() || !EnsureOutputRoots())
             return;
 
+        CacheLayers();
+
         // ============================================================
         // 死亡時：新しいStageを作る「前」に古いStageを消す。
         // ============================================================
+        bool addingChunk = false;
+
         if (restartingFromDeath)
         {
             // プレイヤーもステージも0から再開するため、進行側も同じ基準へ戻す。
@@ -390,6 +492,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             FirstShift = 0;
             nextDecorationStartIndex = 0;
             decoratedStairwayInstanceIds.Clear();
+            decoratedArcSlabInstanceIds.Clear();
 
             // 新しいステージの番号も0から振り直す。
             nextArcSlabIndex = 0;
@@ -427,6 +530,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             nextStairwayIndex = 0;
             nextDecorationStartIndex = 0;
             decoratedStairwayInstanceIds.Clear();
+            decoratedArcSlabInstanceIds.Clear();
 
             if (MainGameManager.LimitTouchingphase < ChunkTriggerStep)
                 MainGameManager.LimitTouchingphase = ChunkTriggerStep;
@@ -436,23 +540,30 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // ============================================================
         else
         {
+            addingChunk = true;
             ContinuousPattern = startPattern.Count;
 
-            int[] nextPattern =
-            {
-                -1, -1, -1,
-                -1, -1, -1,
-                -1, -1, -1
-            };
-
-            for (int i = 0; i < nextPattern.Length; i++)
+            // 追加チャンクは従来どおり9回Random.Range(0, 6)を呼ぶ。
+            // 0～5の結果により実際に生成される Stairway / ArcSlab 数が
+            // チャンクごとに変わるため、装飾対象は後段で「実際に増えたList範囲」から決める。
+            for (int i = 0; i < 9; i++)
             {
                 int multiplier = UnityEngine.Random.Range(0, 6);
-                nextPattern[i] *= multiplier;
+                startPattern.Add(-multiplier);
             }
-
-            startPattern.AddRange(nextPattern);
         }
+
+        // Emit前の実オブジェクト数を記録する。
+        // 追加チャンクではこの位置から後ろだけが今回新しく生成された範囲になる。
+        int generatedStairwayStartIndex =
+            Mathf.Min(
+                StackStairway1 != null ? StackStairway1.Count : 0,
+                StackStairway2 != null ? StackStairway2.Count : 0);
+
+        int generatedArcStartIndex =
+            Mathf.Min(
+                ArcSlab1 != null ? ArcSlab1.Count : 0,
+                ArcSlab2 != null ? ArcSlab2.Count : 0);
 
         EnsureWorkingBuffers();
 
@@ -468,6 +579,20 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // ============================================================
         // Spline構造計算 → Stage生成
         // ============================================================
+        // Build()はstartPattern全体についてoutcount.Add()するため、
+        // List内部配列の段階的な拡張を避けて必要量を先に確保する。
+        if (outcount != null)
+        {
+            int requiredOutcountCapacity =
+                outcount.Count + startPattern.Count;
+
+            if (outcount.Capacity < requiredOutcountCapacity)
+            {
+                outcount.Capacity =
+                    Mathf.NextPowerOfTwo(requiredOutcountCapacity);
+            }
+        }
+
         Build(0, 0, RootStartpoint);
 
         for (int i = ContinuousPattern;
@@ -510,38 +635,80 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         }
 
         // ============================================================
-        // Coin / Pylon は「今回の論理8区画」だけを処理する。
-        //
-        // 重要:
-        // Stage自体は先行生成されていても、アイテム配置カーソルは
-        // [0,8) -> [8,16) -> [16,24) ... と一方向にだけ進める。
-        // これにより新しいStage生成時に0番から再抽選しない。
+        // Coin / Pylon / FunCharacter の装飾範囲を確定する。
         // ============================================================
-        int availableDecorationCount =
+        // Random.Range(0, 6) × 9 では、1パターンから生成される
+        // Stairway / ArcSlab の実数が一定ではない。
+        // そのため追加チャンクでは「8個固定」のカーソルではなく、
+        // Emit前後のList.Count差分を今回の装飾対象とする。
+        int availableStairwayCount =
             Mathf.Min(
                 StackStairway1 != null ? StackStairway1.Count : 0,
                 StackStairway2 != null ? StackStairway2.Count : 0);
 
-        int decorationStart =
-            nextDecorationStartIndex + 5;
-
-        int decorationEndExclusive =
+        int availableArcCount =
             Mathf.Min(
-                decorationStart + ItemChunkSize,
-                availableDecorationCount);
+                ArcSlab1 != null ? ArcSlab1.Count : 0,
+                ArcSlab2 != null ? ArcSlab2.Count : 0);
 
-        if (decorationStart < decorationEndExclusive)
+        int stairwayDecorationStart;
+        int stairwayDecorationEndExclusive;
+        int arcDecorationStart;
+        int arcDecorationEndExclusive;
+
+        if (addingChunk)
         {
-            // Coroutineを開始する「前」に予約を進める。
-            // 0.1秒待機中に次のStage生成が来ても同じ区間を予約しない。
-            nextDecorationStartIndex =
-                decorationEndExclusive;
+            // 追加チャンク: 実際に今回増えたものをすべて対象にする。
+            stairwayDecorationStart =
+                Mathf.Clamp(generatedStairwayStartIndex, 0, availableStairwayCount);
+            stairwayDecorationEndExclusive =
+                availableStairwayCount;
 
+            arcDecorationStart =
+                Mathf.Clamp(generatedArcStartIndex, 0, availableArcCount);
+            arcDecorationEndExclusive =
+                availableArcCount;
+
+            // 互換用カーソルも実際の末尾へ追従させる。
+            nextDecorationStartIndex =
+                stairwayDecorationEndExclusive;
+        }
+        else
+        {
+            // 初回 / 死亡再生成は従来仕様を維持する。
+            // Coin / Pylon は最初の5 Stairwayを避け、その後最大8個を抽選する。
+            stairwayDecorationStart =
+                Mathf.Clamp(
+                    nextDecorationStartIndex + 5,
+                    0,
+                    availableStairwayCount);
+
+            stairwayDecorationEndExclusive =
+                Mathf.Min(
+                    stairwayDecorationStart + ItemChunkSize,
+                    availableStairwayCount);
+
+            if (stairwayDecorationStart < stairwayDecorationEndExclusive)
+            {
+                nextDecorationStartIndex =
+                    stairwayDecorationEndExclusive;
+            }
+
+            // FunCharacter は従来と同様、初回に生成済みArcSlab全体を抽選する。
+            arcDecorationStart = 0;
+            arcDecorationEndExclusive = availableArcCount;
+        }
+
+        if (stairwayDecorationStart < stairwayDecorationEndExclusive ||
+            arcDecorationStart < arcDecorationEndExclusive)
+        {
             delayStandRoutine =
                 StartCoroutine(
-                    DelayStandSlopeOnObject(
-                        decorationStart,
-                        decorationEndExclusive));
+                    DelayDecorateGeneratedRanges(
+                        stairwayDecorationStart,
+                        stairwayDecorationEndExclusive,
+                        arcDecorationStart,
+                        arcDecorationEndExclusive));
         }
     }
 
@@ -569,14 +736,22 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     void EnsureWorkingBuffers()
     {
-        int count = startPattern.Count;
+        int requiredCount = startPattern.Count;
+        int currentCapacity = counts != null ? counts.Length : 0;
 
-        if (points == null || points.Length < count * Max)
-            points = new Vector3[count * Max];
-        if (counts == null || counts.Length < count)
-            counts = new int[count];
-        if (scales == null || scales.Length < count)
-            scales = new int[count];
+        if (currentCapacity >= requiredCount &&
+            points != null && points.Length >= requiredCount * Max &&
+            scales != null && scales.Length >= requiredCount)
+        {
+            return;
+        }
+
+        int newCapacity =
+            Mathf.NextPowerOfTwo(Mathf.Max(16, requiredCount));
+
+        Array.Resize(ref points, newCapacity * Max);
+        Array.Resize(ref counts, newCapacity);
+        Array.Resize(ref scales, newCapacity);
     }
 
     void Build(int index, int enter, Vector3 start)
@@ -855,9 +1030,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
             float currentProjection = 0f;
             float previousProjection = 0f;
-            float directDistance = 0f;
             float robustDistance = 0f;
-            float directionAngle = 0f;
 
             // ========================================================
             // 前回の Flat と比較
@@ -868,9 +1041,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 Vector3 delta =
                     currentFlatPosition -
                     previousFlatPosition;
-
-                directDistance =
-                    delta.magnitude;
 
                 // 現在の Flat 方向への射影。
                 // Abs を使うため、方向が反転しても距離は正値になる。
@@ -898,15 +1068,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                     Mathf.Max(
                         currentProjection,
                         previousProjection);
-
-                if (currentFlatDirection.sqrMagnitude > e2 &&
-                    previousFlatDirection.sqrMagnitude > e2)
-                {
-                    directionAngle =
-                        Vector3.Angle(
-                            previousFlatDirection,
-                            currentFlatDirection);
-                }
 
                 // ====================================================
                 // shiftHalf 判定
@@ -965,29 +1126,21 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
             arcSlabCount++;
 
-            BoardPair[] arcSlab =
+            int arcSlabCountForPose =
                 TakeBoard(
                     false,
-                    LayerMask.NameToLayer("Slope"),
+                    slopeLayer,
                     $"ArcSlab{generatedArcSlabIndex}",
                     scale);
 
             ApplyBoardPose(
-                arcSlab,
+                boardPairBuffer,
+                arcSlabCountForPose,
                 localPosition,
                 localDirection,
                 localRotation,
                 localScale,
                 shiftHalf);
-
-            // ========================================================
-            // Debug
-            // ========================================================
-
-            int patternValue =
-                plan >= 0 && plan < startPattern.Count
-                    ? startPattern[plan]
-                    : int.MinValue;
 
             // 次の Flat 判定用に保存する。
             previousFlatPosition =
@@ -1008,44 +1161,22 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
             stairwayCount++;
 
-            BoardPair[] stairway =
+            int stairwayCountForPose =
                 TakeBoard(
                     true,
-                    LayerMask.NameToLayer("Slope"),
+                    slopeLayer,
                     $"StairWay{generatedStairwayIndex}",
                     scale);
 
             // Slope 側には Flat 用の半区間補正を掛けない。
             ApplyBoardPose(
-                stairway,
+                boardPairBuffer,
+                stairwayCountForPose,
                 localPosition,
                 localDirection,
                 localRotation,
                 localScale,
                 false);
-
-            // ============================================================
-            // Stair Orientation Diagnosis
-            // ============================================================
-
-            Vector3 expectedLocalDirection =
-                localDirection.normalized;
-
-            for (int j = 0; j < stairway.Length; j++)
-            {
-                BoardPair pair = stairway[j];
-
-                if (pair == null || !pair.Physics)
-                    continue;
-
-                Vector3 physicsLocalForward =
-                    pair.Physics.localRotation * Vector3.forward;
-
-                float dot =
-                    Vector3.Dot(
-                        physicsLocalForward.normalized,
-                        expectedLocalDirection);
-            }
         }
 
         if (!slope)
@@ -1054,11 +1185,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         ActivePlane = worldStart;
     }
 
-    BoardPair[] TakeBoard(bool slope, int physicsLayer, string boardName, int mulPlane)
+    int TakeBoard(bool slope, int physicsLayer, string boardName, int mulPlane)
     {
-        GameObject sourcePrefab;
-
-        BoardPair[] boardPairs = new BoardPair[mulPlane];
+        EnsureBoardPairBuffer(mulPlane);
 
         for (int i = 0; i < mulPlane; i++)
         {
@@ -1067,7 +1196,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             GameObject physicsObject = Instantiate(PrimitivePlane, generatedPhysicsRoot, false);
             if (slope)
             {
-
                 visualObject = Instantiate(StairwayPrefab, generatedVisualRoot, false);
                 StackStairway1.Add(physicsObject);
                 StackStairway2.Add(visualObject);
@@ -1085,113 +1213,138 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             ConfigurePhysicsRepresentation(physicsObject, physicsLayer);
             ConfigureVisualRepresentation(visualObject, slope);
 
-            boardPairs[i] = new BoardPair
-            {
-                Physics = physicsObject.transform,
-                Visual = visualObject.transform
-            };
+            boardPairBuffer[i].Physics = physicsObject.transform;
+            boardPairBuffer[i].Visual = visualObject.transform;
         }
 
-        return boardPairs;
+        return mulPlane;
+    }
+
+    void EnsureBoardPairBuffer(int requiredCount)
+    {
+        if (boardPairBuffer.Length >= requiredCount)
+            return;
+
+        int newCapacity =
+            Mathf.NextPowerOfTwo(Mathf.Max(Max, requiredCount));
+
+        Array.Resize(ref boardPairBuffer, newCapacity);
     }
 
     void ConfigurePhysicsRepresentation(GameObject physicsObject, int physicsLayer)
     {
-        if (physicsLayer >= 0)
-            SetLayerRecursively(physicsObject, physicsLayer);
-        else
+        if (!physicsObject)
+            return;
+
+        if (physicsLayer < 0)
             Debug.LogError("SlopeまたはStairway Layerが見つかりません。", this);
 
-        if (hidePhysicsRenderers)
+        bool hasCollider = false;
+
+        // 以前は Transform / Renderer / Joint / Collider を別々に検索していた。
+        // ここではHierarchyを一度だけ走査し、最終状態を同じまま適用する。
+        generatedComponentBuffer.Clear();
+        physicsObject.GetComponentsInChildren(true, generatedComponentBuffer);
+
+        for (int i = 0; i < generatedComponentBuffer.Count; i++)
         {
-            foreach (Renderer renderer in physicsObject.GetComponentsInChildren<Renderer>(true))
+            Component component = generatedComponentBuffer[i];
+            if (!component)
+                continue;
+
+            if (physicsLayer >= 0 && component is Transform targetTransform)
+                targetTransform.gameObject.layer = physicsLayer;
+
+            if (hidePhysicsRenderers && component is Renderer renderer)
                 renderer.enabled = false;
+
+            if (component is Collider)
+                hasCollider = true;
+
+            if (removeGeneratedRigidbodies && component is Joint joint)
+                DestroyComponentSafely(joint);
         }
 
-        if (removeGeneratedRigidbodies)
-            RemoveJointsAndRigidbodies(physicsObject, true);
-
-        if (physicsObject.GetComponentsInChildren<Collider>(true).Length == 0)
+        if (!hasCollider)
             Debug.LogWarning($"{physicsObject.name}にColliderがありません。", physicsObject);
     }
     void ConfigureVisualRepresentation(
         GameObject visualObject,
         bool inSlope)
     {
-        if (!inSlope)
-        {
-            // Visual Flat は物理判定を持たせない。
-            foreach (Collider collider in
-                     visualObject.GetComponentsInChildren<Collider>(true))
-            {
-                collider.enabled = false;
-            }
-        }
-        else
-        {
-            // Visual Stairway は Collider を残すが、
-            // InSubject と衝突しない専用Layerへ分離する。
-            int visualLayer =
-                LayerMask.NameToLayer(visualStairwayLayerName);
-
-            if (visualLayer < 0)
-            {
-                Debug.LogError(
-                    $"Visual Stairway Layer '{visualStairwayLayerName}' が存在しません。",
-                    visualObject);
-
-                return;
-            }
-
-            SetLayerRecursively(
-                visualObject,
-                visualLayer);
-        }
-
-        if (removeGeneratedRigidbodies)
-            RemoveJointsAndRigidbodies(visualObject, false);
-
-        if (materials == null || materials.Length == 0)
+        if (!visualObject)
             return;
 
-        foreach (MeshRenderer renderer in
-                 visualObject.GetComponentsInChildren<MeshRenderer>(true))
+        // 元コードと同じく、Visual Stairway Layerが無い場合は
+        // Joint除去やMaterial適用まで進まず、その場で終了する。
+        if (inSlope && visualStairwayLayer < 0)
         {
-            renderer.sharedMaterials = materials;
+            Debug.LogError(
+                $"Visual Stairway Layer '{visualStairwayLayerName}' が存在しません。",
+                visualObject);
+
+            return;
+        }
+
+        bool applyMaterials =
+            materials != null && materials.Length > 0;
+
+        // Collider / Transform / Joint / MeshRenderer の探索を1回に統合する。
+        generatedComponentBuffer.Clear();
+        visualObject.GetComponentsInChildren(true, generatedComponentBuffer);
+
+        for (int i = 0; i < generatedComponentBuffer.Count; i++)
+        {
+            Component component = generatedComponentBuffer[i];
+            if (!component)
+                continue;
+
+            if (!inSlope && component is Collider collider)
+                collider.enabled = false;
+
+            if (inSlope && component is Transform targetTransform)
+                targetTransform.gameObject.layer = visualStairwayLayer;
+
+            if (removeGeneratedRigidbodies && component is Joint joint)
+                DestroyComponentSafely(joint);
+
+            if (applyMaterials && component is MeshRenderer meshRenderer)
+                meshRenderer.sharedMaterials = materials;
         }
     }
 
     void ApplyBoardPose(
         BoardPair[] pairs,
+        int pairCount,
         Vector3 localPosition,
         Vector3 localDirection,
         Quaternion localRotation,
         Vector3 localScale,
         bool shiftHalf)
     {
-        if (pairs == null || pairs.Length == 0)
+        if (pairs == null || pairCount <= 0)
             return;
-
 
         // ============================================================
         // 複数枚
         // ============================================================
 
-        if (pairs.Length > 1)
+        if (pairCount > 1)
         {
             Vector3 totalVec =
                 Vector3.zero;
 
-            for (int i = 0; i < pairs.Length; i++)
+            // 同じlocalDirectionをループ内で何度もnormalizeしない。
+            Vector3 normalizedLocalDirection =
+                localDirection.normalized;
+
+            for (int i = 0; i < pairCount; i++)
             {
                 BoardPair pair =
                     pairs[i];
 
-                if (pair == null)
-                    continue;
-
                 totalVec +=
-                    localDirection.normalized *
+                    normalizedLocalDirection *
                     (i == 0 ? 5f : 10f);
 
                 ApplyLocalPose(
@@ -1210,7 +1363,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             return;
         }
 
-
         // ============================================================
         // 1枚
         // ============================================================
@@ -1218,20 +1370,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         BoardPair singlePair =
             pairs[0];
 
-        if (singlePair == null)
-            return;
-
-
         Vector3 position =
             localPosition;
-
 
         if (shiftHalf)
         {
             position +=
                 localDirection * 0.5f;
         }
-
 
         ApplyLocalPose(
             singlePair.Physics,
@@ -1373,6 +1519,12 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         return true;
     }
 
+    void CacheLayers()
+    {
+        slopeLayer = LayerMask.NameToLayer("Slope");
+        visualStairwayLayer = LayerMask.NameToLayer(visualStairwayLayerName);
+    }
+
     void CacheTransforms()
     {
         toSpline = splineBox.transform.worldToLocalMatrix;
@@ -1464,34 +1616,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         Debug.LogWarning("CollisionStageRootとRenderStageRootのScaleが異なります。両方を同じScaleにしてください。", this);
     }
 
-    static void SetLayerRecursively(GameObject root, int layer)
-    {
-        if (!root || layer < 0)
-            return;
-
-        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
-            child.gameObject.layer = layer;
-    }
-
-    static void RemoveJointsAndRigidbodies(GameObject root, bool keepColliderInteraction)
-    {
-        if (!root)
-            return;
-
-        foreach (Joint joint in root.GetComponentsInChildren<Joint>(true))
-            DestroyComponentSafely(joint);
-
-        /* foreach (Rigidbody body in root.GetComponentsInChildren<Rigidbody>(true))
-        {
-            body.useGravity = false;
-            body.isKinematic = true;
-            body.detectCollisions = keepColliderInteraction;
-            body.velocity = Vector3.zero;
-            body.angularVelocity = Vector3.zero;
-            DestroyComponentSafely(body);
-        }*/
-    }
-
     static void DestroyChildren(Transform root)
     {
         if (!root)
@@ -1525,6 +1649,146 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             Object.Destroy(target);
         else
             Object.DestroyImmediate(target);
+    }
+
+    IEnumerator DelayDecorateGeneratedRanges(
+        int stairwayStartIndex,
+        int stairwayEndIndexExclusive,
+        int arcStartIndex,
+        int arcEndIndexExclusive)
+    {
+        yield return new WaitForSeconds(0.1f);
+
+        int stairwayAvailableCount =
+            Mathf.Min(
+                StackStairway1 != null ? StackStairway1.Count : 0,
+                StackStairway2 != null ? StackStairway2.Count : 0);
+
+        int safeStairwayStart =
+            Mathf.Clamp(
+                stairwayStartIndex,
+                0,
+                stairwayAvailableCount);
+
+        int safeStairwayEndExclusive =
+            Mathf.Clamp(
+                stairwayEndIndexExclusive,
+                safeStairwayStart,
+                stairwayAvailableCount);
+
+        bool arcRangeProcessed = false;
+
+        for (int i = safeStairwayStart;
+             i < safeStairwayEndExclusive;
+             i++)
+        {
+            GameObject activeStairway1 =
+                StackStairway1[i];
+
+            GameObject activeStairway2 =
+                StackStairway2[i];
+
+            if (!activeStairway1 || !activeStairway2)
+                continue;
+
+            int stairwayInstanceId =
+                activeStairway1.GetInstanceID();
+
+            if (!decoratedStairwayInstanceIds.Add(stairwayInstanceId))
+                continue;
+
+            bool firstCorner =
+                i > startDashDot;
+
+            float angleY =
+                activeStairway1.transform.localEulerAngles.y;
+
+            bool dontSeqItem =
+                GeneratePylon(
+                    angleY,
+                    activeStairway1,
+                    activeStairway2,
+                    firstCorner);
+
+            // 正常動作時のRandom呼び出し順に近づけるため、
+            // 最初の有効StairwayのPylon抽選直後にFunCharacterを処理する。
+            // Stairwayが0個のチャンクでも、ループ後に必ずArc側を処理する。
+            if (!arcRangeProcessed)
+            {
+                DecorateArcRange(
+                    arcStartIndex,
+                    arcEndIndexExclusive);
+
+                arcRangeProcessed = true;
+            }
+
+            if (!dontSeqItem)
+            {
+                GenerateCoin(
+                    angleY,
+                    activeStairway1,
+                    activeStairway2,
+                    firstCorner);
+            }
+        }
+
+        if (!arcRangeProcessed)
+        {
+            DecorateArcRange(
+                arcStartIndex,
+                arcEndIndexExclusive);
+        }
+
+        delayStandRoutine = null;
+    }
+
+    void DecorateArcRange(
+        int startIndex,
+        int endIndexExclusive)
+    {
+        int availableCount =
+            Mathf.Min(
+                ArcSlab1 != null ? ArcSlab1.Count : 0,
+                ArcSlab2 != null ? ArcSlab2.Count : 0);
+
+        int safeStart =
+            Mathf.Clamp(
+                startIndex,
+                0,
+                availableCount);
+
+        int safeEndExclusive =
+            Mathf.Clamp(
+                endIndexExclusive,
+                safeStart,
+                availableCount);
+
+        // 従来のGeneratePylon内と同じく、新しい側から逆順に抽選する。
+        for (int i = safeEndExclusive - 1;
+             i >= safeStart;
+             i--)
+        {
+            GameObject physicsArc =
+                ArcSlab1[i];
+
+            GameObject visualArc =
+                ArcSlab2[i];
+
+            if (!physicsArc || !visualArc)
+                continue;
+
+            int arcInstanceId =
+                physicsArc.GetInstanceID();
+
+            if (!decoratedArcSlabInstanceIds.Add(arcInstanceId))
+                continue;
+
+            GenerateFunCharacter(
+                physicsArc.transform.localEulerAngles.y,
+                physicsArc,
+                visualArc,
+                i > startDashDot);
+        }
     }
 
     IEnumerator DelayStandSlopeOnObject(
@@ -1778,13 +2042,14 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         instance.name = $"{namePrefix}_{instance.GetInstanceID()}";
 
-        if (!Regex.Match(namePrefix, @"FunChr.*").Success)
+        if (namePrefix.IndexOf("FunChr", StringComparison.Ordinal) < 0 &&
+            disableColliders)
         {
-            if (disableColliders)
-            {
-                foreach (Collider collider in instance.GetComponentsInChildren<Collider>(true))
-                    collider.enabled = false;
-            }
+            colliderBuffer.Clear();
+            instance.GetComponentsInChildren(true, colliderBuffer);
+
+            for (int i = 0; i < colliderBuffer.Count; i++)
+                colliderBuffer[i].enabled = false;
         }
 
 
@@ -1812,8 +2077,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         if (separateVisualPhysics)
         {
-            foreach (Renderer renderer in physics.GetComponentsInChildren<Renderer>(true))
-                renderer.enabled = false;
+            rendererBuffer.Clear();
+            physics.GetComponentsInChildren(true, rendererBuffer);
+
+            for (int i = 0; i < rendererBuffer.Count; i++)
+                rendererBuffer[i].enabled = false;
         }
 
         return (physics, visual);
@@ -1863,26 +2131,44 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
 
             // Physics側のRendererだけ無効化
-            foreach (Renderer r in pair.physics.GetComponentsInChildren<Renderer>(true))
-                r.enabled = false;
+            rendererBuffer.Clear();
+            pair.physics.GetComponentsInChildren(true, rendererBuffer);
+
+            for (int i = 0; i < rendererBuffer.Count; i++)
+                rendererBuffer[i].enabled = false;
 
             generated = true;
         }
 
-        // 既存の入口を使用するため、Coroutineやステージ管理処理は変更しない。
-        int availableArcCount = Mathf.Min(
-            ArcSlab1 != null ? ArcSlab1.Count : 0,
-            ArcSlab2 != null ? ArcSlab2.Count : 0);
+        // 以前の正常系と同じ入口を残す。
+        // Pylon抽選の直後に、末尾へ追加された未処理ArcSlabだけを新しい側から処理する。
+        // decoratedArcSlabInstanceIds により、DelayDecorateGeneratedRanges() 側の
+        // DecorateArcRange() と二重抽選になることはない。
+        DecoratePendingArcSlabs();
 
+        return generated;
+    }
+
+    void DecoratePendingArcSlabs()
+    {
+        int availableArcCount =
+            Mathf.Min(
+                ArcSlab1 != null ? ArcSlab1.Count : 0,
+                ArcSlab2 != null ? ArcSlab2.Count : 0);
+
+        // ArcSlabは末尾へ追加されるため、新しい側から戻り、
+        // 最初の処理済みArcSlabに到達した時点で終了する。
         for (int i = availableArcCount - 1; i >= 0; i--)
         {
             GameObject physicsArc = ArcSlab1[i];
             GameObject visualArc = ArcSlab2[i];
+
             if (!physicsArc || !visualArc)
                 continue;
 
-            // 抽選に外れたArcSlabも処理済みとして記録する。
-            if (!decoratedStairwayInstanceIds.Add(physicsArc.GetInstanceID()))
+            int arcInstanceId = physicsArc.GetInstanceID();
+
+            if (!decoratedArcSlabInstanceIds.Add(arcInstanceId))
                 break;
 
             GenerateFunCharacter(
@@ -1891,8 +2177,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 visualArc,
                 i > startDashDot);
         }
-
-        return generated;
     }
 
 
@@ -1956,6 +2240,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             EnemyPrefab,
             visualArc,
             localPosition,
+            // 正常に表示されていた従来姿勢へ戻す。
             Quaternion.Euler(-135f, 0f, 0f),
             Vector3.one * 1.5f,
             "FunChr");

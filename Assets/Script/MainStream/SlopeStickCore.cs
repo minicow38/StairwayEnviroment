@@ -119,6 +119,13 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Header("Debug")]
     [SerializeField] bool logCore;
 
+    [Header("DropOut Distance Diagnostics")]
+    [Tooltip("非接地になった瞬間と、最後の接触物のTransformから9m以上離れた間の診断ログを出します。死亡確定ログはこの設定に関係なく出ます。")]
+    [SerializeField] bool logDropoutDistance = true;
+    [Min(0.05f)] [SerializeField] float dropoutLogIntervalSeconds = 0.25f;
+    float nextDropoutLogFixedTime;
+    bool previousGroundedForDropoutLog = true;
+
     Rigidbody rb;
     Vector3 direction;
 
@@ -1009,6 +1016,45 @@ public float AdvancePredictedSplineDriveReadOnly(
     // Main
     // ================================================================
 
+    // 判定に使っているTransform原点までの距離と、Collider表面までの距離を
+    // 同時に記録して、「長い階段のTransform原点による誤判定」を判別する。
+    // ここから物理状態や死亡条件は変更しない。
+    void LogDropoutDistanceDiagnostic(string phase, bool grounded, RaycastHit latestHit, float originDistance)
+    {
+        Transform previousTransform = currentHit.transform;
+        Collider previousCollider = currentHit.collider;
+        bool hasPreviousCollider = previousCollider != null;
+        Vector3 closestPoint = hasPreviousCollider
+            ? previousCollider.ClosestPoint(transform.position)
+            : Vector3.zero;
+        float surfaceDistance = hasPreviousCollider
+            ? Vector3.Distance(transform.position, closestPoint)
+            : -1f;
+
+        string message =
+            $"[CORE DROPOUT {phase}] fixedTime={Time.fixedTime:F3} frame={Time.frameCount} " +
+            $"grounded={grounded} onDeadBefore={MainGameManager.OnDead} " +
+            $"originDistance={originDistance:F4} threshold=12.0000 " +
+            $"lastHit={(previousTransform != null ? previousTransform.name : "<null>")} " +
+            $"lastHitOrigin={(previousTransform != null ? previousTransform.position.ToString("F4") : "<null>")} " +
+            $"lastHitPoint={currentHit.point.ToString("F4")} " +
+            $"lastCollider={(hasPreviousCollider ? previousCollider.name : "<null>")} " +
+            $"closestPoint={(hasPreviousCollider ? closestPoint.ToString("F4") : "<null>")} " +
+            $"surfaceDistance={surfaceDistance:F4} " +
+            $"latestHit={(latestHit.transform != null ? latestHit.transform.name : "<null>")} " +
+            $"latestHitPoint={latestHit.point.ToString("F4")} " +
+            $"playerPos={transform.position.ToString("F4")} rbPos={rb.position.ToString("F4")} " +
+            $"velocity={rb.velocity.ToString("F4")} speed={rb.velocity.magnitude:F3} " +
+            $"graceTimer={graceTimer:F3} supportGrace={supportGraceSeconds:F3} " +
+            $"guideDistance={currentGuide.distanceToGuide:F4} guideIsSlope={currentGuide.isSlope} " +
+            $"kinematic={rb.isKinematic}";
+
+        /*if (phase == "TRIGGER")
+            Debug.LogError(message, this);
+        else
+            Debug.LogWarning(message, this);*/
+    }
+
     void FixedUpdate()
     {
         // Updateで予約した90度旋回を、物理/Spline観測より先に1回だけ適用する。
@@ -1053,13 +1099,30 @@ public float AdvancePredictedSplineDriveReadOnly(
             graceTimer = supportGraceSeconds;
         else
             graceTimer = Mathf.Max(0f, graceTimer - Time.fixedDeltaTime);
-        
+
+        // 死亡判定は従来通り「最後の接触物のTransform原点との距離 > 12 && !grounded」。
+        // currentHitはこの下で更新するため、latestHitとlastHitの違いも記録する。
+        float lastHitOriginDistance = currentHit.transform != null
+            ? Vector3.Distance(transform.position, currentHit.transform.position)
+            : -1f;
+        bool justLostGround = previousGroundedForDropoutLog && !grounded;
+        if (logDropoutDistance && !grounded &&
+            (justLostGround || lastHitOriginDistance >= 9f) &&
+            (justLostGround || Time.fixedTime >= nextDropoutLogFixedTime))
+        {
+            LogDropoutDistanceDiagnostic("WATCH", grounded, hit, lastHitOriginDistance);
+            nextDropoutLogFixedTime = Time.fixedTime + Mathf.Max(0.05f, dropoutLogIntervalSeconds);
+        }
+        previousGroundedForDropoutLog = grounded;
+
         if (currentHit.transform != null)
-            if (Vector3.Distance(transform.position, currentHit.transform.position) > 12 && !grounded)
+            if (lastHitOriginDistance > 12 && !grounded)
             {
 
                 if (!MainGameManager.OnDead)
                 {
+                    // Recover/OnDead変更より前の状態を必ず残す。
+                    LogDropoutDistanceDiagnostic("TRIGGER", grounded, hit, lastHitOriginDistance);
                     StartCoroutine(Recover());
                 }
 

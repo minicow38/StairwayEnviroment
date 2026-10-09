@@ -238,15 +238,13 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 50892150}
-  - component: {fileID: 50892152}
-  - component: {fileID: 50892151}
   m_Layer: 0
   m_Name: BallBoom
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &50892150
 Transform:
   m_ObjectHideFlags: 0
@@ -262,97 +260,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &50892151
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 50892149}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 24eb7396d09f2df4a9d53e370bee2f33, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
---- !u!114 &50892152
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 50892149}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: de0d19857c896c0438e578aa9fbd1213, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  source: {fileID: 64372322}
-  knotDetector: {fileID: 156220176}
-  correspondSubject: {fileID: 0}
-  generatedPhysicsRoot: {fileID: 0}
-  generatedVisualPlayer: {fileID: 0}
-  lookAheadDistance: 8
-  minimumDirectionAlignment: 0.8
-  minimumPredictionSpeed: 1
-  totalKnotTarget: 65
-  retainGroupCount: 2
-  includeInitialCY: 1
-  startMarkerScale: 0.12
-  observedMinimumSampleDistance: 0.01
-  observedTipCubeScale: 0.14
-  supportHeightFollowHz: 6
-  supportHeightOutlierTolerance: 0.4
-  maximumEntrySimulationSteps: 96
-  carrierSettleDistance: 1.5
-  maxPredictedPlanarAcceleration: 35
-  enableLog: 1
-  currentCandidate: 
-  lastGeneratedGroup: 
-  predictionRevision: 0
-  generatedSplineCount: 0
-  generatedKnotCount: 0
-  predictedMultiplier: 0
-  predictedWaveCount: 0
-  predictedSectionLength: 0
-  predictedEntryTime: 0
-  predictedEntrySlopeDegrees: 0
-  predictedEntryRoughness: 0
-  predictedEntryNormalSpeed: 0
-  predictedA1: 0
-  predictedA2: 0
-  predictedA3: 0
-  candidateForwardDistance: 0
-  candidateLateralDistance: 0
-  candidateVerticalError: 0
-  candidateAlignment: 0
-  tangentNormalDot: 0
-  mappedFirstPoint: {x: 0, y: 0, z: 0}
-  mappedFirstBallPoint: {x: 0, y: 0, z: 0}
-  stableSupportHeight: 0
-  hasStableSupportHeight: 0
-  observedKnotCount: 0
-  observedPathLength: 0
-  observedLatestPoint: {x: 0, y: 0, z: 0}
-  observedCurrentStairGroup: 
-  observedFutureComparedSpline: 
-  observedFutureAnchorWorld: {x: 0, y: 0, z: 0}
-  observedFutureRawDelta: {x: 0, y: 0, z: 0}
-  observedFutureAlignmentApplied: 0
-  observedFutureConfirmedTangent: {x: 0, y: 0, z: 0}
-  observedFutureConfirmedNormal: {x: 0, y: 0, z: 0}
-  observedFutureEntryFrameRotationDegrees: 0
-  observedFutureTangentErrorDegrees: 0
-  observedFutureMaxTangentCorrection: 0
-  observedFutureMaxNormalCorrection: 0
-  observedFutureAnchorError: 0
-  observedWaveEntryGroup: 
-  observedWaveEntryPoint: {x: 0, y: 0, z: 0}
-  observedWaveEntryTangent: {x: 0, y: 0, z: 0}
-  observedWaveEntryNormal: {x: 0, y: 0, z: 0}
-  observedWaveEntryVelocity: {x: 0, y: 0, z: 0}
-  observedWaveEntryForwardSpeed: 0
-  observedWaveEntryRevision: 0
-  timingCandidateActive: 0
 --- !u!1 &64372314
 GameObject:
   m_ObjectHideFlags: 0
@@ -1153,7 +1060,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MainGameManager
   CheckingStairwaySegment: 0
   PiercingSpiral: {fileID: 0}
-  reSubject: {fileID: 0}
   displayScore: {fileID: 0}
   displayCoin: {fileID: 0}
   initRotation: 0
