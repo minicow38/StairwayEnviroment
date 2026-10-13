@@ -616,6 +616,8 @@ public sealed class CorrespondSubject : MonoBehaviour
                 if (match.Success && RestrickTurnObj!=MainGameManager.core.currentHit.transform)
                 {
                     RestrickTurnObj = MainGameManager.core.currentHit.transform;
+                    if(MainGameManager.HopingSwipeTurn.activeInHierarchy)
+                        MainGameManager.HopingSwipeTurn.SetActive(false);
                     PointToPlane++;
                 }
 

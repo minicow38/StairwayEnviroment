@@ -39,7 +39,7 @@ public class AndroidOneOnly : MonoBehaviour
         pharseCoin = PlayerPrefs.GetInt(CallForCurrrentCoin,0);
         //UsingBallNow = PlayerPrefs.GetInt(BallNumber,0);
         activeBallMaterial = PlayerPrefs.GetString(ArchiveBallItem, "Airman");
-        
+
         MiddleItemList = PlayerPrefs.GetString(itemList,"");
         
         if (MiddleItemList == "")

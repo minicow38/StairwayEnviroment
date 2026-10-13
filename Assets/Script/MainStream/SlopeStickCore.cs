@@ -900,6 +900,9 @@ public float AdvancePredictedSplineDriveReadOnly(
         MainGameManager.PlayButton.SetActive(false);
         MainGameManager.Userbility.SetActive(true);
         
+        if(!BeginCommandOnTouch)
+            MainGameManager.HopingSwipeTurn.SetActive(true);
+        
         Earliest=true;
         BeginCommandOnTouch = true;
     }
@@ -1096,7 +1099,9 @@ public float AdvancePredictedSplineDriveReadOnly(
         (bool grounded,RaycastHit hit)= HasGroundSupport();
 
         if (grounded)
+        {
             graceTimer = supportGraceSeconds;
+        }
         else
             graceTimer = Mathf.Max(0f, graceTimer - Time.fixedDeltaTime);
 
@@ -1110,6 +1115,8 @@ public float AdvancePredictedSplineDriveReadOnly(
             (justLostGround || lastHitOriginDistance >= 9f) &&
             (justLostGround || Time.fixedTime >= nextDropoutLogFixedTime))
         {
+            
+
             LogDropoutDistanceDiagnostic("WATCH", grounded, hit, lastHitOriginDistance);
             nextDropoutLogFixedTime = Time.fixedTime + Mathf.Max(0.05f, dropoutLogIntervalSeconds);
         }

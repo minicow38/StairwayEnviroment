@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Linq;
 using System.Text.RegularExpressions;
+using NUnit.Framework.Constraints;
 using UnityEngine;
 using TMPro;
 public class MainGameManager : MonoBehaviour
@@ -28,6 +29,7 @@ public class MainGameManager : MonoBehaviour
     public static int CurrentCoin = 0;
     public static int lastTouch = 0;
     public static int Coin = 0;
+    public static GameObject HopingSwipeTurn;
     public static bool OnDead = false;
     public static bool OpenChunkStage = false;
     public static SlopeStickCore core;
@@ -42,6 +44,7 @@ public class MainGameManager : MonoBehaviour
         Coin = AndroidOneOnly.pharseCoin;
         var width = Screen.width;
         LimitTouchingphase = 0;
+        var fat = GameObject.FindObjectsOfType<SphereSpikes>();
         PointToPlane = CurrentPointToPlane;
         core = GameObject.Find("InSubject").transform.GetComponent<SlopeStickCore>();
         var array=GameObject.Find("VisualPlayerRoot").transform.GetComponentsInChildren<SphereCollider>();
@@ -50,7 +53,8 @@ public class MainGameManager : MonoBehaviour
              .ToArray();
         reSubject= GameObject.Find("VisualPlayerRoot/subject").transform.GetComponent<CorrespondSubject>();
         PiercingSpiral=GameObject.Find("StairwaySimple/MainStream").GetComponent<CoreStepInsertSplinePathNatural>();
-        
+
+        HopingSwipeTurn = GameObject.Find("GameUI/RightTurn").transform.gameObject;
         TopTitle= GameObject.Find("GameUI/Title").transform.gameObject;
        PreviewIconRoot= GameObject.Find("GameUI/PreviewIconRoot").transform.gameObject;
         TopLiteral = GameObject.Find("GameUI/TopLiteral").transform.gameObject;
@@ -58,9 +62,11 @@ public class MainGameManager : MonoBehaviour
         DropOut=GameObject.Find("GameUI/DropOut").transform.gameObject;
        // PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = Coin.ToString();
         TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.currentScore.ToString("");
-
+        
+        QualitySettings.vSyncCount = 0;
+        Application.targetFrameRate = 60;
+        HopingSwipeTurn.SetActive(false);
         DropOut.SetActive(false);
-
 
        // TopLiteral.transform.Find("Best").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.bestScore.ToString("");
         displayScore = GameObject.Find("StairwayUserbility/Score/").transform.GetComponent<TextMeshProUGUI>();
@@ -93,7 +99,7 @@ public class MainGameManager : MonoBehaviour
         {
             var del=lastTouch-LimitTouchingphase-1;
             OpenChunkStage = true;
-
+            
             LimitTouchingphase = LimitTouchingphase + 8 + del;
             PiercingSpiral.ModifyOverrap = del;
         }
@@ -106,15 +112,6 @@ public class MainGameManager : MonoBehaviour
         }
     }
 
-    IEnumerator delayInject()
-    {
-        yield return new WaitForSeconds(0.5f);
-        Material activeMaterial =
-            Resources.Load<Material>(
-                "BallCollections/" + AndroidOneOnly.activeBallMaterial
-            );
-        GameObject.Find("VisualPlayerRoot/BallVisualEqualizer")
-            .GetComponent<MeshRenderer>()
-            .material = new Material(activeMaterial);
-    }
+    
+    
 }

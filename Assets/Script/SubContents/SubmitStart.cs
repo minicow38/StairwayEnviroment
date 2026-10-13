@@ -18,6 +18,7 @@ public class SubmitStart : MonoBehaviour
 
     public void OnClick()
     {
+     
         MainGameManager.core.BeginCommandOnTouch = false;
     }
 }

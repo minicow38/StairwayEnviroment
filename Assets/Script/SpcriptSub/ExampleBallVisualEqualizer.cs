@@ -36,6 +36,17 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     [SerializeField] bool autoCreateDisplayForRigidbody = true;
     [SerializeField] bool hideOriginalRendererWhileTesting = true;
     [SerializeField] Transform actualDisplayTarget;
+
+    [Header("Display-only spikes (generated proxy only)")]
+    [Tooltip("Attach visual spikes only to ExampleBVE_Display_*. Toggle at runtime in the Inspector.")]
+    [SerializeField] bool enableDisplaySpikes = false;
+    [SerializeField, Range(1, 512)] int displaySpikeCount = 60;
+    [SerializeField, Min(0.001f)] float displaySpikeLength = 0.25f;
+    [SerializeField, Min(0.001f)] float displaySpikeWidth = 0.06f;
+    [SerializeField, Range(3, 16)] int displaySpikeSides = 6;
+    [Tooltip("Optional. If unassigned, uses the display sphere's current material.")]
+    [SerializeField] Material displaySpikeMaterial;
+
     readonly List<Renderer> originalRenderers = new List<Renderer>();
     readonly List<bool> originalRendererStates = new List<bool>();
 
@@ -54,6 +65,17 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     readonly List<RendererBinding> rendererBindings = new List<RendererBinding>();
     readonly List<TrailRendererBinding> trailRendererBindings = new List<TrailRendererBinding>();
     GameObject generatedDisplay;
+
+    // Owned visual-only mesh; never copied to the original or given a Collider.
+    GameObject generatedSpikes;
+    Mesh generatedSpikesMesh;
+    MeshRenderer generatedSpikesRenderer;
+    MeshRenderer spikeSourceRenderer;
+    MeshFilter spikeSourceFilter;
+    Mesh spikeSourceMesh;
+    int appliedSpikeCount, appliedSpikeSides;
+    float appliedSpikeLength, appliedSpikeWidth;
+    bool spikeSourceWarningReported;
 
     public TrailRenderer DisplayTrail =>
         trailRendererBindings.Count > 0 ? trailRendererBindings[0].display : null;
@@ -450,6 +472,163 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         }
 
         actualDisplayTarget = display;
+        SyncDisplaySpikes();
+    }
+
+    // The spikes belong to the generated display, not the original Rigidbody,
+    // so disabling them cannot change physics, source renderers, or the trail.
+    void SyncDisplaySpikes() {
+        if (!enableDisplaySpikes || !generatedDisplay) {
+            if (generatedSpikes || generatedSpikesMesh) RemoveDisplaySpikes();
+            return;
+        }
+
+        int count = Mathf.Clamp(displaySpikeCount, 1, 512);
+        int sides = Mathf.Clamp(displaySpikeSides, 3, 16);
+        float length = Mathf.Max(0.001f, displaySpikeLength);
+        float width = Mathf.Max(0.001f, displaySpikeWidth);
+
+        bool settingsUnchanged =
+            generatedSpikes && generatedSpikesMesh && generatedSpikesRenderer &&
+            spikeSourceFilter && spikeSourceRenderer &&
+            spikeSourceFilter.sharedMesh == spikeSourceMesh &&
+            appliedSpikeCount == count && appliedSpikeSides == sides &&
+            appliedSpikeLength == length && appliedSpikeWidth == width;
+
+        if (settingsUnchanged) {
+            // Existing material changes on the original are mirrored to the proxy.
+            // Read the source proxy renderer after SyncPresentationFromOriginal().
+            Material material = displaySpikeMaterial
+                ? displaySpikeMaterial : spikeSourceRenderer.sharedMaterial;
+            if (generatedSpikesRenderer.sharedMaterial != material)
+                generatedSpikesRenderer.sharedMaterial = material;
+            return;
+        }
+
+        RemoveDisplaySpikes();
+
+        // Usually the Sphere MeshFilter is on the display root. If the source
+        // model is nested, attach to its copied mesh transform instead.
+        MeshFilter sphereFilter = generatedDisplay.GetComponent<MeshFilter>();
+        MeshRenderer sphereRenderer = generatedDisplay.GetComponent<MeshRenderer>();
+        if (!sphereFilter || !sphereRenderer || !sphereFilter.sharedMesh) {
+            MeshFilter[] filters = generatedDisplay.GetComponentsInChildren<MeshFilter>(true);
+            sphereFilter = null;
+            sphereRenderer = null;
+            for (int i = 0; i < filters.Length; i++) {
+                MeshFilter candidate = filters[i];
+                MeshRenderer renderer = candidate.GetComponent<MeshRenderer>();
+                if (candidate.sharedMesh && renderer) {
+                    sphereFilter = candidate;
+                    sphereRenderer = renderer;
+                    break;
+                }
+            }
+        }
+
+        if (!sphereFilter || !sphereRenderer) {
+            if (!spikeSourceWarningReported) {
+                Debug.LogWarning("[ExampleBVE][SPIKES] Generated display has no MeshFilter + MeshRenderer; cannot add spikes.", this);
+                spikeSourceWarningReported = true;
+            }
+            return;
+        }
+
+        spikeSourceWarningReported = false;
+        Bounds bounds = sphereFilter.sharedMesh.bounds;
+        float radius = (bounds.extents.x + bounds.extents.y + bounds.extents.z) / 3f;
+        if (radius <= 0.0001f) return;
+
+        generatedSpikesMesh = CreateDisplaySpikeMesh(
+            bounds.center, radius, count, length, width, sides);
+        generatedSpikes = new GameObject("ExampleBVE_Display_Spikes");
+        generatedSpikes.transform.SetParent(sphereFilter.transform, false);
+        generatedSpikes.transform.localPosition = Vector3.zero;
+        generatedSpikes.transform.localRotation = Quaternion.identity;
+        generatedSpikes.transform.localScale = Vector3.one;
+
+        generatedSpikes.AddComponent<MeshFilter>().sharedMesh = generatedSpikesMesh;
+        generatedSpikesRenderer = generatedSpikes.AddComponent<MeshRenderer>();
+        generatedSpikesRenderer.sharedMaterial = displaySpikeMaterial
+            ? displaySpikeMaterial : sphereRenderer.sharedMaterial;
+        generatedSpikesRenderer.shadowCastingMode = sphereRenderer.shadowCastingMode;
+        generatedSpikesRenderer.receiveShadows = sphereRenderer.receiveShadows;
+        generatedSpikes.layer = sphereFilter.gameObject.layer;
+
+        spikeSourceFilter = sphereFilter;
+        spikeSourceRenderer = sphereRenderer;
+        spikeSourceMesh = sphereFilter.sharedMesh;
+        appliedSpikeCount = count;
+        appliedSpikeSides = sides;
+        appliedSpikeLength = length;
+        appliedSpikeWidth = width;
+    }
+
+    static Mesh CreateDisplaySpikeMesh(
+        Vector3 center, float radius, int count, float length, float width, int sides) {
+
+        List<Vector3> vertices = new List<Vector3>(count * (sides + 1));
+        List<int> triangles = new List<int>(count * sides * 3);
+        const float goldenAngle = 2.39996323f;
+
+        float baseWidth = Mathf.Min(width, radius * 0.9f);
+        float rootRadius = Mathf.Max(0f,
+            Mathf.Sqrt(Mathf.Max(0f, radius * radius - baseWidth * baseWidth))
+            - radius * 0.01f);
+
+        for (int i = 0; i < count; i++) {
+            // Fibonacci sphere: well-spaced spike directions without Random.
+            float y = 1f - 2f * (i + 0.5f) / count;
+            float horizontal = Mathf.Sqrt(Mathf.Max(0f, 1f - y * y));
+            float angle = goldenAngle * i;
+            Vector3 direction = new Vector3(
+                Mathf.Cos(angle) * horizontal, y,
+                Mathf.Sin(angle) * horizontal);
+            Quaternion rotation = Quaternion.FromToRotation(Vector3.up, direction);
+            Vector3 root = center + direction * rootRadius;
+            Vector3 tip = center + direction * (radius + length);
+            int first = vertices.Count;
+            vertices.Add(tip);
+
+            for (int side = 0; side < sides; side++) {
+                float a = (2f * Mathf.PI * side) / sides;
+                Vector3 ring = new Vector3(
+                    Mathf.Cos(a) * baseWidth, 0f,
+                    Mathf.Sin(a) * baseWidth);
+                vertices.Add(root + rotation * ring);
+            }
+
+            for (int side = 0; side < sides; side++) {
+                triangles.Add(first);
+                triangles.Add(first + 1 + (side + 1) % sides);
+                triangles.Add(first + 1 + side);
+            }
+        }
+
+        Mesh mesh = new Mesh { name = "ExampleBVE_Display_Spikes_Mesh" };
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    void RemoveDisplaySpikes() {
+        if (generatedSpikes) {
+            generatedSpikes.SetActive(false);
+            if (Application.isPlaying) Destroy(generatedSpikes);
+            else DestroyImmediate(generatedSpikes);
+        }
+        if (generatedSpikesMesh) {
+            if (Application.isPlaying) Destroy(generatedSpikesMesh);
+            else DestroyImmediate(generatedSpikesMesh);
+        }
+        generatedSpikes = null;
+        generatedSpikesMesh = null;
+        generatedSpikesRenderer = null;
+        spikeSourceRenderer = null;
+        spikeSourceFilter = null;
+        spikeSourceMesh = null;
     }
 
     int CopyPresentation(Transform source, Transform destination) {
@@ -638,6 +817,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     }
 
     void ReleaseGeneratedDisplay() {
+        RemoveDisplaySpikes();
+        spikeSourceWarningReported = false;
         for (int i = 0; i < originalRenderers.Count; i++)
             if (originalRenderers[i]) originalRenderers[i].enabled = originalRendererStates[i];
 
@@ -1753,6 +1934,8 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         // Material / renderer state remains source-authoritative even though the
         // source renderer itself is hidden while the proxy is visible.
         SyncPresentationFromOriginal();
+        // Detect Inspector toggles/parameter changes during Play mode.
+        SyncDisplaySpikes();
 
         float targetOffset = visualOffset;
 
@@ -1838,3 +2021,4 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     }
 
 }
+
