@@ -163,13 +163,15 @@ public sealed class NearestKnotDetector : MonoBehaviour
         // Cache初期化
         // ============================================================
 
-        segments.Clear();
+        int used = 0;
+
         currentSegment = -1;
         nextSectionIndex = 0;
         hasLastPosition = false;
 
         if (splineContainer.Splines.Count == 0)
         {
+            segments.Clear();
             cachedSplineCount = 0;
             CurrentGuide = default;
             return;
@@ -190,7 +192,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
                 continue;
             }
 
-            int first = segments.Count;
+            int first = used;
 
             for (int k = 0; k < spline.Count - 1; k++)
             {
@@ -216,25 +218,45 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
                 float angle = Vector3.Angle(normal, Vector3.up);
 
-                segments.Add(new SegmentInfo
+                SegmentInfo info;
+
+                if (used < segments.Count)
                 {
-                    splineIndex = s, segmentIndex = k,
+                    info = segments[used];
+                }
+                else
+                {
+                    info = new SegmentInfo();
+                    segments.Add(info);
+                }
 
-                    startKnotIndex = k, endKnotIndex = k + 1,
+                used++;
 
-                    start = a, end = b,
+                info.splineIndex = s;
+                info.segmentIndex = k;
+                info.startKnotIndex = k;
+                info.endKnotIndex = k + 1;
 
-                    tangent = tangent, normal = normal,
+                info.start = a;
+                info.end = b;
+                info.tangent = tangent;
+                info.normal = normal;
 
-                    length = length,
+                info.length = length;
+                info.slopeAngle = angle;
+                info.isSlope = angle >= MinSlopeAngle;
 
-                    slopeAngle = angle,
+// 前回の計算結果を残さない
+                info.sectionIndex = -1;
+                info.sectionLength = 0f;
+                info.distanceFromSectionStart = 0f;
 
-                    isSlope = angle >= MinSlopeAngle
-                });
+                info.entryCurvature = 0f;
+                info.exitCurvature = 0f;
+                info.curvature = 0f;
             }
 
-            int last = segments.Count - 1;
+            int last = used - 1;
 
             if (last < first)
                 continue;
@@ -242,6 +264,13 @@ public sealed class NearestKnotDetector : MonoBehaviour
             PopulateCurvature(first, last);
 
             BuildSlopeSections(first, last);
+        }
+        if (used < segments.Count)
+        {
+            segments.RemoveRange(
+                used,
+                segments.Count - used
+            );
         }
     }
 

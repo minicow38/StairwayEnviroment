@@ -36,7 +36,6 @@ public class PhygicsTrigger : MonoBehaviour
      
         BallOnVisual = GameObject.Find("BallVisual");
         BringActiveSlope = GameObject.Find("GameManager").GetComponent<MainGameManager>();
-        Debug.Log("");
 
     }
 
@@ -109,9 +108,7 @@ public class PhygicsTrigger : MonoBehaviour
             touchedSteps = new bool[StairCount];
             touchedStepCount = 0;
 
-            Debug.Log(
-                $"[STAIR START] {objectName} 0/{StairCount}"
-            );
+           
         }
 
         // 入口から現在の接触点までの距離
@@ -142,13 +139,8 @@ public class PhygicsTrigger : MonoBehaviour
             touchedSteps[stepIndex] = true;
             touchedStepCount++;
 
-            Debug.Log(
-                $"[STAIR STEP] " +
-                $"{objectName} " +
-                $"段={stepIndex + 1} " +
-                $"接触={touchedStepCount}/{StairCount} " +
-                $"point={contact.point:F3}"
-            );
+           
         }
+       
     }
 }

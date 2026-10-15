@@ -6,501 +6,176 @@ using UnityEngine.Rendering;
 using UnityEngine.Splines;
 
 /// <summary>
-/// Independent A+B (three orthogonal stage rails) / A+b (two wave splines).
-/// V24: InSubject Knot observations + comoving terrain-frame acceleration wave drive.
-/// One class only, with an automatically installed CONTACT_ONLY instance on InSubject.
-/// Signed entry and exit corners are independently validated and
-/// the published three rails are immutable until the next flat.
-/// Reads visual StairWay*_Render / ArcSlab*_Render and an injected Rigidbody.
-/// Independently drives a physics-free visual Transform. No physics driving.
-/// Five owned SplineContainers remain isolated from existing wave systems.
-/// Knot anchors are a bounded read-only sampling cache; zero knots are created for sonars.
-/// The original ExampleBVE is never used as wave input; own output is renderer-only.
-/// The original geometry and SplineContainer writers remain intact.
+/// Five independently owned SplineContainers + a renderer-only measured Equalizer.
+/// The five geometric splines and their entry/exit lifetime are unchanged.
+/// A compact reference-BVE Hermite baseline is driven by real Knot progress;
+/// actual contacts and noninertial observations drive only its bounded residual. All five
+/// spline paths, the stage meshes, and the physics source are READ ONLY to the
+/// Equalizer. A separate renderer-only visual object receives the display offset.
 /// </summary>
 [DefaultExecutionOrder(12440), DisallowMultipleComponent]
 public sealed class IndependentFiveSplineWeaver : MonoBehaviour
 {
     const float E = .00001f;
     const int Out = 0, Center = 1, Inside = 2, Observed = 3, Future = 4, Count = 5;
-    static readonly string[] Names = { "OutCorner", "CenterCorn", "InCorner", "EqualizerObservedSpline", "EqualizerFutureBallSpline" };
+    static readonly string[] Names = {
+        "OutCorner", "CenterCorn", "InCorner",
+        "EqualizerObservedSpline", "EqualizerFutureBallSpline"
+    };
     static readonly Color[] Colors = {
         new Color(1f,.55f,.12f), new Color(.1f,.9f,1f), new Color(.32f,1f,.28f),
         new Color(1f,.22f,.76f), new Color(.35f,.48f,1f)
     };
 
-    [Header("Read-only display and renderer geometry")]
-    [SerializeField] Transform displayedBall;         // Optional visual assigned in Inspector
+    [Header("Renderer geometry - READ ONLY")]
     [SerializeField] Transform generatedVisualRoot;
-    [Header("V21 fixed standalone authority (no ExampleBVE wave input)")]
-    [SerializeField] string visualMode = "UNRESOLVED";
-    [Header("Standalone visual output (only when Main BVE is unavailable)")]
-    [SerializeField] Transform visualMotionSource;   // Optional: VisualPlayerRoot/subject, READ ONLY
-    [SerializeField] bool createOwnVisualBall = true;
-    [SerializeField] Material ownBallMaterial;
-    [SerializeField] Mesh ownBallMesh;
-    [SerializeField] bool debugVisualBinding;
-    [SerializeField] string visualBindingStatus = "UNRESOLVED";
-    [SerializeField, Range(.05f,1f)] float rendererScanSeconds = .25f;
+    [SerializeField, Min(.025f)] float rendererScanSeconds = .10f;
     [SerializeField, Min(.5f)] float fallbackPieceLength = 9.9f;
     [SerializeField] float renderLocalHeight;
 
-
-    [Header("Physics source (READ ONLY; SlopeStickCore keeps authority)")]
-    [SerializeField] Rigidbody inSubject; // REQUIRED for non-inertial observation
+    [Header("Movement reference - READ ONLY (never moved)")]
+    [SerializeField] Transform visualMotionSource;    // e.g. VisualPlayerRoot/subject
+    [SerializeField] Transform displayedBall;        // optional alternative input
+    [SerializeField] Rigidbody inSubject;            // optional read-only fallback
     [SerializeField] Transform subjectFallback;
-    [SerializeField] Transform physicsFrame, visualFrame;
-    [SerializeField] LayerMask groundMask = ~0;
+    [SerializeField] Transform physicsFrame, visualFrame; // explicit frame mapping
+    [SerializeField] bool allowUnmappedPhysicsFallback = true;
 
-    [Header("V21: InSubject observation via transported Knot frame")]
-    [SerializeField] bool driveVisualWithKnotSonar = true;
-    [SerializeField] bool drawKnotSonarGizmos;
-    [SerializeField, Range(.3f, 8f)] float knotSonarRadius = 2.75f;
-    [SerializeField, Min(.05f)] float probeSpacing = .45f;
-    [SerializeField, Min(.1f)] float probeHeight = 2f;
-    [SerializeField, Min(.2f)] float probeDepth = 8f;
-    [SerializeField] float bveInitialCY;
-    [SerializeField, Min(.01f)] float entryBlendSeconds = .10f;
-    [Header("Downhill entry and section diagnostics (not waveform control)")]
-    // Separate from A+b Future spline settings: tuning a prediction cannot
-    // silently change the actual rendered ball's physical wave program.
-    [SerializeField, Min(.1f)] float bveSectionLength = 9.9f;
-    [SerializeField, Range(.05f,.95f)] float bveFBoundary = 3f/7f;
-    [SerializeField, Min(.1f)] float bveEntrySlopeDegrees = 12f;
-    [SerializeField, Min(0f)] float bveMinimumEntryPlanarSpeed = 2f;
-    [SerializeField, Min(.1f)] float bveTeleportThreshold = 2.5f;
-    [SerializeField] bool bveAutoBeginOnDownhill = true;
-    [SerializeField] bool bveAutoEndAtSection = true;
-    [SerializeField] bool debugBveParityEvents = true;
-    [SerializeField, Min(.01f)] float visualRadius = .5f;
+    [Header("Entry/exit")]
+    [SerializeField, Range(3f, 25f)] float lookAheadDistance = 8f;
+    [SerializeField, Range(2f, 35f)] float minimumDownhillDegrees = 10f;
+    [Tooltip("Allow a StairWay*_Render group even when its smoothed mesh reports little slope.")]
+    [SerializeField] bool trustStairWayRendererNames = true;
+    [SerializeField, Range(1f, 15f)] float maxEntryCrossTrack = 5f;
+    [SerializeField, Range(.1f, 5f)] float exitConfirmDistance = .65f;
+    [SerializeField, Range(.05f, 1.5f)] float cornerEntryLeadMeters = .50f;
+    [SerializeField, Range(.25f, 5f)] float nextFlatArrivalTolerance = 1.6f;
+    [SerializeField, Min(1f)] float verticalDetectionTolerance = 7f;
 
-    [Header("V21 non-inertial wave authority (STANDALONE only)")]
-    [SerializeField, Range(.05f,1f)] float trackingAlpha = .65f;
-    [SerializeField, Range(.001f,.7f)] float trackingBeta = .10f;
-    [SerializeField, Min(.2f)] float nonInertialFrequencyHz = 1.4f;
-    [SerializeField, Range(.2f,1.5f)] float nonInertialDampingRatio = .48f;
-    [SerializeField, Range(0f,2f)] float nonInertialObservationGain = 1.0f;
-    [SerializeField, Range(0f,1f)] float nonInertialImpactGain = .14f;
-    [SerializeField, Range(0f,1f)] float nonInertialEntryGain = .40f;
-    [SerializeField, Min(.1f)] float nonInertialMaxOffset = 3.5f;
-    [SerializeField, Min(1f)] float nonInertialMaxSpeed = 20f;
-
-    [Header("V22: real InSubject contact -> Knot-normal excitation")]
-    [Tooltip("One-class collision listener is attached automatically to the InSubject GameObject. The Rigidbody is never written.")]
-    [SerializeField] bool enablePhysicalContactExcitation = true;
-    [Tooltip("Minimum contact relative-normal velocity (m/s) to reject steady support/friction impulses.")]
-    [SerializeField, Min(0f)] float contactMinApproachSpeed = .12f;
-    [Tooltip("Minimum collision impulse / Rigidbody mass (m/s) before it can excite the display.")]
-    [SerializeField, Min(0f)] float contactMinImpulseSpeed = .08f;
-    [Tooltip("Minimum alignment between actual contact normal and the Knot observer normal.")]
-    [SerializeField, Range(0f,1f)] float contactMinNormalAlignment = .22f;
-    [Tooltip("Fraction of measured collision delta-v transferred into visual-only oscillator velocity.")]
-    [SerializeField, Range(0f,2f)] float contactWaveVelocityGain = .55f;
-    [Tooltip("Limit the equivalent delta-v from collision impulses during one physics step.")]
-    [SerializeField, Min(.1f)] float contactMaxVelocityKick = 3.5f;
-    [Tooltip("OnCollisionStay is an impact only if the impulse rises above its recent steady-contact baseline by this ratio.")]
-    [SerializeField, Range(1.05f,6f)] float contactImpulseRiseRatio = 1.8f;
-    [Tooltip("Minimum absolute increase of impulse/mass (m/s) above steady-contact baseline.")]
-    [SerializeField, Min(0f)] float contactImpulseRiseSpeed = .24f;
-    [Tooltip("Minimum gap (s) between two impact excitations from the same collision partner.")]
-    [SerializeField, Range(0f,.25f)] float contactImpactCooldown = .06f;
-    [Tooltip("Soft saturation avoids flattening different strong impacts at one identical maximum kick.")]
-    [SerializeField] bool contactSoftLimitKick = true;
-    [SerializeField] bool debugContactExcitation = false;
-    [Tooltip("Log one detailed before/after-solver trace for each qualified contact kick.")]
-    [SerializeField] bool debugContactTransfer = false;
-    [Tooltip("Per Wave 1/2/3 then 2/3: oscillator energy budget (diagnostic only; never pumps energy by wave index).")]
-    [SerializeField] bool debugWaveEnergyBudget = true;
-    [Tooltip("Check the tracking normal, wave solver normal and the current render-axis normal.")]
-    [SerializeField] bool debugNormalAlignment = false;
-    [SerializeField, Range(5f,90f)] float normalMismatchWarningDegrees = 25f;
-    [SerializeField] bool debugKnotTracking = false;
-    [SerializeField, Min(.1f)] float trackingLogSeconds = .25f;
-
-    [Header("V26: energy-scaled comoving terrain observation (no fixed amplitude templates)")]
-    [Tooltip("Observe stairs and physical velocity; drive a continuous normal acceleration even on ramp-like collision meshes.")]
-    [SerializeField] bool enableTerrainExcitation = true;
-    [Tooltip("Nominal spatial pitch (meters) for visually stair-stepped terrain when the PHYSICS mesh is smoothed. This is a display-only surrogate, not a measured collision.")]
-    [SerializeField, Min(.5f)] float terrainSpatialPitch = 3.30f;
-    [Tooltip("Display-only roughness height (meters), weighted by actual stair slope, speed, contact proximity and Knot normal.")]
-    [SerializeField, Range(.02f,1.0f)] float terrainSpatialRoughnessHeight = .55f;
-    [Tooltip("Maximum effective spatial forcing frequency. The actual phase still comes from traveled Knot station.")]
-    [SerializeField, Range(2f,12f)] float terrainMaxFrameFrequencyHz = 9.0f;
-    [Tooltip("Contribution of directly measured 3-point ground curvature to frame acceleration.")]
-    [SerializeField, Range(0f,.35f)] float terrainMeasuredCurvatureGain = .06f;
-    [SerializeField] bool debugTerrainExcitation = true;
-
-    [Header("V26: non-inertial authority / spatial ground corrugation")]
-    [Tooltip("Display-only scaling of the equivalent ground corrugation inferred from measured speed, grade and contact proximity; no wave-index amplitude template.")]
-    [SerializeField, Range(.25f,3f)] float expressiveAmplitudeGain = 1.45f;
-    [Tooltip("Where the FIRST ground corrugation reaches its high point. Changes the moving reference acceleration, NOT ball height.")]
-    [SerializeField, Range(.50f,.95f)] float expressiveFirstApex = .82f;
-    [Tooltip("Where subsequent spatial corrugations crest. NOT a prescribed ball apex.")]
-    [SerializeField, Range(.30f,.75f)] float expressiveLaterApex = .50f;
-    [Tooltip("Contribution of the directly observed moving Knot-frame acceleration; non-inertial physics source, no external BVE input.")]
-    [SerializeField, Range(0f,2f)] float movingFrameTransportGain = .65f;
-    [Tooltip("V26 oscillator speed limit, not a Rigidbody limit. Prevents the old 20m/s Inspector value from flattening 6-9Hz waves.")]
-    [SerializeField, Range(20f,140f)] float niOscillatorMaxSpeed = 75f;
-    [Tooltip("V26 moving-frame acceleration limit, independent of old V24 serialization.")]
-    [SerializeField, Range(500f,20000f)] float niOscillatorAccelerationLimit = 9000f;
-    [Tooltip("Coupling of the observed speed/slope-based support corrugation to the NONINERTIAL oscillator.")]
-    [SerializeField, Range(.1f,1.5f)] float niCorrugationDriveGain = .52f;
-    [Tooltip("Damping of the V26 high-frequency non-inertial oscillator, separate from old low-frequency V21 setting.")]
-    [SerializeField, Range(.2f,1.5f)] float niHighFrequencyDamping = .75f;
-    [Tooltip("Debug once per region: report observed physical state and resulting oscillator motion, never algebraic A1/A2/A3 commands.")]
-    [SerializeField] bool debugExpressiveWave = true;
-
-    [Header("Renderer-only presentation (non-inertial output)")]
-    [SerializeField] bool softenVisualWave = true;
-    [SerializeField] bool adaptiveVisualFilter = true;
-
-    [SerializeField, Range(.005f,.10f)] float flightSmoothSeconds = .035f;
-
-    [SerializeField, Min(0f)] float adaptiveSpeedGain = 1.4f;
-    [SerializeField, Range(.5f,30f)] float adaptiveDerivativeHz = 8f;
-    [SerializeField, Range(.005f,.04f)] float adaptiveMinimumSmoothSeconds = .008f;
-    [SerializeField] bool resetFilterOnSharpNormalChange = true;
-    [SerializeField, Range(30f,170f)] float filterNormalResetDegrees = 65f;
-    [SerializeField] bool debugBveTransitions = false;
-    [SerializeField] bool debugBveState = false; // one sample / .25s, OFF by default
-
-    [Header("Ball trajectory: comparable MAIN / STANDALONE logs (diagnostic only)")]
-    [SerializeField] bool debugBallTrajectory = true;
-    [SerializeField, Range(.02f, .25f)] float ballTrajectoryLogInterval = .05f;
-
-    [Header("One flat -> one downhill stair pair")]
-    [SerializeField, Range(3f,25f)] float lookAheadDistance = 8f;
-    [SerializeField, Range(2f,35f)] float minimumDownhillDegrees = 10f;
-    [SerializeField, Range(1f,15f)] float maxEntryCrossTrack = 5f;
-    [SerializeField, Range(0.1f,5f)] float exitConfirmDistance = .65f;
-    [SerializeField, Range(2f,30f)] float teleportLogDistance = 16f;
-    [SerializeField, Range(1f,20f)] float cornerToleranceDegrees = 8f;
-    [Header("V8: A+B rail lifetime and corner geometry")]
-    [SerializeField, Range(1f,30f)] float maximumCornerReach = 16f;
-    [SerializeField, Range(.25f,5f)] float nextFlatArrivalTolerance = 1.6f;
-    [Header("V13: entry-plane publish and exact Knot tubes")]
-    [SerializeField, Range(.05f,.75f)] float cornerEntryLeadMeters = .35f;
-
-    [Header("A+B: three independent straight/90-degree geometry rails")]
-    [SerializeField, Range(.1f,8f)] float laneHalfWidth = 2.5f;
+    [Header("A+B 90-degree rails (unchanged geometry approach)")]
+    [SerializeField, Range(1f, 20f)] float laneHalfWidth = 2.5f;
     [SerializeField] bool turnToPositiveZ = true;
-    [SerializeField, Range(1f,8f)] float miterLimit = 4f;
+    [SerializeField, Range(1f, 8f)] float miterLimit = 4f;
+    [SerializeField, Range(1f, 20f)] float maximumCornerReach = 16f;
+    [SerializeField, Range(1f, 20f)] float cornerToleranceDegrees = 8f;
 
-    [Header("A+b: only on downhill StairWay renderer groups")]
-    [SerializeField, Range(0,8)] int multiplierOverride;
-    [SerializeField, Min(.5f)] float nominalStairLength = 9.9f;
-    [SerializeField, Range(.05f,.95f)] float fBoundary = 3f/7f;
-    [SerializeField, Range(33,201)] int futureMinimumKnots = 97;
-    [SerializeField, Min(.01f)] float firstHeight = .45f;
-    [SerializeField, Min(.01f)] float riseSpeed = 3.1367f;
-    [SerializeField, Range(0f,1f)] float energyBlend = .35f;
-    [SerializeField, Range(.05f,.99f)] float restitution = .86f;
-    [SerializeField, Range(.05f,1f)] float lowerRatio = .75f;
-    [SerializeField, Range(.15f,.95f)] float firstApex = .82f;
-    [SerializeField, Range(.15f,.85f)] float laterApex = .50f;
-    [SerializeField, Min(0f)] float dampingPerMeter = .02f;
-    [SerializeField, Range(0f,.5f)] float firstRoughness = .08f;
-    [SerializeField, Range(0f,.5f)] float secondRoughness = .22f;
-    [SerializeField, Range(0f,.5f)] float thirdRoughness = .12f;
-    [SerializeField, Range(1f,32f)] float fallbackSpeed = 18f;
-    [SerializeField, Range(.005f,.2f)] float observedSpacing = .03f;
-    [SerializeField, Range(64,4096)] int maxObservedKnots = 900;
-    [SerializeField, Range(.6f,1f)] float postTurnHeadingDot = .94f;
-    [SerializeField, Range(.1f,8f)] float maxLateralSync = 6f;
-    [Header("V10: one-time lateral calibration, never continuous correction")]
-    [SerializeField, Range(2,8)] int laneRequiredSamples = 3;
-    [SerializeField, Range(.1f,1f)] float laneStableTolerance = .35f;
+    [Header("Two geometric stair splines (NO motion prediction)")]
+    [SerializeField, Range(.02f, .5f)] float observedSpacing = .08f;
+    [SerializeField, Range(8, 2048)] int maxObservedKnots = 600;
+    [SerializeField, Range(0f, .5f)] float geometricLineLift = .08f;
 
-    [Header("Five NEW SplineContainer meshes (Game + Scene view)")]
-    [SerializeField, Range(.008f,.15f)] float tubeRadius = .035f;
-    [SerializeField, Range(3,10)] int tubeSides = 6;
-    [SerializeField, Range(.02f,.5f)] float meshRefreshSeconds = .09f;
+    [Header("Measured BallVisualEqualizer - one physical observer")]
+    [Tooltip("Optional RENDERER-ONLY transform. Leave empty to create a separate visible sphere. Never assign InSubject or visualMotionSource here.")]
+    [SerializeField] Transform equalizerDisplay;
+    [SerializeField] LayerMask equalizerGroundMask = ~0;
+    [SerializeField, Range(.1f, 1f)] float equalizerProbeSpacing = .45f;
+    [SerializeField, Range(.2f, 2f)] float equalizerVisualRadius = .5f;
+    [SerializeField, Range(.2f, 1.5f)] float equalizerDamping = .65f;
+    [SerializeField, Range(0f, 3f)] float equalizerObservationGain = 1.0f;
+    [SerializeField, Range(0f, 2f)] float equalizerImpactGain = .65f;
+    [SerializeField, Range(0f, 1f)] float equalizerTerrainGain = .45f;
+    [SerializeField, Range(0f, 1f)] float equalizerAccelerationGain = .09f;
+    [SerializeField, Range(0f, 1f)] float equalizerFrameGain = .06f;
+    [SerializeField, Min(.2f)] float equalizerMaximumOffset = 3f;
+    [SerializeField] bool equalizerDebug = true;
+
+    // Numeric state is indispensable for time derivatives and an oscillator.
+    // A single group ID is the only lifecycle marker: the existing five-spline
+    // state machine remains the sole authority for stage entry and exit.
+    readonly RaycastHit[] equalizerHits = new RaycastHit[16];
+    int equalizerGroup = -1, equalizerPeakRegion = -1;
+    float equalizerBase, equalizerSlow, equalizerAccelSlow;
+    float equalizerOffset, equalizerSpeed, equalizerDisplayOffset, equalizerDisplaySpeed;
+    float equalizerLastQSpeed, equalizerEntrySpeed, equalizerWave;
+    float equalizerReferenceHeight, equalizerGroundSignal, equalizerFrameAcceleration;
+    float equalizerObservedAcceleration, equalizerPhysicalImpact, equalizerNextLog, equalizerPitch = 3.3f;
+    Vector3 equalizerLastOrigin, equalizerLastOriginSpeed, equalizerLastNormal = Vector3.up;
+    Vector3 equalizerLastNormalSpeed, equalizerNormal = Vector3.up;
+    Vector3 equalizerLastPhysicalPosition;
+    GameObject equalizerOwnedDisplay;
+
+    // Same class on InSubject receives Unity collision callbacks; no extra class.
+    static IndependentFiveSplineWeaver addingContactFor;
+    IndependentFiveSplineWeaver contactOwner, contactProbe;
+    float contactSupport;
+
+    [Header("Owned SplineContainer tubes")]
+    [SerializeField, Range(.008f, .15f)] float tubeRadius = .035f;
+    [SerializeField, Range(3, 10)] int tubeSides = 6;
+    [SerializeField, Range(.02f, .5f)] float meshRefreshSeconds = .09f;
     [SerializeField] Material optionalTubeMaterial;
     [SerializeField] bool showFiveInGame = true;
-    [Header("Spline lifecycle diagnostic (read-only during Play)")]
-    [SerializeField] bool debugSplineLifecycle;
+    [SerializeField] bool debugSplineLifecycle = true;
 
-
-    [Header("Runtime (read-only)")]
+    [Header("Runtime, read-only")]
     [SerializeField] int detectedPieces, detectedPairs, pairIndex = -1, stairGroup = -1;
     [SerializeField] string state = "IDLE", lastReason = "";
-    [SerializeField] int multiplier, waveCount, routeRevisions, predictionRevisions;
     [SerializeField] int[] knotCounts = new int[Count];
-    [SerializeField] bool isDownhillStair, hasFlatBefore, hasRightAngleTurn, isDetouring, isTurnBusy, laneSynced;
-    [SerializeField] float entryDistance, stairStation, sectionLength, lateralOffset, futureLateralShift, supportHeight;
-    [SerializeField] bool cornerBuilt, exitReached, entryLaneTrusted;
-    [SerializeField] int railTurnCount;
+    [SerializeField] bool isDownhillStair, hasFlatBefore, hasRightAngleTurn;
+    [SerializeField] bool cornerBuilt, exitReached;
+    [SerializeField] float entryDistance, stairStation;
+    [SerializeField] int railTurnCount, beforePublishReplans;
     [SerializeField] Vector3 entryCornerPoint, exitCornerPoint;
     [SerializeField] bool hasEntryCornerPoint, hasExitCornerPoint;
     [SerializeField] float signedEntryYaw, signedExitYaw;
-    [SerializeField] int beforePublishReplans;
-    [Header("Knot / BVE diagnostic (read-only)")]
-    [SerializeField] int sonarAnchorCount, sonarNearbyKnots, sonarGroundContacts;
-    [SerializeField] float sonarWaveHeight, sonarStation, sonarDetectedGroundY;
-    [SerializeField] Vector3 sonarWaveNormal = Vector3.up;
-    [SerializeField] bool sonarGeometryDetected, bveActive, bveExiting, bveProbeValid;
-    // WaveIndex / WaveType are progress-region labels for diagnostics ONLY.
-    // They do not prescribe the standalone ball's wave shape.
-    [SerializeField] int bveWaveIndex = -1, bveWaveType = -1, bveBeginCount;
-    [SerializeField] bool bveFirstApexLogged;
-    [SerializeField] float bveProgress, bveTraveled, bveCurrentAmplitude, bveBaseOffset;
-    [SerializeField] float bveResidualOffset, bveTerminalOffset, bveRawOffset;
-    [SerializeField] float bveSlopeDegrees;
-    [SerializeField] float bvePresentationSeconds;
-    const int SonarAnchorCapacity = 7;
-    readonly Vector3[] sonarAnchors = new Vector3[SonarAnchorCapacity];
-    readonly bool[] sonarAnchorIsObservation = new bool[SonarAnchorCapacity];
-    readonly RaycastHit[] sonarHits = new RaycastHit[16];
-    readonly Collider[] bveSampleColliders = new Collider[4];
-    bool bveArmed, bveFrameReady;
-    // BVE flat rearm / start time and the two-point entry gradient.
-    float bveFlatElapsed, bveGradient, bveLastBegin = -999f;
-    int bvePhysicsStairMultiplier = 1;
-    float bveNextStateLog;
-    float bveElapsed, bveExitElapsed, bveWaveLocal01 = 1f;
-    // Snapshot at the wave's actual entry. PREPARED on the next stair must
-    // never alter the outgoing stair's repeated 2/3 rhythm or section length.
-    int bveCycleGroup = -1, bveCycleMultiplier;
-    float bveCycleSectionLength;
-    float bveLastOffset, bveLastOffsetSpeed;
-    float bvePreviousFilterTarget, bveAdaptiveVisualSpeed, bvePresentedSpeed, bvePresentedOffset;
-    bool bveFilterReady, bvePresentationReady;
-    Vector3 bveT = Vector3.forward, bveN = Vector3.up;
-    Vector3 bveHeading = Vector3.forward;
-    Vector3 bvePreviousPhysicsPoint;
-    Vector3 bvePreviousPresentationNormal = Vector3.up;
-    bool sourcePositionValid;
-    // Visual Carrier is display translation / spline lifecycle authority ONLY.
-    // InSubject is the sole physical observation source for the wave.
-    bool bveVisualPresentationHasSample;
-    Transform bveLastVisualParent;
-    Vector3 bveLastWrittenLocalPosition;
-    Vector3 bveLastAppliedLocalOffset;
-    Vector3 lastSourcePosition, fallbackVelocity;
-    Transform ownedVisualBall;
-    Material ownedVisualMaterial;
-    MonoBehaviour activeMainBve;
-    Transform inspectorVisualBall;
-    bool mainBveMode;
-
-    // Knot target tracking, inlined: one component, no external dependency.
-    bool trackingValid;
-    int trackingKnotIndex = -1;
-    int trackingNearbyKnots;
-    Vector3 trackingTangent = Vector3.forward;
-    Vector3 trackingNormal = Vector3.up;
-    Vector3 trackingSide = Vector3.right;
-    Vector3 trackingReference;
-    float trackingRelativeHeight;
-    float trackingRelativeSpeed;
-    float trackingWaveObservation;
-
-    int trackingGroup = -1;
-    float trackingBaseline, trackingTrend, trackingEstimate, trackingEstimateSpeed;
-    float trackingComovingHeight, trackingPhysicalSpeed, trackingFrameSpeed;
-    float trackingCoordinateSpeed, trackingReferenceSpeed;
-    Vector3 trackingLastNormal, trackingLastRelative, trackingLastReference;
-    bool trackingHasLastFrame;
-    float nextKnotTrackingLog;
-    // V21: anchored physical->visual map. Source physics POSITION is sampled each
-    // FixedUpdate; the visual subject calibrates coordinate origin ONCE, never
-    // serves as a substitute observation or an adaptive compensation signal.
-    bool observedMapReady;
-    Transform observedPhysicsParent, observedVisualParent, observedVisualAnchor;
-    Vector3 observedPhysicsLocal0, observedVisualLocal0;
-    string observedMapSource = "UNAVAILABLE";
-    float nextMissingMapLog;
-    [SerializeField] bool debugPhysicalObservation = false;
-    [Header("V21.1: observation verification only (no waveform changes)")]
-    [SerializeField, Range(0f,1f)] float observationContinuityWeight = .18f;
-    [SerializeField, Min(.25f)] float observationMinimumStationTravel = 1.5f;
-    [SerializeField, Min(1f)] float observationVelocityWindowFactor = 2.5f;
-    [SerializeField, Min(0f)] float observationCrossTrackWarning = 5f;
-    bool observationStationReady, observationSampleReady;
-    int observationStationGroup = -1;
-    int observationPairKnotCount;
-    float observationLastStation, observationStationStep;
-    Vector3 observationPreviousPhysicsPoint, observationPreviousMappedPoint;
-    Vector3 observationMappedVelocity, observationMappedSourceVelocity;
-    Vector3 observationMappedFrameVelocity, observationMappedRigidVelocity;
-    float observationRigidbodyVelocityError, observationHeightRateError;
-    float trackingRawHeight;
-    // V21.2: failure reason and the last ACCEPTED station survive a transient miss.
-    string observationRejectReason = "NONE";
-    float observationLastStationTime, observationAllowedTravel, observationCandidateStation;
-    int observationRejectedFrames, observationRebaseCount;
-    float nextObservationRecoveryLog;
-
-    float contactFraction;
-    // V20 wave state: the measured comoving coordinate is authoritative.
-    float nonInertialOffset, nonInertialVelocity, nonInertialTarget;
-    float nonInertialLastInputVelocity, nonInertialInputJump;
-    bool nonInertialHadInput;
-    // Only ONE MonoBehaviour class is required: the manager on StairwaySimple
-    // auto-installs an instance of THIS class as a collision-only listener on
-    // InSubject. Unity dispatches collision callbacks to the Rigidbody host.
-    // The attach marker must be set BEFORE AddComponent, because Awake runs
-    // synchronously during AddComponent. Listener Awake exits before spline setup.
-    static IndependentFiveSplineWeaver pendingContactOwner;
-    static GameObject pendingContactObject;
-    [SerializeField, HideInInspector] bool contactListenerOnly;
-    [SerializeField, HideInInspector] IndependentFiveSplineWeaver contactListenerOwner;
-    IndependentFiveSplineWeaver physicalContactProbe;
-    bool ownsPhysicalContactProbe;
-    // These listener fields are independent from the manager's Inspector knobs.
-    Rigidbody contactTarget;
-    LayerMask contactGroundMask;
-    float contactListenerMinApproach;
-    ContactSample contactPending;
-    bool contactHasPending;
-    int contactAllCallbacks;
-    float nextContactStateLog;
-    float lastContactImpulsePerMass, lastContactKick, lastContactNormalAlignment;
-    float lastContactApproachSpeed;
-    float lastContactVelocityBefore, lastContactVelocityAfter;
-    float lastContactOffsetAtKick, lastContactTargetAtKick;
-    int contactEventsSinceLog, contactQualifiedSinceLog, contactInjectedSinceLog;
-    int contactSupportRejected, contactSpeedRejected, contactCooldownRejected;
-    int contactImpulseRejected, contactOrientationRejected;
-    // Energy is in display-oscillator units (mass=1), NOT real Rigidbody joules.
-    bool waveEnergyActive;
-    int waveEnergyGroup=-1, waveEnergyIndex=-1, waveEnergyType=-1;
-    int waveEnergySteps, waveEnergyContactCount, waveEnergyTerrainCount;
-    float waveEnergyStart, waveEnergyContactInput, waveEnergyTerrainInput, waveEnergyVelocityInput;
-    float waveEnergyTargetWork, waveEnergyDampingLoss, waveEnergyMaxAbsOffset;
-    bool contactTransferPending;
-    // V25: spatial/temporal non-inertial reference acceleration. The frame
-    // is constructed from the measured Knot station and real travel speed.
-    Collider terrainBodyCollider;
-    float terrainFrameAcceleration, terrainFrameOmega, terrainFrameSourceHz;
-    float terrainFrameAmplitude, terrainMeasuredCurvature;
-    float terrainLastTravelSpeed, terrainNextSummaryTime;
-    int terrainFrameGroup = -1, terrainFrameDrivenSteps;
-    bool terrainFrameUsingSurrogate;
-    // V26 moving-frame transport theorem: the origin and rotating normal
-    // contribute apparent acceleration, independently of true collision kicks.
-    Vector3 niFramePreviousOrigin, niFramePreviousVelocity;
-    Vector3 niFramePreviousNormal, niFramePreviousNormalRate;
-    bool niFrameHistoryValid, niFrameHasVelocitySample;
-    float niFrameTransportAcceleration, niFrameTransportRaw;
-    int niRegionLogged = -1, niGroupLogged = -1;
-    // Future predicts with the same local terrain/frame oscillator, but it
-    // never receives live Observed spline peaks or an external BVE transform.
-    float futureAmplitudeReference;
-    bool futureEnergyFrozen;
-
-    float nextNormalAlignmentLog;
-    // Listener-owned memory: distinguish true impact onsets from continuous support.
-    // Reuse the same dictionary on the auto-installed CONTACT_ONLY instance.
-    readonly Dictionary<int, ContactHistory> contactHistory = new Dictionary<int, ContactHistory>(32);
-
-    // Diagnostics only. These values never enter wave, physics, or spline calculations.
-    bool ballTraceRunning, ballTraceLastMainMode, ballTraceWasExiting;
-    int ballTraceGroup = -1, ballTraceWave = -1, ballTraceSamples;
-    float ballTraceNextTime, ballTracePreviousTime, ballTracePreviousHeight;
-    bool ballTracePreviousHeightValid;
-    float ballTraceMinHeight, ballTraceMaxHeight, ballTraceMaxPhase;
-    float ballTraceMinRaw, ballTraceMaxRaw, ballTraceEntryHeight;
-    bool ballTraceEntryHeightValid;
-    Vector3 ballTracePeakWorld;
-
-    // Data transfer within the SAME class; no second MonoBehaviour script.
-    struct ContactHistory {
-        public float supportImpulsePerMass;
-        public float lastSeenTime;
-        public float lastInjectedTime;
-        public bool initialized;
-    }
-
-    struct ContactSample {
-        public float fixedTime;
-        public int allEvents, qualifiedEvents;
-        public int onsetEvents, spikeEvents;
-        public int rejectedSupport, rejectedSpeed, rejectedCooldown, rejectedImpulse;
-        public float qualifiedImpulsePerMass;
-        public float peakApproachSpeed;
-        public Vector3 qualifiedNormalWeighted;
-    }
+    [SerializeField] string trackingSource = "UNRESOLVED";
 
     sealed class Piece {
         public Transform transform;
         public int group, part;
         public bool stair;
-        public Vector3 a,b,heading;
+        public Vector3 a, b, heading;
         public float slope;
     }
     sealed class Pair {
         public int group, key, first, last, flat, partCount;
+        public Transform anchor;
         public bool downhill, turn90, outTurn90;
         public Vector3 entry, exit, heading, flatHeading, side;
         public Vector3 flatStart, flatEnd, corner;
         public Vector3 outgoingFlatStart, outgoingFlatEnd, outgoingHeading, outgoingCorner;
         public int outgoingFlat = -1;
         public bool hasCorner, hasOutgoingCorner;
-        public float entryYaw, exitYaw;
-        public float length;
-        public Transform anchor;
+        public float entryYaw, exitYaw, length;
         public readonly List<Vector3> axis = new List<Vector3>(32);
         public readonly List<float> stations = new List<float>(32);
     }
+
     readonly List<Piece> pieces = new List<Piece>(256);
     readonly List<Pair> pairs = new List<Pair>(64);
     readonly List<Vector3>[] paths = {
-        new List<Vector3>(40),new List<Vector3>(40),new List<Vector3>(40),
-        new List<Vector3>(900),new List<Vector3>(220)
+        new List<Vector3>(40), new List<Vector3>(40), new List<Vector3>(40),
+        new List<Vector3>(600), new List<Vector3>(48)
     };
-    readonly List<float> futureStations = new List<float>(220);
     readonly SplineContainer[] containers = new SplineContainer[Count];
     readonly Mesh[] meshes = new Mesh[Count];
     readonly MeshRenderer[] meshRenderers = new MeshRenderer[Count];
     readonly Material[] materials = new Material[Count];
     readonly bool[] meshDirty = new bool[Count];
-    Transform owner;
+    Transform owner, followedVisualRoot;
     Matrix4x4 previousVisualRootMatrix;
-    Transform followedVisualRoot;
     Pair active;
-    float nextScan, nextMesh, previousSampleTime, measuredSpeed;
-    float firstA, secondA, thirdA, lastObservedStation;
-    // Future and Observed both live in VISUAL world space. Once at first
-    // stair observation, measure the Future support in the STAIR-N frame,
-    // never mistake world-Y height for a distance along an inclined normal.
-    float futureModelSpeed, waveRiseSpeed, exitElapsed;
-    bool futureNormalAnchored;
-    readonly List<float> pendingLaneDeltas = new List<float>(8);
-    float lastLaneSampleStation = -1f;
-    Vector3 previousBall, previousObserved, moveStep;
-    bool hasPreviousBall;
-    int lastCompletedGroup = -1, stageZeroFirstKey, scanHash;
-    int headingStableFrames;
+    float nextScan, nextMesh, lastObservedStation;
+    Vector3 previousObserved;
+    int lastCompletedGroup = -1, stageZeroFirstKey, scanHash, routeRevisions;
+    float nextMissingReferenceWarning;
 
     void LifecycleEvent(string tag) {
         if (!debugSplineLifecycle) return;
-        Debug.Log($"[IFSW][LIFECYCLE] {tag} state={state} group={stairGroup} " +
-            $"pieces={detectedPieces} pairs={detectedPairs} " +
+        Debug.Log($"[IFSW][5SPLINE] {tag} state={state} group={stairGroup} " +
+            $"parts={detectedPieces} pairs={detectedPairs} " +
             $"knots=[{knotCounts[0]},{knotCounts[1]},{knotCounts[2]},{knotCounts[3]},{knotCounts[4]}]", this);
     }
 
-
-
     void Awake() {
-        // Unity calls Awake immediately while AddComponent is executing.
-        // Identify the dynamically installed listener before any GameObjects,
-        // spline containers, meshes or materials can be allocated.
-        if (pendingContactOwner && pendingContactObject == gameObject) {
-            contactListenerOnly = true;
-            contactListenerOwner = pendingContactOwner;
-            contactTarget = GetComponent<Rigidbody>();
-            return;
-        }
-        if (contactListenerOnly) return; // domain-reload-disabled safety
-        inspectorVisualBall = displayedBall; // Preserve the user's Inspector reference across mode changes.
-        owner = new GameObject("__IFSW_DynamicsV15_OWNED").transform;
+        if (addingContactFor) { contactOwner = addingContactFor; return; }
+        owner = new GameObject("__IFSW_FIVE_SPLINES_ONLY").transform;
         for (int i = 0; i < Count; i++) {
-            GameObject go = new GameObject("IFSW15_NEW_" + Names[i]);
-            go.transform.SetParent(owner,false);
+            GameObject go = new GameObject("IFSW_NEW_" + Names[i]);
+            go.transform.SetParent(owner, false);
             containers[i] = go.AddComponent<SplineContainer>();
             containers[i].Spline = new Spline();
-            meshes[i] = new Mesh { name="IFSW15_Tube_"+Names[i], indexFormat=IndexFormat.UInt32 };
+            meshes[i] = new Mesh { name = "IFSW_Tube_" + Names[i], indexFormat = IndexFormat.UInt32 };
             go.AddComponent<MeshFilter>().sharedMesh = meshes[i];
             meshRenderers[i] = go.AddComponent<MeshRenderer>();
             Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
@@ -508,2150 +183,448 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
             if (!shader) shader = Shader.Find("Sprites/Default");
             if (optionalTubeMaterial || shader) {
                 Material m = optionalTubeMaterial ? new Material(optionalTubeMaterial) : new Material(shader);
-                m.name="IFSW15_Mat_"+Names[i];
-                if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor",Colors[i]);
-                if (m.HasProperty("_Color")) m.SetColor("_Color",Colors[i]);
+                m.name = "IFSW_Mat_" + Names[i];
+                if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", Colors[i]);
+                if (m.HasProperty("_Color")) m.SetColor("_Color", Colors[i]);
                 materials[i] = m;
                 meshRenderers[i].sharedMaterial = m;
             }
-            meshRenderers[i].receiveShadows = false;
             meshRenderers[i].shadowCastingMode = ShadowCastingMode.Off;
+            meshRenderers[i].receiveShadows = false;
             meshDirty[i] = true;
         }
     }
 
-    // One-time standalone ownership; the old BVE waveform cannot be selected.
     void Start() {
-        if (contactListenerOnly) return;
-        ResolveVisualMotionSource();
-        EnsurePhysicalContactProbe();
-        // V20 takes standalone ownership unconditionally. Even when an old
-        // ExampleBVE is enabled, its deterministic wave cannot override this
-        // non-inertial solver or feed back into the five-spline geometry.
-        activeMainBve = null;
-        mainBveMode = false;
-        EnsureIndependentVisualBall();
-        if (debugBveParityEvents)
-            Debug.Log("[IFSW][NI_AUTHORITY] NONINERTIAL standalone owns the ball; " +
-                "disable any old ExampleBallVisualEqualizer renderer to avoid duplicates", this);
-        UpdateVisualStatus();
+        if (contactOwner || !inSubject) return;
+        if (inSubject.gameObject == gameObject) { contactProbe = this; return; }
+        contactProbe = inSubject.GetComponent<IndependentFiveSplineWeaver>();
+        if (contactProbe && contactProbe != this && contactProbe.contactOwner != this) {
+            Debug.LogWarning("[IFSW] InSubject already has an independent Weaver", this);
+            return;
+        }
+        if (!contactProbe) {
+            addingContactFor = this;
+            try { contactProbe = inSubject.gameObject.AddComponent<IndependentFiveSplineWeaver>(); }
+            finally { addingContactFor = null; }
+        }
     }
 
-    bool HasSource => inSubject || subjectFallback;
-    Vector3 SourcePhysicsPoint => inSubject ? inSubject.position :
-        subjectFallback ? subjectFallback.position : Vector3.zero;
-    Vector3 SourcePhysicsVelocity => inSubject ? inSubject.velocity : fallbackVelocity;
+    // Called on the Rigidbody host after physics. Constant supporting contacts
+    // are filtered using only one previous impulse, not contact dictionaries.
+    void OnCollisionEnter(Collision collision) { ReceiveImpact(collision, true); }
+    void OnCollisionStay(Collision collision) { ReceiveImpact(collision, false); }
+
+    void ReceiveImpact(Collision collision, bool entering) {
+        IndependentFiveSplineWeaver w = contactOwner ? contactOwner : this;
+        if (!w.inSubject || gameObject != w.inSubject.gameObject ||
+            w.state != "ACTIVE" || collision.contactCount == 0) return;
+        float impulse = collision.impulse.magnitude / Mathf.Max(.001f, w.inSubject.mass);
+        if (!entering && contactSupport == 0f) { contactSupport = impulse; return; }
+        float rise = entering ? impulse : Mathf.Max(0f, impulse - contactSupport);
+        contactSupport = entering ? impulse : Mathf.Lerp(contactSupport, impulse, .2f);
+        if (rise < .08f || entering &&
+            Mathf.Abs(Vector3.Dot(collision.relativeVelocity, collision.GetContact(0).normal)) < .12f) return;
+        Vector3 n = w.EqualizerMappedDirection(collision.GetContact(0).normal);
+        float alignment = Mathf.Max(0f, Vector3.Dot(n.normalized, w.equalizerNormal));
+        if (alignment < .25f) return;
+        w.equalizerPhysicalImpact = Mathf.Min(3f, w.equalizerPhysicalImpact + rise * alignment);
+    }
 
     void OnEnable() {
-        if (contactListenerOnly) return;
+        if (contactOwner) return;
         if (owner) owner.gameObject.SetActive(true);
+        if (equalizerOwnedDisplay) equalizerOwnedDisplay.SetActive(true);
     }
     void OnDisable() {
-        // The original sensor cleared queued samples when disabled.
-        contactHasPending = false;
-        contactPending = default(ContactSample);
-        contactHistory.Clear();
-        if (contactListenerOnly) return;
-        FinishWaveEnergyBudget("DISABLED");
+        if (contactOwner) return;
         if (owner) owner.gameObject.SetActive(false);
+        if (equalizerOwnedDisplay) equalizerOwnedDisplay.SetActive(false);
     }
     void OnDestroy() {
-        if (contactListenerOnly) return;
-        if (ownsPhysicalContactProbe && physicalContactProbe) {
-            if (Application.isPlaying) Destroy(physicalContactProbe);
-            else DestroyImmediate(physicalContactProbe);
-        }
-        if (owner) { if(Application.isPlaying) Destroy(owner.gameObject); else DestroyImmediate(owner.gameObject); }
-        for(int i=0;i<Count;i++) {
-            if(meshes[i]) { if(Application.isPlaying) Destroy(meshes[i]); else DestroyImmediate(meshes[i]); }
-            if(materials[i]) { if(Application.isPlaying) Destroy(materials[i]); else DestroyImmediate(materials[i]); }
-        }
-        if (ownedVisualMaterial) {
-            if (Application.isPlaying) Destroy(ownedVisualMaterial);
-            else DestroyImmediate(ownedVisualMaterial);
-        }
-    }
-
-    // The non-inertial observer owns its own entry / exit timing. A+B / A+b Spline
-    // lifecycle can be PREPARED, ACTIVE or IDLE without prescribing wave shapes.
-    // Rigidbody remains strictly READ ONLY.
-    void FixedUpdate() {
-        if (contactListenerOnly) return;
-        if (mainBveMode) { UpdateReadOnlyMainSonar(); return; }
-        if (!driveVisualWithKnotSonar) return;
-        if (!inSubject) {
-            // SubjectFallback is permitted by old five-spline lifecycle, but is
-            // NOT an InSubject measurement and cannot drive the wave model.
-            ResetKnotTracking();
-            if (bveActive) ResetBveWave(true); // no lingering visual wave without physics
-            if (debugPhysicalObservation && Time.fixedTime >= nextMissingMapLog) {
-                nextMissingMapLog = Time.fixedTime + 2f;
-                Debug.LogWarning("[IFSW][OBSERVATION_DISABLED] Assign the InSubject Rigidbody. " +
-                    "No Visual Carrier substitution is permitted.", this);
-            }
-            return;
-        }
-        float dt = Mathf.Max(.001f, Time.fixedDeltaTime);
-        // InSubject references can change during scene recreation. Rebind only
-        // when necessary, not once every physics step on normal play.
-        if (enablePhysicalContactExcitation &&
-            (!physicalContactProbe || physicalContactProbe.gameObject != inSubject.gameObject))
-            EnsurePhysicalContactProbe();
-        Vector3 p = SourcePhysicsPoint;
-        Vector3 v = SourcePhysicsVelocity;
-        if (!bveFrameReady) InitializeStandaloneBveFrame(p, v);
-        if (sourcePositionValid &&
-            (p - lastSourcePosition).magnitude > bveTeleportThreshold) {
-            ResetBveWave(true);
-            ResetPhysicalObservationMap();
-            InitializeStandaloneBveFrame(p, v);
-            if (debugBveParityEvents)
-                Debug.Log($"[IFSW][BVE_TELEPORT] t={Time.fixedTime:F3} " +
-                    $"threshold={bveTeleportThreshold:F3}", this);
-            sourcePositionValid = true;
-            lastSourcePosition = p;
-            return;
-        }
-        sourcePositionValid = true;
-        lastSourcePosition = p;
-        UpdateBveKnotSonar(p, v, dt);
-    }
-
-    // Unity invokes OnCollisionEnter/Stay on the InSubject Rigidbody host.
-    // The manager remains on StairwaySimple; an instance of THIS VERY SAME
-    // class is attached on InSubject in read-only listener mode.
-    void EnsurePhysicalContactProbe() {
-        if (!enablePhysicalContactExcitation || !inSubject) return;
-        if (physicalContactProbe && physicalContactProbe.gameObject != inSubject.gameObject) {
-            if (ownsPhysicalContactProbe) Destroy(physicalContactProbe);
-            physicalContactProbe = null;
-            ownsPhysicalContactProbe = false;
-        }
-        if (!physicalContactProbe) {
-            IndependentFiveSplineWeaver existing =
-                inSubject.GetComponent<IndependentFiveSplineWeaver>();
-            if (existing) {
-                // If the main Weaver is hosted on the Rigidbody itself, it
-                // already gets collision callbacks; avoid another component.
-                if (existing == this ||
-                    (existing.contactListenerOnly && existing.contactListenerOwner == this)) {
-                    physicalContactProbe = existing;
-                } else {
-                    Debug.LogWarning("[IFSW][CONTACT_BINDING] InSubject already has " +
-                        "an unrelated IndependentFiveSplineWeaver. Contact binding " +
-                        "is disabled to prevent hijacking its spline manager.", this);
-                    return;
-                }
-            } else {
-                // Single-threaded Unity main-thread AddComponent + Awake handoff.
-                pendingContactOwner = this;
-                pendingContactObject = inSubject.gameObject;
-                try {
-                    physicalContactProbe = inSubject.gameObject
-                        .AddComponent<IndependentFiveSplineWeaver>();
-                } finally {
-                    pendingContactOwner = null;
-                    pendingContactObject = null;
-                }
-                ownsPhysicalContactProbe = physicalContactProbe &&
-                    physicalContactProbe.contactListenerOnly;
-                if (ownsPhysicalContactProbe && debugContactExcitation)
-                    Debug.Log("[IFSW][CONTACT_BINDING] class=IndependentFiveSplineWeaver " +
-                        "role=CONTACT_ONLY host=" + inSubject.gameObject.name +
-                        " splineContainers=0", this);
-            }
-        }
-        if (physicalContactProbe)
-            physicalContactProbe.ConfigureContactListener(
-                inSubject, groundMask, contactMinApproachSpeed);
-    }
-
-    void ConfigureContactListener(Rigidbody body, LayerMask mask, float minApproach) {
-        contactTarget = body;
-        contactGroundMask = mask;
-        contactListenerMinApproach = Mathf.Max(0f, minApproach);
-        contactPending = default(ContactSample);
-        contactHasPending = false;
-        contactHistory.Clear();
-    }
-
-    void OnCollisionEnter(Collision collision) { RecordPhysicalContact(collision, true); }
-    void OnCollisionStay(Collision collision) { RecordPhysicalContact(collision, false); }
-    void OnCollisionExit(Collision collision) {
-        if (contactTarget && collision.gameObject)
-            contactHistory.Remove(collision.gameObject.GetInstanceID());
-    }
-
-    void RecordPhysicalContact(Collision collision, bool newContact) {
-        if (!contactTarget || !collision.gameObject || collision.contactCount == 0)
-            return;
-        if (contactListenerOnly &&
-            (!contactListenerOwner || !contactListenerOwner.isActiveAndEnabled))
-            return;
-        if ((contactGroundMask.value & (1 << collision.gameObject.layer)) == 0)
-            return;
-
-        contactAllCallbacks++;
-        float time = Time.fixedTime;
-        if (!contactHasPending || Mathf.Abs(time - contactPending.fixedTime) > .0001f) {
-            contactPending = new ContactSample { fixedTime = time };
-            contactHasPending = true;
-        }
-        contactPending.allEvents++;
-
-        // The impulse itself also contains normal support from OnCollisionStay.
-        // Require a measurable normal impact speed; then require either an
-        // OnCollisionEnter or a sharp increase above this partner's support baseline.
-        Vector3 normal = collision.GetContact(0).normal;
-        if (normal.sqrMagnitude < 1e-8f) return;
-        normal.Normalize();
-        float normalSpeed = Mathf.Abs(Vector3.Dot(collision.relativeVelocity, normal));
-        float deltaV = collision.impulse.magnitude / Mathf.Max(.001f, contactTarget.mass);
-        if (float.IsNaN(deltaV) || float.IsInfinity(deltaV) || deltaV < 1e-5f) {
-            contactPending.rejectedImpulse++;
-            return;
-        }
-        int id = collision.gameObject.GetInstanceID();
-        ContactHistory history;
-        bool known = contactHistory.TryGetValue(id, out history) && history.initialized;
-        float baseline = known ? history.supportImpulsePerMass : 0f;
-        bool onset = newContact || !known || time - history.lastSeenTime > Time.fixedDeltaTime * 2.6f;
-        IndependentFiveSplineWeaver settings = contactListenerOwner ? contactListenerOwner : this;
-        bool spike = !onset &&
-            deltaV - baseline >= settings.contactImpulseRiseSpeed &&
-            deltaV >= Mathf.Max(settings.contactMinImpulseSpeed,
-                baseline * settings.contactImpulseRiseRatio);
-        bool cooldown = known && time - history.lastInjectedTime <
-            settings.contactImpactCooldown;
-        history.supportImpulsePerMass = known && !onset
-            ? Mathf.Lerp(baseline, deltaV, .18f) : deltaV;
-        history.lastSeenTime = time;
-        history.initialized = true;
-        bool qualified = normalSpeed >= contactListenerMinApproach &&
-            (onset || spike) && !cooldown && deltaV >= 1e-5f;
-        if (qualified) history.lastInjectedTime = time;
-        contactHistory[id] = history;
-
-        if (normalSpeed < contactListenerMinApproach) contactPending.rejectedSpeed++;
-        else if (cooldown) contactPending.rejectedCooldown++;
-        else if (!onset && !spike) contactPending.rejectedSupport++;
-        else if (qualified) {
-            contactPending.qualifiedEvents++;
-            if (onset) contactPending.onsetEvents++;
-            else contactPending.spikeEvents++;
-            contactPending.qualifiedImpulsePerMass += deltaV;
-            contactPending.peakApproachSpeed =
-                Mathf.Max(contactPending.peakApproachSpeed, normalSpeed);
-            contactPending.qualifiedNormalWeighted += normal * deltaV;
-        }
-        // The stage is generated dynamically. Bound listener memory to recent
-        // contacts without scanning it on every physics callback.
-        if (contactHistory.Count > 128) {
-            List<int> stale = new List<int>();
-            foreach (var pair in contactHistory)
-                if (time - pair.Value.lastSeenTime > 2f) stale.Add(pair.Key);
-            foreach (int key in stale) contactHistory.Remove(key);
-        }
-    }
-
-    bool TryConsumeContact(out ContactSample result) {
-        result = contactPending;
-        if (!contactHasPending) return false;
-        contactHasPending = false;
-        contactPending = default(ContactSample);
-        return true;
-    }
-
-    // Consume at most once per physics tick. The contact callback is usually
-    // delivered after FixedUpdate, so a <=2.5-frame-old sample is valid.
-    // A missing/invalid Knot frame must NEVER turn a contact into a visual kick.
-    void ObservePhysicsContactExcitation(float dt) {
-        lastContactImpulsePerMass = lastContactKick = 0f;
-        lastContactNormalAlignment = lastContactApproachSpeed = 0f;
-        contactTransferPending = false;
-        if (!enablePhysicalContactExcitation || !physicalContactProbe || !inSubject) return;
-        if (physicalContactProbe.TryConsumeContact(out ContactSample sample)) {
-            if (Time.fixedTime - sample.fixedTime <= Mathf.Max(.06f, dt * 2.5f)) {
-                contactEventsSinceLog += sample.allEvents;
-                contactQualifiedSinceLog += sample.qualifiedEvents;
-                contactSupportRejected += sample.rejectedSupport;
-                contactSpeedRejected += sample.rejectedSpeed;
-                contactCooldownRejected += sample.rejectedCooldown;
-                contactImpulseRejected += sample.rejectedImpulse;
-                lastContactImpulsePerMass = sample.qualifiedImpulsePerMass;
-                lastContactApproachSpeed = sample.peakApproachSpeed;
-                bool validKnot = trackingValid && active != null &&
-                    active.group == bveCycleGroup && bveActive && !bveExiting;
-                // Unlike the old high-pass q signal, a real collision can
-                // excite the oscillator between *discrete* Knot positions.
-                // Geometry (T,N,B) must still be valid; no guessed directions.
-                if (validKnot && sample.qualifiedEvents > 0 &&
-                    sample.qualifiedNormalWeighted.sqrMagnitude > E) {
-                    Vector3 contactNormalInVisual = MapStandaloneDirection(
-                        sample.qualifiedNormalWeighted.normalized);
-                    // A normal opposite to the Knot outward direction is
-                    // NOT an upward stair impact (e.g. an overhead obstacle).
-                    lastContactNormalAlignment = Vector3.Dot(
-                        contactNormalInVisual.normalized, trackingNormal);
-                    float projectedImpulseSpeed = sample.qualifiedImpulsePerMass *
-                        lastContactNormalAlignment;
-                    if (lastContactNormalAlignment >= contactMinNormalAlignment &&
-                        projectedImpulseSpeed >= contactMinImpulseSpeed) {
-                        // Stair contacts push the visual ball away from the
-                        // stair surface, along its outward Knot normal. Only
-                        // physical contact magnitude is used; this does NOT
-                        // create a periodic waveform independent of contacts.
-                        float unclampedKick = Mathf.Max(0f,
-                            projectedImpulseSpeed * contactWaveVelocityGain);
-                        lastContactKick = contactSoftLimitKick
-                            ? contactMaxVelocityKick * (1f - Mathf.Exp(
-                                -unclampedKick / Mathf.Max(.1f, contactMaxVelocityKick)))
-                            : Mathf.Min(unclampedKick, contactMaxVelocityKick);
-                        float beforeContactEnergy = OscillatorDiagnosticEnergy();
-                        lastContactVelocityBefore = nonInertialVelocity;
-                        lastContactOffsetAtKick = nonInertialOffset;
-                        lastContactTargetAtKick = nonInertialTarget;
-                        nonInertialVelocity = Mathf.Clamp(
-                            nonInertialVelocity + lastContactKick,
-                            -niOscillatorMaxSpeed, niOscillatorMaxSpeed);
-                        lastContactVelocityAfter = nonInertialVelocity;
-                        // Record the *effective* kick after solver speed limits.
-                        lastContactKick = Mathf.Max(0f,
-                            lastContactVelocityAfter - lastContactVelocityBefore);
-                        contactTransferPending = lastContactKick > 0f;
-                        if (contactTransferPending) {
-                            contactInjectedSinceLog++;
-                            waveEnergyContactInput += OscillatorDiagnosticEnergy() - beforeContactEnergy;
-                            waveEnergyContactCount++;
-                        }
-                        if (debugContactExcitation)
-                            Debug.Log($"[IFSW][NI_CONTACT] t={Time.fixedTime:F3} " +
-                                $"group={bveCycleGroup} knot={trackingKnotIndex} " +
-                                $"impulsePerMass={sample.qualifiedImpulsePerMass:F4} " +
-                                $"normalAlignment={lastContactNormalAlignment:F3} " +
-                                $"approachSpeed={sample.peakApproachSpeed:F3} " +
-                                $"onset={sample.onsetEvents} spike={sample.spikeEvents} " +
-                                $"kick={lastContactKick:F4} " +
-                                $"normal={trackingNormal:F4} " +
-                                $"x={nonInertialOffset:F4} dx={nonInertialVelocity:F4}", this);
-                    } else contactOrientationRejected++;
-                }
-            }
-        }
-        if (debugContactExcitation && Time.fixedTime >= nextContactStateLog) {
-            nextContactStateLog = Time.fixedTime + .5f;
-            Debug.Log($"[IFSW][CONTACT_SENSOR] t={Time.fixedTime:F3} " +
-                $"bound={physicalContactProbe.gameObject.name} " +
-                $"group={bveCycleGroup} validKnot={trackingValid} " +
-                $"events={contactEventsSinceLog} qualified={contactQualifiedSinceLog} " +
-                $"injected={contactInjectedSinceLog} " +
-                $"rejectSupport={contactSupportRejected} " +
-                $"rejectSpeed={contactSpeedRejected} " +
-                $"rejectCooldown={contactCooldownRejected} " +
-                $"rejectImpulse={contactImpulseRejected} " +
-                $"rejectDirection={contactOrientationRejected} " +
-                $"impulsePerMass={lastContactImpulsePerMass:F4} " +
-                $"kick={lastContactKick:F4} " +
-                $"sensorAllCallbacks={physicalContactProbe.contactAllCallbacks}", this);
-            contactEventsSinceLog = contactQualifiedSinceLog = contactInjectedSinceLog = 0;
-            contactSupportRejected = contactSpeedRejected = contactCooldownRejected = 0;
-            contactImpulseRejected = contactOrientationRejected = 0;
-        }
-    }
-
-    // Equivalent rise energy from the physical approach speed and local stair
-    // pitch/height: qHeight ~ vNormalEquivalent^2 / (2*gNormal).
-    // IMPORTANT: this does not claim an actual impact where no contact exists.
-    // Unlike V25 it does NOT clamp speed to 19.8 m/s or grade to one plateau.
-    float ComovingTerrainAmplitude(float speed, float slopeDegrees,
-        float contactWeight, float normalAlignment) {
-        float grade = Mathf.Sin(Mathf.Clamp(slopeDegrees,0f,89f)*Mathf.Deg2Rad);
-        float riseOverRun = terrainSpatialRoughnessHeight /
-            Mathf.Max(.5f,terrainSpatialPitch);
-        float vEquivalent = Mathf.Max(0f,speed) * riseOverRun *
-            (.85f + .5f*grade);
-        float gNormal = Mathf.Max(3f,Physics.gravity.magnitude *
-            Mathf.Max(.25f,normalAlignment));
-        float eHeight = .5f*vEquivalent*vEquivalent/gNormal;
-        return Mathf.Clamp(eHeight*Mathf.Clamp01(contactWeight)*
-            Mathf.Clamp01(normalAlignment),0f,nonInertialMaxOffset*.95f);
-    }
-
-    // Shape the MOVING TERRAIN FRAME, never assign the shape to the ball.
-    // h(s)=A*f(u), u=s/L. Its transport acceleration is
-    // -[A*f''(u)*sDot^2/L^2 + A*f'(u)*sDDot/L].
-    // Only the landscape/phase geometry is stylized. The solver's q and qDot
-    // still come from integration and actual InSubject contact/observation.
-    void SpatialFrameDerivatives(float u,float waveLength,int region,
-        out float dhdu,out float d2hdu2) {
-        float apex=region==0?expressiveFirstApex:expressiveLaterApex;
-        float k,phase;
-        u=Mathf.Clamp01(u);
-        if(u<apex) {
-            if(region==0) {
-                k=Mathf.PI/Mathf.Max(.05f,2f*apex);
-                phase=k*u;
-                dhdu=k*Mathf.Cos(phase);
-                d2hdu2=-k*k*Mathf.Sin(phase);
-            } else {
-                k=Mathf.PI/Mathf.Max(.05f,apex);
-                phase=k*u;
-                dhdu=k*Mathf.Sin(phase);
-                d2hdu2=k*k*Mathf.Cos(phase);
-            }
-        } else {
-            k=Mathf.PI/Mathf.Max(.05f,1f-apex);
-            phase=k*(u-apex);
-            dhdu=-k*Mathf.Sin(phase);
-            d2hdu2=-k*k*Mathf.Cos(phase);
-        }
-    }
-
-    // Normal-axis component of the full coordinate-transport identity:
-    // q'' = N.(ax-aO) + 2*Ndot.(vx-vO) + Nddot.(x-O).
-    // Physical ax is NOT replayed because contact impulses and the observed
-    // displacement already carry it. Only moving-origin/rotating-axis terms
-    // are injected here. Rebase skips prevent fictitious corner spikes.
-    float ObserveMovingFrameTransport(Vector3 velocity,float dt,bool measured) {
-        if(!measured || dt<=.00001f) {
-            niFrameHistoryValid=niFrameHasVelocitySample=false;
-            niFrameTransportRaw=niFrameTransportAcceleration=0f;
-            return 0f;
-        }
-        Vector3 origin=trackingReference;
-        Vector3 n=trackingNormal;
-        if(!niFrameHistoryValid) {
-            niFramePreviousOrigin=origin;
-            niFramePreviousVelocity=Vector3.zero;
-            niFramePreviousNormal=n;
-            niFramePreviousNormalRate=Vector3.zero;
-            niFrameHistoryValid=true;
-            niFrameTransportRaw=niFrameTransportAcceleration=0f;
-            return 0f;
-        }
-        Vector3 previousOrigin=niFramePreviousOrigin;
-        Vector3 previousN=niFramePreviousNormal;
-        Vector3 originVelocity=(origin-previousOrigin)/dt;
-        Vector3 nRate=(n-previousN)/dt;
-        float normalTurn=Vector3.Angle(n,previousN);
-        float jump=(origin-previousOrigin).magnitude;
-        if(normalTurn>24f || jump>Mathf.Max(2.5f,bveTeleportThreshold)) {
-            niFramePreviousOrigin=origin;
-            niFramePreviousVelocity=originVelocity;
-            niFramePreviousNormal=n;
-            niFramePreviousNormalRate=Vector3.zero;
-            niFrameHasVelocitySample=false;
-            niFrameTransportRaw=niFrameTransportAcceleration=0f;
-            return 0f;
-        }
-        // Two measured origin velocities are required to differentiate origin
-        // acceleration. Suppress the first-frame false aO spike.
-        if(!niFrameHasVelocitySample) {
-            niFrameHasVelocitySample=true;
-            niFramePreviousOrigin=origin;
-            niFramePreviousVelocity=originVelocity;
-            niFramePreviousNormal=n;
-            niFramePreviousNormalRate=nRate;
-            return 0f;
-        }
-        Vector3 originAcceleration=(originVelocity-niFramePreviousVelocity)/dt;
-        Vector3 nAcceleration=(nRate-niFramePreviousNormalRate)/dt;
-        Vector3 vRel=MapStandaloneDirection(velocity)-originVelocity;
-        // trackingLastRelative is the CURRENT relative point from the
-        // immediately preceding ObserveKnotTarget call in this FixedUpdate.
-        niFrameTransportRaw= -Vector3.Dot(n,originAcceleration)
-            +2f*Vector3.Dot(nRate,vRel)
-            +Vector3.Dot(nAcceleration,trackingLastRelative);
-        niFrameTransportRaw=Mathf.Clamp(niFrameTransportRaw,-200f,200f);
-        niFrameTransportAcceleration=Mathf.Lerp(niFrameTransportAcceleration,
-            niFrameTransportRaw,.35f);
-        niFramePreviousOrigin=origin;
-        niFramePreviousVelocity=originVelocity;
-        niFramePreviousNormal=n;
-        niFramePreviousNormalRate=nRate;
-        return niFrameTransportAcceleration*movingFrameTransportGain;
-    }
-
-    // V24 physical ground-height observer: raycasts read collision terrain only.
-    // The spatial frame model below supplies separate DISPLAY-only forcing
-    // when the physics collision geometry is smoothed into a slope.
-    bool TryTerrainHeight(Vector3 p, out float y) {
-        y = 0f;
-        Vector3 origin = p + Vector3.up * Mathf.Max(.2f, probeHeight);
-        int count = Physics.RaycastNonAlloc(origin, Vector3.down, sonarHits,
-            Mathf.Max(.2f, probeHeight) + probeDepth, groundMask,
-            QueryTriggerInteraction.Ignore);
-        float closest = float.PositiveInfinity;
-        for (int i=0; i<count; i++) {
-            RaycastHit hit=sonarHits[i];
-            Collider c=hit.collider;
-            if (!c || (inSubject && c.attachedRigidbody == inSubject) ||
-                hit.normal.y < .45f || hit.distance >= closest) continue;
-            closest = hit.distance;
-            y = hit.point.y;
-        }
-        return closest < float.PositiveInfinity;
-    }
-
-    // V26: measured ground curvature + transported Knot-frame inertia and
-    // a separately disclosed DISPLAY-ONLY corrugation for smoothed colliders.
-    // 1/2/3 is the SPATIAL support geometry, never an amplitude command.
-    float ObserveTerrainFrameAcceleration(Vector3 point,Vector3 velocity,
-        float dt,bool measured,float u,float waveLength,out float desiredOmega) {
-        desiredOmega=2f*Mathf.PI*Mathf.Clamp(nonInertialFrequencyHz,.2f,5f);
-        terrainFrameAcceleration=terrainFrameSourceHz=terrainFrameAmplitude=
-            terrainMeasuredCurvature=0f;
-        terrainFrameUsingSurrogate=false;
-        float transport=ObserveMovingFrameTransport(velocity,dt,measured);
-        if(!enableTerrainExcitation || !measured || !inSubject || active==null ||
-           bveExiting || !bveProbeValid ||
-           bveSlopeDegrees < bveEntrySlopeDegrees*.6f) {
-            terrainLastTravelSpeed=0f;
-            if(debugTerrainExcitation && bveActive && Time.fixedTime>=terrainNextSummaryTime) {
-                terrainNextSummaryTime=Time.fixedTime+.5f;
-                Debug.Log($"[IFSW][FRAME_WAVE_GATE] group={bveCycleGroup} " +
-                    $"measured={measured} activePath={active!=null} " +
-                    $"probe={bveProbeValid} slope={bveSlopeDegrees:F1} " +
-                    $"exiting={bveExiting} enabled={enableTerrainExcitation}",this);
-            }
-            return transport;
-        }
-        if(terrainFrameGroup!=bveCycleGroup) {
-            terrainFrameGroup=bveCycleGroup;
-            terrainLastTravelSpeed=0f;
-            terrainFrameDrivenSteps=0;
-        }
-        Vector3 vMapped=MapStandaloneDirection(velocity);
-        float physicalSpeed=Mathf.Max(0f,Vector3.Dot(vMapped,trackingTangent));
-        float stationSpeed=Mathf.Max(0f,observationStationStep/Mathf.Max(dt,.001f));
-        float travelSpeed=Mathf.Clamp(stationSpeed>=.25f?stationSpeed:physicalSpeed,0f,55f);
-        if(travelSpeed<bveMinimumEntryPlanarSpeed) {
-            terrainLastTravelSpeed=0f;
-            return transport;
-        }
-        float travelAcceleration=terrainLastTravelSpeed>.01f
-            ? Mathf.Clamp((travelSpeed-terrainLastTravelSpeed)/Mathf.Max(dt,.001f),-60f,60f):0f;
-        terrainLastTravelSpeed=travelSpeed;
-        float upwardAlignment=Mathf.Max(0f,Vector3.Dot(trackingNormal,
-            MapStandaloneDirection(Vector3.up).normalized));
-        Vector3 forward=Vector3.ProjectOnPlane(velocity,Vector3.up);
-        bool groundedSamples=false;
-        float gap=0f;
-        if(forward.sqrMagnitude>.01f) {
-            forward.Normalize();
-            float sample=Mathf.Clamp(probeSpacing,.35f,.9f);
-            if(TryTerrainHeight(point-forward*sample,out float behindY) &&
-               TryTerrainHeight(point,out float centerY) &&
-               TryTerrainHeight(point+forward*sample,out float aheadY)) {
-                groundedSamples=true;
-                terrainMeasuredCurvature=(aheadY-2f*centerY+behindY)/(sample*sample);
-                if(!terrainBodyCollider)
-                    terrainBodyCollider=inSubject.GetComponentInChildren<Collider>();
-                if(terrainBodyCollider && terrainBodyCollider.enabled)
-                    gap=Mathf.Max(0f,terrainBodyCollider.bounds.min.y-centerY);
-            }
-        }
-        float contactWeight=groundedSamples
-            ? Mathf.Clamp01(1f-gap/Mathf.Max(1.2f,probeHeight)):.55f;
-        // The envelope depends on actual speed^2, incline and proximity;
-        // it does NOT become constant at speed=19.8 m/s like V25.1.
-        float amplitude=ComovingTerrainAmplitude(travelSpeed,bveSlopeDegrees,
-            contactWeight,upwardAlignment)*expressiveAmplitudeGain;
-        terrainFrameAmplitude=amplitude;
-        float L=Mathf.Max(.2f,waveLength);
-        float frequency=Mathf.Min(travelSpeed/L,terrainMaxFrameFrequencyHz);
-        desiredOmega=Mathf.Max(desiredOmega,2f*Mathf.PI*frequency);
-        terrainFrameSourceHz=frequency;
-        SpatialFrameDerivatives(u,L,bveWaveIndex,out float dhdu,out float d2hdu2);
-        // Divide by actual Wave length, rather than a global 3.30m sine.
-        // Longer sections contain more measured support pitches; scale only
-        // this ground-frame input, never the ball's displacement directly.
-        float supportCoherence=Mathf.Clamp(L/Mathf.Max(.5f,terrainSpatialPitch),.65f,2.5f);
-        float surrogate=-amplitude*supportCoherence*niCorrugationDriveGain*
-            (d2hdu2*travelSpeed*travelSpeed/(L*L)
-            +dhdu*travelAcceleration/L);
-        float measuredAcceleration=-upwardAlignment*terrainMeasuredCurvature*
-            travelSpeed*travelSpeed*terrainMeasuredCurvatureGain;
-        float measuredShare=groundedSamples
-            ? Mathf.Clamp01(Mathf.Abs(terrainMeasuredCurvature)*.20f):0f;
-        // Real collision impulses act on velocity, not again as terrain force.
-        float terrainContribution=surrogate*(1f-measuredShare)+measuredAcceleration;
-        if(Mathf.Abs(lastContactKick)>.001f) terrainContribution*=.35f;
-        float drive=terrainContribution+transport;
-        drive=Mathf.Clamp(drive,-niOscillatorAccelerationLimit,niOscillatorAccelerationLimit);
-        terrainFrameUsingSurrogate=amplitude>.001f && (1f-measuredShare)>.05f;
-        terrainFrameAcceleration=drive;
-        if(Mathf.Abs(drive)>.01f) terrainFrameDrivenSteps++;
-        if(debugTerrainExcitation && Time.fixedTime>=terrainNextSummaryTime) {
-            terrainNextSummaryTime=Time.fixedTime+.4f;
-            Debug.Log($"[IFSW][NI_FRAME_FORCE] group={bveCycleGroup} " +
-                $"wave={bveWaveIndex} u={u:F3} station={observationLastStation:F2} " +
-                $"speed={travelSpeed:F2} pitch={L:F2} hz={frequency:F2} " +
-                $"envelope={amplitude:F3} slope={bveSlopeDegrees:F1} " +
-                $"curvature={terrainMeasuredCurvature:F3} " +
-                $"transport={transport:F2} terrain={terrainContribution:F2} " +
-                $"drive={drive:F2} measured={groundedSamples} " +
-                $"surrogate={terrainFrameUsingSurrogate} " +
-                $"osc={nonInertialOffset:F3} vOsc={nonInertialVelocity:F3}",this);
-        }
-        return drive;
-    }
-
-    // Diagnostic-only energy balance: E = (v^2 + omega^2*x^2)/2, unit mass.
-    // The moving observation target performs work, the damper dissipates energy.
-    // Neither the Wave index nor this accounting changes the oscillator.
-    float OscillatorDiagnosticEnergy() {
-        float omega = Mathf.Max(2f * Mathf.PI * Mathf.Clamp(nonInertialFrequencyHz,.2f,5f),terrainFrameOmega);
-        return .5f * (nonInertialVelocity * nonInertialVelocity +
-            omega * omega * nonInertialOffset * nonInertialOffset);
-    }
-
-    void FinishWaveEnergyBudget(string reason) {
-        if (!waveEnergyActive) return;
-        if (debugWaveEnergyBudget) {
-            float end = OscillatorDiagnosticEnergy();
-            float residual = end - waveEnergyStart - waveEnergyContactInput -
-                waveEnergyVelocityInput - waveEnergyTerrainInput - waveEnergyTargetWork + waveEnergyDampingLoss;
-            Debug.Log($"[IFSW][WAVE_ENERGY] group={waveEnergyGroup} " +
-                $"wave={waveEnergyIndex} type={waveEnergyType} reason={reason} " +
-                $"samples={waveEnergySteps} energyStart={waveEnergyStart:F4} " +
-                $"energyEnd={end:F4} contactDelta={waveEnergyContactInput:F4} " +
-                $"velocityDelta={waveEnergyVelocityInput:F4} " +
-                $"terrainWorkApprox={waveEnergyTerrainInput:F4} " +
-                $"targetWorkApprox={waveEnergyTargetWork:F4} " +
-                $"dampingLossApprox={waveEnergyDampingLoss:F4} " +
-                $"numericResidual={residual:F4} " +
-                $"contactKicks={waveEnergyContactCount} " +
-                $"terrainDriveSteps={waveEnergyTerrainCount} " +
-                $"peakAbsX={waveEnergyMaxAbsOffset:F4}", this);
-        }
-        waveEnergyActive = false;
-    }
-
-    void BeginWaveEnergyRegion() {
-        if (waveEnergyActive && waveEnergyGroup == bveCycleGroup &&
-            waveEnergyIndex == bveWaveIndex) return;
-        FinishWaveEnergyBudget("REGION_CHANGE");
-        waveEnergyActive = true;
-        waveEnergyGroup = bveCycleGroup;
-        waveEnergyIndex = bveWaveIndex;
-        waveEnergyType = bveWaveType + 1;
-        waveEnergySteps = waveEnergyContactCount = waveEnergyTerrainCount = 0;
-        waveEnergyContactInput = waveEnergyVelocityInput = waveEnergyTerrainInput = 0f;
-        waveEnergyTargetWork = waveEnergyDampingLoss = 0f;
-        waveEnergyStart = OscillatorDiagnosticEnergy();
-        waveEnergyMaxAbsOffset = Mathf.Abs(nonInertialOffset);
-    }
-
-    void InitializeStandaloneBveFrame(Vector3 p, Vector3 v) {
-        bvePreviousPhysicsPoint = p;
-        Vector3 planar = Vector3.ProjectOnPlane(v, Vector3.up);
-        if (planar.sqrMagnitude > .01f) bveHeading = planar.normalized;
-        bveT = bveHeading;
-        bveN = Vector3.up;
-        sonarWaveNormal = MapStandaloneDirection(bveN);
-        bveArmed = false; // Original BVE must observe a real flat before arming.
-        bveFlatElapsed = 0f;
-        bveFrameReady = true;
-        ResetPhysicalObservationMap();
-        ResetKnotTracking();
-        bveRawOffset = sonarWaveHeight = 0f;
-        bveWaveLocal01 = 1f;
-        ResetBvePresentation(0f);
-    }
-
-    void UpdateReadOnlyMainSonar() {
-        if (!drawKnotSonarGizmos || !displayedBall || active == null ||
-            state != "ACTIVE" || paths[Center].Count < 2) {
-            sonarAnchorCount = sonarNearbyKnots = 0;
-            return;
-        }
-        Vector3 point = displayedBall.position;
-        ChooseKnotSonarAnchors(point);
-        sonarNearbyKnots = 0;
-        for (int i = 0; i < sonarAnchorCount; i++) {
-            if (sonarAnchorIsObservation[i]) continue;
-            Vector3 d = sonarAnchors[i] - point;
-            if (d.x*d.x + d.z*d.z + .15f*d.y*d.y <= knotSonarRadius*knotSonarRadius)
-                sonarNearbyKnots++;
-        }
-    }
-
-    Vector3 ToVisualPoint(Vector3 point) => physicsFrame && visualFrame
-        ? visualFrame.TransformPoint(physicsFrame.InverseTransformPoint(point)) : point;
-    Vector3 ToVisualDirection(Vector3 v) => physicsFrame && visualFrame
-        ? visualFrame.TransformDirection(physicsFrame.InverseTransformDirection(v)) : v;
-    Vector3 ToPhysicsDirection(Vector3 v) => physicsFrame && visualFrame
-        ? physicsFrame.TransformDirection(visualFrame.InverseTransformDirection(v)) : v;
-
-    // ExampleBVE-style parent-frame direction fallback when no explicit root pair exists.
-    Vector3 MapStandaloneDirection(Vector3 direction) {
-        if (physicsFrame && visualFrame) return ToVisualDirection(direction);
-        Transform src = inSubject ? inSubject.transform.parent :
-            subjectFallback ? subjectFallback.parent : null;
-        Transform dst = visualMotionSource ? visualMotionSource.parent : null;
-        Quaternion rotation = (dst ? dst.rotation : Quaternion.identity) *
-            Quaternion.Inverse(src ? src.rotation : Quaternion.identity);
-        return rotation * direction;
-    }
-
-    // Inverse of the display-direction mapping. Never mix a VISUAL Knot N
-    // with the PhysicsRoot normal when their parent transforms differ.
-    Vector3 UnmapStandaloneDirection(Vector3 visualDirection) {
-        if (physicsFrame && visualFrame) return ToPhysicsDirection(visualDirection);
-        Transform src = inSubject ? inSubject.transform.parent :
-            subjectFallback ? subjectFallback.parent : null;
-        Transform dst = visualMotionSource ? visualMotionSource.parent : null;
-        Quaternion reverse = (src ? src.rotation : Quaternion.identity) *
-            Quaternion.Inverse(dst ? dst.rotation : Quaternion.identity);
-        return reverse * visualDirection;
-    }
-
-    // A visual pose is NOT an observation. With explicit frame references we
-    // convert the actual Rigidbody position; otherwise use a one-time affine
-    // LOCAL-SPACE ALIGNMENT that stays fixed as both parents subsequently move.
-    // Never subtract a moving Visual Carrier sample each physics step: doing
-    // so cancels exactly the movement we need to observe.
-    void ResetPhysicalObservationMap() {
-        observedMapReady = false;
-        observedPhysicsParent = observedVisualParent = observedVisualAnchor = null;
-        observedMapSource = "UNAVAILABLE";
-        ResetObservationVerification();
-    }
-
-    // Observation state is read-only telemetry. A path change cannot create
-    // a synthetic velocity impulse in the damped wave model.
-    void ResetObservationVerification() {
-        observationStationReady = observationSampleReady = false;
-        observationStationGroup = -1;
-        observationPairKnotCount = 0;
-        observationLastStation = observationStationStep = 0f;
-        observationLastStationTime = observationAllowedTravel = observationCandidateStation = 0f;
-        observationRejectReason = "NONE";
-        observationRejectedFrames = 0;
-        observationPreviousPhysicsPoint = observationPreviousMappedPoint = Vector3.zero;
-        observationMappedVelocity = observationMappedSourceVelocity = Vector3.zero;
-        observationMappedFrameVelocity = observationMappedRigidVelocity = Vector3.zero;
-        observationRigidbodyVelocityError = observationHeightRateError = 0f;
-    }
-
-    static Vector3 InParentSpace(Transform parent, Vector3 world) =>
-        parent ? parent.InverseTransformPoint(world) : world;
-
-    static Vector3 FromParentSpace(Transform parent, Vector3 local) =>
-        parent ? parent.TransformPoint(local) : local;
-
-    bool TryMapObservedInSubject(out Vector3 visualPhysicsPoint) {
-        visualPhysicsPoint = Vector3.zero;
-        if (!inSubject) { observedMapSource = "MISSING_INSUBJECT"; return false; }
-        // Explicit corresponding frame roots take precedence. NEVER assume
-        // PhysicsRoot and VisualRoot world coordinates are interchangeable.
-        if ((bool)physicsFrame != (bool)visualFrame) {
-            observedMapSource = "INCOMPLETE_FRAME_PAIR";
-            return false; // avoid silently mixing explicit and inferred frames
-        }
-        if (physicsFrame && visualFrame) {
-            observedMapSource = "INSUBJECT_EXPLICIT_FRAMES";
-            visualPhysicsPoint = ToVisualPoint(inSubject.position);
-            return true;
-        }
-        // When Inspector frames are unset, anchor two PARENTS once. This can
-        // map independent rigs without reading the visual carrier as a target.
-        if (!visualMotionSource || visualMotionSource == ownedVisualBall ||
-            visualMotionSource == inSubject.transform ||
-            IsMainBveDisplay(visualMotionSource)) {
-            observedMapSource = "NO_SAFE_FRAME_MAPPING";
-            return false; // fail closed, never observe VISUAL_CARRIER
-        }
-        Transform physicalParent = inSubject.transform.parent;
-        Transform visualParent = visualMotionSource.parent;
-        if (!observedMapReady || observedPhysicsParent != physicalParent ||
-            observedVisualParent != visualParent ||
-            observedVisualAnchor != visualMotionSource) {
-            observedPhysicsParent = physicalParent;
-            observedVisualParent = visualParent;
-            observedVisualAnchor = visualMotionSource;
-            observedPhysicsLocal0 = InParentSpace(physicalParent, inSubject.position);
-            observedVisualLocal0 = InParentSpace(visualParent, visualMotionSource.position);
-            observedMapReady = true;
-            // Calibration contributes an INITIAL offset, no ongoing movement.
-            ResetKnotTracking();
-            if (debugPhysicalObservation)
-                Debug.Log("[IFSW][OBSERVATION_MAP] source=INSUBJECT_ANCHORED_PARENTS " +
-                    $"physicsParent={(physicalParent ? physicalParent.name : "WORLD")} " +
-                    $"visualParent={(visualParent ? visualParent.name : "WORLD")} " +
-                    "(captured once; movement comes from InSubject)", this);
-        }
-        Vector3 physicsLocal = InParentSpace(physicalParent, inSubject.position);
-        Vector3 translatedLocal = observedVisualLocal0 + (physicsLocal - observedPhysicsLocal0);
-        visualPhysicsPoint = FromParentSpace(visualParent, translatedLocal);
-        observedMapSource = "INSUBJECT_ANCHORED_PARENTS";
-        return true;
-    }
-
-    // Re-evaluate the SAME map for an arbitrary physics point at CURRENT root
-    // poses. Visual Carrier is never sampled here after one-time calibration.
-    Vector3 MapObservedPhysicsPointAtCurrentFrames(Vector3 physicalPoint) {
-        if (physicsFrame && visualFrame) return ToVisualPoint(physicalPoint);
-        Vector3 local = InParentSpace(observedPhysicsParent, physicalPoint);
-        return FromParentSpace(observedVisualParent,
-            observedVisualLocal0 + (local - observedPhysicsLocal0));
-    }
-
-    // A pure vector transform: position-scale/rotation only; no root translation.
-    Vector3 MapObservedPhysicsVelocity(Vector3 physicsWorldVelocity) {
-        if (physicsFrame && visualFrame)
-            return visualFrame.TransformVector(
-                physicsFrame.InverseTransformVector(physicsWorldVelocity));
-        Vector3 local = observedPhysicsParent
-            ? observedPhysicsParent.InverseTransformVector(physicsWorldVelocity)
-            : physicsWorldVelocity;
-        return observedVisualParent
-            ? observedVisualParent.TransformVector(local) : local;
-    }
-
-    // At the CURRENT frame pose, map both the previous and current InSubject
-    // positions. This separates physical displacement from root-frame motion.
-    // Diagnostic ONLY: no feedback to the oscillation or spline geometry.
-    void AuditPhysicalObservation(Vector3 mapped, float dt) {
-        if (!observationSampleReady || dt <= 0f) {
-            observationMappedVelocity = observationMappedSourceVelocity = Vector3.zero;
-            observationMappedFrameVelocity = observationMappedRigidVelocity = Vector3.zero;
-            observationRigidbodyVelocityError = 0f;
-            return;
-        }
-        Vector3 prevMappedAtCurrentFrames =
-            MapObservedPhysicsPointAtCurrentFrames(observationPreviousPhysicsPoint);
-        observationMappedSourceVelocity =
-            (mapped - prevMappedAtCurrentFrames) / dt;
-        observationMappedFrameVelocity =
-            (prevMappedAtCurrentFrames - observationPreviousMappedPoint) / dt;
-        observationMappedVelocity =
-            (mapped - observationPreviousMappedPoint) / dt;
-        observationMappedRigidVelocity = MapObservedPhysicsVelocity(inSubject.velocity);
-        observationRigidbodyVelocityError =
-            (observationMappedSourceVelocity - observationMappedRigidVelocity).magnitude;
-    }
-
-    // V21.2: follow the continuous PHYSICAL observation along an existing
-    // Knot polyline. Allow a valid station to recover after temporarily
-    // missing the path; never relabel a teleport as normal station travel.
-    bool TryObservationStation(Pair pair, Vector3 mappedBall, float dt,
-        out float station, out float crossTrack) {
-        station = 0f;
-        crossTrack = float.PositiveInfinity;
-        observationRejectReason = "NONE";
-        observationCandidateStation = 0f;
-        observationAllowedTravel = 0f;
-        if (pair == null || pair.axis.Count < 2 ||
-            pair.axis.Count != pair.stations.Count) {
-            observationRejectReason = "INVALID_PATH";
-            return false;
-        }
-        // Pair objects may be rebuilt with the same group and topology. Do
-        // not discard a valid observation simply because their identity changed.
-        bool newTopology = observationStationGroup != pair.group ||
-            observationPairKnotCount != pair.axis.Count;
-        if (newTopology) {
-            observationStationReady = false;
-            observationSampleReady = false;
-        }
-        observationStationGroup = pair.group;
-        observationPairKnotCount = pair.axis.Count;
-        // Time since last ACCEPTED station, not just a single FixedUpdate.
-        // Otherwise a one-frame miss can trap the tracker permanently.
-        float elapsed = observationStationReady
-            ? Mathf.Max(dt, Time.fixedTime - observationLastStationTime) : dt;
-        float rbSpeed = inSubject ? inSubject.velocity.magnitude : 0f;
-        observationAllowedTravel = Mathf.Max(observationMinimumStationTravel,
-            rbSpeed * elapsed * observationVelocityWindowFactor + .25f);
-        float bestScore = float.PositiveInfinity;
-        bool found = false;
-        for (int i = 0; i + 1 < pair.axis.Count; i++) {
-            Vector3 a = pair.axis[i], d = pair.axis[i+1] - a;
-            Vector3 flat = new Vector3(d.x, 0f, d.z);
-            if (flat.sqrMagnitude < E ||
-                pair.stations[i+1] <= pair.stations[i]) continue;
-            Vector3 delta = new Vector3(mappedBall.x-a.x,0f,mappedBall.z-a.z);
-            float u = Mathf.Clamp01(Vector3.Dot(delta, flat) / flat.sqrMagnitude);
-            Vector3 foot = a + d * u;
-            float dx = mappedBall.x-foot.x, dz = mappedBall.z-foot.z;
-            float dy = mappedBall.y-foot.y;
-            float candidate = Mathf.Lerp(pair.stations[i],pair.stations[i+1],u);
-            float error = dx*dx+dz*dz+.12f*dy*dy;
-            if (observationStationReady) {
-                float excess = Mathf.Max(0f,
-                    Mathf.Abs(candidate-observationLastStation)-observationAllowedTravel);
-                error += observationContinuityWeight * excess * excess;
-            }
-            if (error >= bestScore) continue;
-            bestScore = error;
-            station = candidate;
-            crossTrack = Mathf.Sqrt(dx*dx+dz*dz);
-            found = true;
-        }
-        if (!found) {
-            observationRejectReason = "NO_VALID_SEGMENT";
-            return false;
-        }
-        observationCandidateStation = station;
-        if (crossTrack > observationCrossTrackWarning) {
-            observationRejectReason = state == "PREPARED"
-                ? "WAITING_FOR_ENTRY" : "CROSS_TRACK";
-            return false;
-        }
-        // A large jump is NOT silently accepted. This never moves the
-        // physics body and never modifies the visual wave state.
-        if (observationStationReady &&
-            Mathf.Abs(station-observationLastStation) > observationAllowedTravel) {
-            observationRejectReason = "STATION_JUMP";
-            return false;
-        }
-        observationStationStep = observationStationReady
-            ? station - observationLastStation : 0f;
-        observationLastStation = station;
-        observationLastStationTime = Time.fixedTime;
-        observationStationReady = true;
-        return true;
-    }
-
-    // Resolve an existing VISUAL-space motion authority without opening an
-    // ExampleBallVisualEqualizer component. The generated display ball is output
-    // only; it is NEVER a source for its own translation.
-    // Resolve only when the reference is missing, not every quarter second.
-    void ResolveVisualMotionSource() {
-        if (visualMotionSource && visualMotionSource != ownedVisualBall) return;
-        GameObject visual = GameObject.Find("VisualPlayerRoot");
-        Transform root = visual ? visual.transform : generatedVisualRoot;
-        if (!root) return;
-        Transform t = root.Find("subject");
-        if (!t) t = root.Find("Subject");
-        if (!t) {
-            Transform[] children = root.GetComponentsInChildren<Transform>(true);
-            for (int i=0; i<children.Length; i++) {
-                if (children[i].name.Equals("subject", StringComparison.OrdinalIgnoreCase)) {
-                    t=children[i];
-                    break;
-                }
-            }
-        }
-        if (t && t != ownedVisualBall && (!inSubject || t != inSubject.transform))
-            visualMotionSource=t;
-    }
-
-
-
-
-    // Only a VISUAL-side reference or a coordinate-frame transform determines
-    // the visual base. Never copy the raw PhysicsRoot world position to a visual.
-    // The source of truth is VisualPlayerRoot/subject. A complete, EXPLICIT
-    // physics/visual frame pair is the only permitted alternative.
-    // Missing both: do not render at PhysicsRoot world coordinates.
-    bool TryGetVisualMotionPoint(out Vector3 visualPoint) {
-        if (visualMotionSource && visualMotionSource != ownedVisualBall) {
-            visualPoint=visualMotionSource.position;
-            return true;
-        }
-        if (HasSource && physicsFrame && visualFrame) {
-            visualPoint=ToVisualPoint(SourcePhysicsPoint);
-            return true;
-        }
-        visualPoint=Vector3.zero;
-        return false;
-    }
-
-
-    static bool IsSafeVisualOutput(Transform t) {
-        return t && !t.GetComponentInParent<Rigidbody>() &&
-            !t.GetComponentInChildren<Rigidbody>(true) &&
-            !t.GetComponentInChildren<Collider>(true);
-    }
-
-    void EnsureIndependentVisualBall() {
-        if (mainBveMode) return;
-        if (displayedBall && displayedBall != ownedVisualBall &&
-            !IsMainBveDisplay(displayedBall)) return;
-        // An explicitly assigned, independent nonphysical visual is allowed.
-        // Never reuse the Main BVE generated output as standalone input/output.
-        if (inspectorVisualBall && inspectorVisualBall != visualMotionSource &&
-            !IsMainBveDisplay(inspectorVisualBall) &&
-            IsSafeVisualOutput(inspectorVisualBall)) {
-            displayedBall = inspectorVisualBall;
-            if (ownedVisualBall) ownedVisualBall.gameObject.SetActive(false);
-            return;
-        }
-        if (!createOwnVisualBall) { displayedBall = null; return; }
-        if (!TryGetVisualMotionPoint(out Vector3 point)) { displayedBall = null; return; }
-        if (!ownedVisualBall) {
-            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            go.name = "IFSW_BallVisualEqualizer";
-            // Primitive temporarily contains a collider. Disable immediately;
-            // a visual-only ball must never affect SlopeStickCore physics.
-            Collider collider = go.GetComponent<Collider>();
-            if (collider) { collider.enabled = false; Destroy(collider); }
-            go.transform.SetParent(owner, true);
-            MeshFilter filter = go.GetComponent<MeshFilter>();
-            if (ownBallMesh && filter) filter.sharedMesh = ownBallMesh;
-            MeshRenderer renderer = go.GetComponent<MeshRenderer>();
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (!shader) shader = Shader.Find("Standard");
-            if (!shader) shader = Shader.Find("Unlit/Color");
-            if (renderer && (ownBallMaterial || shader)) {
-                ownedVisualMaterial = ownBallMaterial
-                    ? new Material(ownBallMaterial) : new Material(shader);
-                ownedVisualMaterial.name = "IFSW_StandaloneBVE_Material";
-                if (!ownBallMaterial) {
-                    Color color = new Color(.94f,.96f,1f,1f);
-                    if (ownedVisualMaterial.HasProperty("_BaseColor"))
-                        ownedVisualMaterial.SetColor("_BaseColor",color);
-                    if (ownedVisualMaterial.HasProperty("_Color"))
-                        ownedVisualMaterial.SetColor("_Color",color);
-                }
-                renderer.sharedMaterial = ownedVisualMaterial;
-                renderer.shadowCastingMode = ShadowCastingMode.Off;
-            }
-            ownedVisualBall = go.transform;
-            if (debugVisualBinding)
-                Debug.Log("[IFSW][VISUAL_CREATED] IFSW_BallVisualEqualizer (no Rigidbody/Collider)",this);
-        }
-        displayedBall = ownedVisualBall;
-        ownedVisualBall.gameObject.SetActive(true);
-        displayedBall.localScale = Vector3.one * Mathf.Max(.02f,2f*visualRadius);
-        displayedBall.position = point;
-        bveVisualPresentationHasSample = false;
-    }
-
-    // Never import the ExampleBallVisualEqualizer type: the Weaver must still
-    // compile and run after that script/component is physically removed.
-    // Checking active MonoBehaviour type names does not read/change BVE state.
-
-
-    static bool IsMainBveDisplay(Transform t) =>
-        t && (t.name.StartsWith("ExampleBVE_Display_", StringComparison.Ordinal) ||
-              t.name == "BallVisualEqualizer");
-
-
-
-    Transform FindMainBveDisplay() {
-        GameObject go = GameObject.Find("ExampleBVE_Display_BallVisualEqualizer");
-        if (go && go.transform != ownedVisualBall) return go.transform;
-        // A deliberately assigned visual can be used as a read-only Main BVE output.
-        return inspectorVisualBall && inspectorVisualBall != ownedVisualBall
-            ? inspectorVisualBall : null;
-    }
-
-
-
-    // Status is informational, never a gate for spline creation.
-    void UpdateVisualStatus() {
-        visualMode=mainBveMode ? "MAIN_BVE_READ_ONLY" : "NONINERTIAL_STANDALONE";
-        visualBindingStatus=(displayedBall ? displayedBall.name : "WAITING_VISUAL")+
-            " | "+(visualMotionSource ? "VISUAL_SUBJECT" :
-                physicsFrame && visualFrame ? "EXPLICIT_FRAMES" : "NO_VISUAL_SOURCE");
-        if (debugVisualBinding)
-            Debug.Log("[IFSW][VISUAL] "+visualMode+" | "+visualBindingStatus,this);
-    }
-
-    // Non-inertial normal offset only in STANDALONE mode; never write Main BVE output.
-    // Never write InSubject or a Rigidbody hierarchy.
-    void UpdateDrivenVisual() {
-        if (mainBveMode || !displayedBall || displayedBall == subjectFallback ||
-            !IsSafeVisualOutput(displayedBall)) return;
-        // Only the observed InSubject drives the non-inertial offset. The
-        // independent visual carrier is a baseline, not a measured target.
-        // Renderer-only filtering is independent.
-        Vector3 normal = sonarWaveNormal.sqrMagnitude > E ? sonarWaveNormal.normalized : Vector3.up;
-        float raw = driveVisualWithKnotSonar && HasSource ? sonarWaveHeight : 0f;
-        if (resetFilterOnSharpNormalChange && bvePresentationReady &&
-            Vector3.Angle(normal,bvePreviousPresentationNormal)>=filterNormalResetDegrees)
-            ResetBvePresentation(raw);
-        bvePreviousPresentationNormal=normal;
-        // Presentation filtering only: the non-inertial ODE sets the wave.
-        // Spatial phase affects inferred frame acceleration, not this filter.
-        float baseSeconds = flightSmoothSeconds;
-        if (softenVisualWave && driveVisualWithKnotSonar) {
-            bvePresentationSeconds = adaptiveVisualFilter
-                ? AdaptiveBveSeconds(raw,baseSeconds,Time.deltaTime) : baseSeconds;
-            if (!adaptiveVisualFilter) bveFilterReady=false;
-            // The old smoothing was tuned for ~1.4 Hz and could erase the
-            // 6-9 Hz stair-frame waves. Bound smoothing by measured spatial
-            // frequency, without affecting physics or any owned spline.
-            if (terrainFrameAmplitude > .001f && terrainFrameSourceHz > 2f)
-                bvePresentationSeconds = Mathf.Min(bvePresentationSeconds,
-                    Mathf.Clamp(.065f/terrainFrameSourceHz,.004f,.012f));
-            bvePresentedOffset = Mathf.SmoothDamp(bvePresentedOffset,raw,
-                ref bvePresentedSpeed,bvePresentationSeconds,Mathf.Infinity,Time.deltaTime);
-        } else {
-            bvePresentationSeconds=0f;
-            bvePresentedOffset=raw;
-            bvePresentedSpeed=0f;
-            bveFilterReady=false;
-        }
-        bvePresentationReady=true;
-
-        // The self-owned output follows an independently read VISUAL trajectory.
-        // A previous-frame wave offset never feeds the travel/lifecycle source.
-        if (displayedBall == ownedVisualBall) {
-            if (TryGetVisualMotionPoint(out Vector3 visualBase)) {
-                // Independent Visual Carrier = output baseline ONLY.
-                // InSubject = physical observation ONLY. Prevent double-bounce.
-                displayedBall.position = visualBase +
-                    MapStandaloneDirection(Vector3.up) * bveInitialCY +
-                    normal * bvePresentedOffset;
-            }
-            return;
-        }
-        // Keep the existing component-free visual driver intact. Only an
-        // incremental normal displacement is added to its externally set pose.
-        Transform visualParent = displayedBall.parent;
-        Vector3 visualBaseLocal = displayedBall.localPosition;
-        if (bveVisualPresentationHasSample && visualParent == bveLastVisualParent &&
-            (visualBaseLocal-bveLastWrittenLocalPosition).sqrMagnitude < .00000025f)
-            visualBaseLocal -= bveLastAppliedLocalOffset;
-        Vector3 waveDisplacement = normal * bvePresentedOffset +
-            MapStandaloneDirection(Vector3.up) * bveInitialCY;
-        Vector3 localOffset = visualParent
-            ? visualParent.InverseTransformVector(waveDisplacement)
-            : waveDisplacement;
-        displayedBall.localPosition = visualBaseLocal + localOffset;
-        bveLastVisualParent = visualParent;
-        bveLastAppliedLocalOffset = localOffset;
-        bveLastWrittenLocalPosition = displayedBall.localPosition;
-        bveVisualPresentationHasSample = true;
-    }
-
-    void ResetBvePresentation(float offset) {
-        bvePresentedOffset=offset;
-        bvePresentedSpeed=0f;
-        bvePreviousFilterTarget=offset;
-        bveAdaptiveVisualSpeed=0f;
-        bveFilterReady=false;
-        bvePresentationReady=false;
-    }
-
-    float AdaptiveBveSeconds(float target,float baseSeconds,float dt) {
-        float h=Mathf.Max(.0001f,dt);
-        if (!bveFilterReady) { bvePreviousFilterTarget=target; bveAdaptiveVisualSpeed=0f; bveFilterReady=true; }
-        float rawSpeed=(target-bvePreviousFilterTarget)/h;
-        bvePreviousFilterTarget=target;
-        float alpha=1f-Mathf.Exp(-2f*Mathf.PI*adaptiveDerivativeHz*h);
-        bveAdaptiveVisualSpeed+=(rawSpeed-bveAdaptiveVisualSpeed)*alpha;
-        float baseTime=Mathf.Max(.005f,baseSeconds);
-        float cutoff=1f/(2f*Mathf.PI*baseTime)+adaptiveSpeedGain*Mathf.Abs(bveAdaptiveVisualSpeed);
-        return Mathf.Clamp(1f/(2f*Mathf.PI*Mathf.Max(E,cutoff)),
-            Mathf.Min(adaptiveMinimumSmoothSeconds,baseTime),baseTime);
-    }
-
-    // Transport-theorem tracking: only the OBSERVER is changed. A moving normal
-    // must not turn a stationary ball into a false bounce. No Kalman/One-Euro
-    // filter, additional ray probes, spline writes, or rigidbody writes.
-    void ResetKnotTracking()
-    {
-        trackingValid = false;
-        trackingKnotIndex = -1;
-        trackingNearbyKnots = 0;
-        trackingGroup = -1;
-        trackingHasLastFrame = false;
-        trackingBaseline = trackingTrend = trackingEstimate = trackingEstimateSpeed = 0f;
-        trackingComovingHeight = trackingPhysicalSpeed = trackingFrameSpeed = 0f;
-        trackingCoordinateSpeed = trackingReferenceSpeed = 0f;
-        trackingLastNormal = Vector3.up;
-        trackingLastRelative = trackingLastReference = Vector3.zero;
-        trackingTangent = Vector3.forward;
-        trackingNormal = Vector3.up;
-        trackingSide = Vector3.right;
-        trackingRelativeHeight = trackingRelativeSpeed = trackingWaveObservation = 0f;
-        trackingRawHeight = observationHeightRateError = 0f;
-    }
-
-    // Knot positions/stations, carrier and tracked ball positions share VISUAL
-    // world coordinates. The produced display-ball position is never an input.
-    void ObserveKnotTracking(int currentGroup, IList<Vector3> knots, IList<float> stations,
-        float station, Vector3 physicalBall, float dt,
-        float radius, float alpha, float beta)
-    {
-        if (knots == null || stations == null || knots.Count < 2 ||
-            knots.Count != stations.Count || dt <= 0f)
-        {
-            ResetKnotTracking();
-            return;
-        }
-        if (trackingGroup != currentGroup)
-        {
-            ResetKnotTracking();
-            trackingGroup = currentGroup;
-        }
-
-        int nearest = 0;
-        float minDistance = float.PositiveInfinity;
-        for (int i = 0; i < stations.Count; i++)
-        {
-            float d = Mathf.Abs(stations[i] - station);
-            if (d < minDistance) { minDistance = d; nearest = i; }
-        }
-        int previousKnotIndex = trackingKnotIndex;
-        trackingKnotIndex = nearest;
-        trackingNearbyKnots = 0;
-        float totalWeight = 0f;
-        Vector3 direction = Vector3.zero;
-        float spatialRadius = Mathf.Max(.1f, radius);
-        for (int i = Mathf.Max(0, nearest - 2); i <= Mathf.Min(knots.Count - 1, nearest + 2); i++)
-        {
-            float distance = stations[i] - station;
-            float weight = Mathf.Exp(-.5f * distance * distance / (spatialRadius * spatialRadius));
-            if (Vector3.Distance(knots[i], physicalBall) <= spatialRadius * 2f)
-                trackingNearbyKnots++;
-            int a = Mathf.Max(0, i - 1);
-            int b = Mathf.Min(knots.Count - 1, i + 1);
-            Vector3 segment = knots[b] - knots[a];
-            if (segment.sqrMagnitude > .00001f)
-            {
-                direction += segment.normalized * weight;
-                totalWeight += weight;
-            }
-        }
-        // Never assimilate a bad observation. During missing contact or Knot
-        // references, the non-inertial oscillator decays without false input.
-        // Nearby count describes sensor coverage, NOT geometric validity.
-        // The continuous station and neighbouring Knot segments are enough to
-        // define the observer even when the ball is between discrete knots.
-        if (totalWeight < .00001f || direction.sqrMagnitude < .00001f)
-        {
-            ResetKnotTracking();
-            observationRejectReason = "DEGENERATE_TANGENT";
-            return;
-        }
-
-        Vector3 nextT = direction.normalized;
-        Vector3 transported = trackingHasLastFrame
-            ? Quaternion.FromToRotation(trackingTangent, nextT) * trackingNormal
-            : Vector3.ProjectOnPlane(Vector3.up, nextT);
-        Vector3 up = Vector3.ProjectOnPlane(Vector3.up, nextT).normalized;
-        if (transported.sqrMagnitude < .00001f) transported = up;
-        if (up.sqrMagnitude < .00001f) up = transported.normalized;
-        if (Vector3.Dot(transported, up) < 0f) up = -up;
-        trackingTangent = nextT;
-        // No periodic rotation toward world-up: retain the transported
-        // comoving normal. Up is used only for initial/degenerated frames.
-        trackingNormal = Vector3.ProjectOnPlane(
-            transported.normalized, trackingTangent).normalized;
-        trackingSide = Vector3.Cross(trackingNormal, trackingTangent).normalized;
-
-        int segmentIndex = Mathf.Clamp(nearest, 0, knots.Count - 2);
-        if (stations[nearest] > station && segmentIndex > 0) segmentIndex--;
-        float length = stations[segmentIndex + 1] - stations[segmentIndex];
-        float u = length > .00001f ?
-            Mathf.Clamp01((station - stations[segmentIndex]) / length) : 0f;
-        trackingReference = Vector3.Lerp(knots[segmentIndex], knots[segmentIndex + 1], u);
-        Vector3 relative = physicalBall - trackingReference;
-        float rawHeight = Vector3.Dot(relative, trackingNormal);
-        trackingRawHeight = rawHeight;
-        observationHeightRateError = 0f;
-        if (!trackingHasLastFrame)
-        {
-            trackingComovingHeight = rawHeight;
-            trackingBaseline = trackingEstimate = rawHeight;
-            trackingTrend = trackingEstimateSpeed = 0f;
-            trackingLastRelative = relative;
-            trackingLastReference = trackingReference;
-            trackingLastNormal = trackingNormal;
-            trackingHasLastFrame = true;
-            trackingPhysicalSpeed = trackingFrameSpeed = trackingCoordinateSpeed = 0f;
-            trackingReferenceSpeed = 0f;
-        }
-        else
-        {
-            // A change in track reference or coordinate frame is not a real
-            // acceleration. Rebase, do not inject its jump into the wave.
-            Vector3 relativeStep = relative - trackingLastRelative;
-            float angularJump = Vector3.Angle(trackingLastNormal, trackingNormal);
-            if (Mathf.Abs(nearest - previousKnotIndex) > 2 ||
-                relativeStep.magnitude > Mathf.Max(1.5f, radius * 1.5f) ||
-                angularJump > 60f)
-            {
-                // A corner or regenerated section may change its reference
-                // abruptly. Rebase this observer WITHOUT manufacturing an
-                // acceleration impulse and WITHOUT resetting the wave.
-                observationRejectReason = angularJump > 60f ? "FRAME_REBASE" :
-                    Mathf.Abs(nearest - previousKnotIndex) > 2
-                        ? "KNOT_INDEX_REBASE" : "REFERENCE_REBASE";
-                observationRebaseCount++;
-                trackingComovingHeight = trackingBaseline = trackingEstimate = rawHeight;
-                trackingTrend = trackingEstimateSpeed = 0f;
-                trackingLastRelative = relative;
-                trackingLastReference = trackingReference;
-                trackingLastNormal = trackingNormal;
-                trackingHasLastFrame = true;
-                trackingRelativeHeight = trackingRelativeSpeed = 0f;
-                trackingWaveObservation = 0f;
-                trackingPhysicalSpeed = trackingFrameSpeed = trackingCoordinateSpeed = 0f;
-                trackingReferenceSpeed = 0f;
-                trackingValid = false; // skip impulse for this rebase frame
-                return;
-            }
-
-            // Exact finite-difference transport-identity for q = r dot N:
-            // (q[k]-q[k-1])/dt = (dr/dt) dot N[k]
-            //                   + r[k-1] dot (dN/dt).
-            // First term: relative motion of ball vs path-reference point.
-            // Second term: apparent height change due ONLY to frame rotation.
-            // Both contain no inferred acceleration and no accumulated bias.
-            trackingPhysicalSpeed = Vector3.Dot(relativeStep, trackingNormal) / dt;
-            trackingFrameSpeed = Vector3.Dot(
-                trackingLastRelative, trackingNormal - trackingLastNormal) / dt;
-            trackingCoordinateSpeed = trackingPhysicalSpeed + trackingFrameSpeed;
-            trackingReferenceSpeed = (trackingReference - trackingLastReference).magnitude / dt;
-            float previousRawHeight = Vector3.Dot(trackingLastRelative, trackingLastNormal);
-            // Algebraic consistency check for transport theorem (NOT proof of
-            // a correct physics/visual transform). Compare to finite-diff q.
-            observationHeightRateError =
-                (rawHeight - previousRawHeight) / dt - trackingCoordinateSpeed;
-
-            // Track frame-corrected displacement of the physical ball, not raw q. This prevents
-            // frame rotation alone from producing a fake rising/falling wave.
-            trackingComovingHeight += trackingPhysicalSpeed * dt;
-            float prediction = trackingEstimate + trackingEstimateSpeed * dt;
-            float innovation = Mathf.Clamp(trackingComovingHeight - prediction, -1.5f, 1.5f);
-            trackingEstimate = prediction + Mathf.Clamp01(alpha) * innovation;
-            // Measured TRANSLATIONAL speed, no /dt innovation amplification.
-            trackingEstimateSpeed = Mathf.Lerp(trackingEstimateSpeed,
-                trackingPhysicalSpeed, Mathf.Clamp01(beta));
-            trackingLastRelative = relative;
-            trackingLastReference = trackingReference;
-            trackingLastNormal = trackingNormal;
-        }
-        trackingRelativeHeight = trackingEstimate - trackingBaseline;
-        trackingRelativeSpeed = trackingEstimateSpeed;
-        trackingTrend = Mathf.Lerp(trackingTrend, trackingRelativeHeight,
-            1f - Mathf.Exp(-2f * Mathf.PI * 1.3f * dt));
-        trackingWaveObservation = Mathf.Clamp(trackingRelativeHeight - trackingTrend,
-            -nonInertialMaxOffset, nonInertialMaxOffset);
-        trackingValid = true;
-    }
-
-    // At most five read-only Knot markers for editor gizmos; the tracking observer uses
-    // the ACTUAL n-th knot and its +/-2 neighbours, without making GameObjects.
-    void ChooseKnotSonarAnchors(Vector3 visual, float observedStation = float.NaN)
-    {
-        sonarAnchorCount = sonarNearbyKnots = 0;
-        if (active == null || active.axis.Count < 2) return;
-        float station = float.IsNaN(observedStation)
-            ? StationOn(active, visual, out _, out _) : observedStation;
-        int n = 0;
-        float best = float.PositiveInfinity;
-        for (int i = 0; i < active.stations.Count; ++i)
-        {
-            float d = Mathf.Abs(active.stations[i] - station);
-            if (d < best) { best = d; n = i; }
-        }
-        for (int i = Mathf.Max(0,n-2); i <= Mathf.Min(active.axis.Count-1,n+2); ++i)
-        {
-            Vector3 knot = active.axis[i];
-            sonarAnchors[sonarAnchorCount] = knot;
-            sonarAnchorIsObservation[sonarAnchorCount] = false;
-            sonarAnchorCount++;
-            if ((knot-visual).sqrMagnitude <= knotSonarRadius*knotSonarRadius)
-                sonarNearbyKnots++;
-        }
-        sonarStation = station;
-    }
-
-    void ObserveKnotTarget(float dt)
-    {
-        // Display motion is optional telemetry; NEVER required to observe
-        // InSubject when explicit frames are provided.
-        bool hasCarrier = TryGetVisualMotionPoint(out Vector3 carrier);
-        if (!TryMapObservedInSubject(out Vector3 mappedPhysical)) {
-            ResetKnotTracking();
-            ResetObservationVerification();
-            sonarAnchorCount = sonarNearbyKnots = 0;
-            if (debugPhysicalObservation && Time.fixedTime >= nextMissingMapLog) {
-                nextMissingMapLog = Time.fixedTime + 2f;
-                Debug.LogWarning("[IFSW][OBSERVATION_DISABLED] " + observedMapSource +
-                    ". Configure InSubject and a valid physics/visual mapping.", this);
-            }
-            return;
-        }
-        if (active == null || active.axis.Count < 2 ||
-            (state != "PREPARED" && state != "ACTIVE") ||
-            (bveActive && !bveExiting && active.group != bveCycleGroup)) {
-            ResetKnotTracking();
-            ResetObservationVerification();
-            sonarAnchorCount = sonarNearbyKnots = 0;
-            return;
-        }
-        if (!TryObservationStation(active, mappedPhysical, dt,
-            out float station, out float crossTrack)) {
-            // Preserve last accepted station/time to allow local reacquisition.
-            // Do not derive a velocity across a missing observation; the
-            // independent oscillator continues to decay on its own.
-            trackingValid = false;
-            trackingNearbyKnots = 0;
-            trackingHasLastFrame = false;
-            observationSampleReady = false;
-            observationRejectedFrames++;
-            sonarAnchorCount = sonarNearbyKnots = 0;
-            if (debugPhysicalObservation && Time.fixedTime >= nextMissingMapLog) {
-                nextMissingMapLog = Time.fixedTime+2f;
-                Debug.LogWarning($"[IFSW][OBSERVATION_REJECT] " +
-                    $"reason={observationRejectReason} group={active.group} " +
-                    $"candidateStation={observationCandidateStation:F3} " +
-                    $"lastStation={observationLastStation:F3} " +
-                    $"allowedTravel={observationAllowedTravel:F3} " +
-                    $"crossTrack={crossTrack:F3} " +
-                    $"misses={observationRejectedFrames}", this);
-            }
-            return;
-        }
-        if (observationSampleReady)
-            AuditPhysicalObservation(mappedPhysical, dt);
-        else {
-            observationMappedVelocity = observationMappedSourceVelocity = Vector3.zero;
-            observationMappedFrameVelocity = observationMappedRigidVelocity = Vector3.zero;
-            observationRigidbodyVelocityError = 0f;
-        }
-        // Choose AND measure the same InSubject-derived station. Other
-        // consumers of ChooseKnotSonarAnchors retain original behaviour.
-        ChooseKnotSonarAnchors(mappedPhysical, station);
-        ObserveKnotTracking(active.group,active.axis,active.stations,station,
-            mappedPhysical,dt,knotSonarRadius,trackingAlpha,trackingBeta);
-        if (!trackingValid) {
-            // An accepted station can still require an observer-frame rebase.
-            // Never integrate a discontinuous q/dq into the wave.
-            observationSampleReady = false;
-            observationRejectedFrames++;
-            if (debugPhysicalObservation && Time.fixedTime >= nextMissingMapLog) {
-                nextMissingMapLog = Time.fixedTime+2f;
-                string eventName = observationRejectReason.EndsWith("REBASE")
-                    ? "OBSERVATION_REBASE" : "OBSERVATION_REJECT";
-                Debug.LogWarning($"[IFSW][{eventName}] " +
-                    $"reason={observationRejectReason} source={observedMapSource} " +
-                    $"group={active.group} station={station:F3} " +
-                    $"mapped={mappedPhysical:F3} crossTrack={crossTrack:F3} " +
-                    $"near={trackingNearbyKnots} misses={observationRejectedFrames} " +
-                    $"rebases={observationRebaseCount}", this);
-            }
-            return;
-        }
-        if (observationRejectedFrames > 0 && debugPhysicalObservation &&
-            Time.fixedTime >= nextObservationRecoveryLog) {
-            nextObservationRecoveryLog = Time.fixedTime + 1f;
-            Debug.Log($"[IFSW][OBSERVATION_RECOVERED] source={observedMapSource} " +
-                $"group={active.group} station={station:F3} " +
-                $"missedFrames={observationRejectedFrames}", this);
-        }
-        observationRejectedFrames = 0;
-        observationPreviousPhysicsPoint = inSubject.position;
-        observationPreviousMappedPoint = mappedPhysical;
-        observationSampleReady = true;
-        if (debugPhysicalObservation && Time.fixedTime >= nextKnotTrackingLog) {
-            nextKnotTrackingLog = Time.fixedTime + Mathf.Max(.1f, trackingLogSeconds);
-            Debug.Log($"[IFSW][OBSERVATION] t={Time.fixedTime:F3} " +
-                $"source={observedMapSource} group={active.group} " +
-                $"physicalPosition={inSubject.position:F4} " +
-                $"mappedPosition={mappedPhysical:F4} " +
-                $"carrier={(hasCarrier ? carrier.ToString("F4") : "NA")} " +
-                $"knotIndex={trackingKnotIndex} near={trackingNearbyKnots} " +
-                $"station={station:F4} ds={observationStationStep:F4} " +
-                $"crossTrack={crossTrack:F4} allowedTravel={observationAllowedTravel:F4} " +
-                $"status=TRACKING near0Allowed=True " +
-                $"T={trackingTangent:F4} N={trackingNormal:F4} B={trackingSide:F4} " +
-                $"relativeHeight={trackingRelativeHeight:F4} rawHeight={trackingRawHeight:F4} " +
-                $"measuredNormalSpeed={trackingPhysicalSpeed:F4} " +
-                $"frameRotationSpeed={trackingFrameSpeed:F4} " +
-                $"coordinateSpeed={trackingCoordinateSpeed:F4} " +
-                $"velocityConsistencyError={observationHeightRateError:F6} " +
-                $"mappedVelocity={observationMappedVelocity:F4} " +
-                $"physicalMotion={observationMappedSourceVelocity:F4} " +
-                $"mappingFrameMotion={observationMappedFrameVelocity:F4} " +
-                $"rbVelocity={observationMappedRigidVelocity:F4} " +
-                $"rbVelocityError={observationRigidbodyVelocityError:F4} " +
-                $"osc={trackingWaveObservation:F4}", this);
-            if (debugKnotTracking)
-                Debug.Log($"[IFSW][KNOT_TRACK] t={Time.fixedTime:F3} " +
-                    $"source={observedMapSource} group={active.group} n={trackingKnotIndex} " +
-                    $"near={trackingNearbyKnots} q={trackingRelativeHeight:F4} " +
-                    $"dq={trackingRelativeSpeed:F4} vRel={trackingPhysicalSpeed:F4} " +
-                    $"vFrame={trackingFrameSpeed:F4} vCoord={trackingCoordinateSpeed:F4} " +
-                    $"vRef={trackingReferenceSpeed:F4} osc={trackingWaveObservation:F4} " +
-                    $"T={trackingTangent:F4} N={trackingNormal:F4}", this);
-        }
-        // Existing KNOT_TRACK makes V21.1 logs comparable with V21 runs.
-        if (trackingValid && debugKnotTracking && !debugPhysicalObservation &&
-            Time.fixedTime >= nextKnotTrackingLog) {
-            nextKnotTrackingLog = Time.fixedTime + Mathf.Max(.1f,trackingLogSeconds);
-            Debug.Log($"[IFSW][KNOT_TRACK] t={Time.fixedTime:F3} " +
-                $"source={observedMapSource} group={active.group} n={trackingKnotIndex} " +
-                $"near={trackingNearbyKnots} q={trackingRelativeHeight:F4} " +
-                $"dq={trackingRelativeSpeed:F4} vRel={trackingPhysicalSpeed:F4} " +
-                $"vFrame={trackingFrameSpeed:F4} vCoord={trackingCoordinateSpeed:F4} " +
-                $"vRef={trackingReferenceSpeed:F4} osc={trackingWaveObservation:F4} " +
-                $"T={trackingTangent:F4} N={trackingNormal:F4}", this);
-        }
-    }
-
-    // Original two-ray entry sensor is retained for stable stage detection;
-    // the independent terrain-frame observer can add smooth spatial forcing.
-    // This is NOT an OverlapSphere search: the observed physics ball is known.
-    void ObserveMinimalContact(Vector3 position, Vector3 velocity)
-    {
-        Vector3 planar = Vector3.ProjectOnPlane(velocity, Vector3.up);
-        if (planar.sqrMagnitude > .01f) bveHeading = planar.normalized;
-        float spacing = Mathf.Max(.1f, probeSpacing * 2f);
-        int hits = 0;
-        float behind = 0f, ahead = 0f;
-        for (int i = 0; i < 2; i++)
-        {
-            Vector3 origin = position + bveHeading * ((i-.5f)*spacing) + Vector3.up*probeHeight;
-            int n = Physics.RaycastNonAlloc(origin, Vector3.down, sonarHits,
-                probeHeight+probeDepth, groundMask, QueryTriggerInteraction.Ignore);
-            float closest = float.PositiveInfinity;
-            bveSampleColliders[i] = null;
-            float height = 0f;
-            for (int j=0;j<n;j++)
-            {
-                RaycastHit hit = sonarHits[j];
-                Collider c=hit.collider;
-                if (!c || (inSubject && c.attachedRigidbody==inSubject) ||
-                    hit.distance >= closest) continue;
-                closest = hit.distance;
-                bveSampleColliders[i] = c;
-                height = hit.point.y;
-            }
-            if (closest < float.PositiveInfinity) { hits++; if (i==0) behind=height; else ahead=height; }
-        }
-        bveProbeValid = hits==2;
-        sonarGroundContacts = hits;
-        contactFraction = hits*.5f;
-        sonarGeometryDetected = bveProbeValid;
-        bveGradient = bveProbeValid ? (ahead-behind)/spacing : 0f;
-        bveSlopeDegrees = -Mathf.Atan(bveGradient)*Mathf.Rad2Deg;
-        sonarDetectedGroundY = bveProbeValid ? (behind+ahead)*.5f : 0f;
-    }
-
-    // The moving Knot frame drives the wave, backed by observed REAL steps.
-    // No fixed A1/A2/A3 heights, no 123/23 wave forcing, no FutureSpline feedback. ResolveBveCycle
-    // only labels where we are along the stair for old-compatible logs.
-    void UpdateBveKnotSonar(Vector3 point, Vector3 velocity, float dt)
-    {
-        ObserveKnotTarget(dt);
-        ObserveMinimalContact(point, velocity); // only entry / section identification
-        Vector3 planar = Vector3.ProjectOnPlane(velocity, Vector3.up);
-        if (!bveActive || bveExiting)
-        {
-            bveFlatElapsed = bveProbeValid && bveSlopeDegrees < bveEntrySlopeDegrees*.5f
-                ? bveFlatElapsed + dt : 0f;
-            if (bveFlatElapsed > .12f && Time.fixedTime - bveLastBegin > .4f)
-                bveArmed = true;
-        }
-        bool justBegan = false;
-        if ((!bveActive || bveExiting) && bveAutoBeginOnDownhill && bveArmed &&
-            bveProbeValid && bveSlopeDegrees >= bveEntrySlopeDegrees &&
-            planar.magnitude >= bveMinimumEntryPlanarSpeed)
-        {
-            BeginBveWave();
-            justBegan = bveActive && !bveExiting;
-        }
-        if (!bveActive)
-        {
-            // Consume and discard off-stair contacts, preventing stale impulses
-            // from exciting the next region after a fresh entry.
-            ObservePhysicsContactExcitation(dt);
-            terrainFrameAcceleration = terrainFrameAmplitude = 0f;
-            // Free solver is never fed by a rendered output. Renderer filtering
-            // may smoothly return the visual sphere to the independent carrier.
-            nonInertialOffset = nonInertialVelocity = nonInertialTarget = 0f;
-            nonInertialHadInput = false;
-            niFrameHistoryValid=niFrameHasVelocitySample=false;
-            bveBaseOffset = bveResidualOffset = bveTerminalOffset = 0f;
-            bveRawOffset = sonarWaveHeight = 0f;
-            bveWaveLocal01 = 1f;
-            bvePreviousPhysicsPoint = point;
-            return;
-        }
-        Vector3 delta = justBegan ? Vector3.zero : point - bvePreviousPhysicsPoint;
-        bveElapsed += dt;
-        if (bveExiting) bveExitElapsed += dt;
-        bveTraveled += Mathf.Max(0f, Vector3.Dot(delta, bveT));
-        bveProgress = Mathf.Clamp01(bveTraveled / Mathf.Max(.1f, bveCycleSectionLength));
-        int before = bveWaveIndex;
-        ResolveBveCycle(bveProgress, out float u, out float waveLength, out int priorType);
-        bveWaveLocal01 = u;
-        BeginWaveEnergyRegion();
-        if (debugBveTransitions && before != bveWaveIndex)
-            Debug.Log($"[IFSW][NI_REGION] group={bveCycleGroup} region={bveWaveIndex} " +
-                $"progress={bveProgress:F4} (diagnostic, NOT a prescribed bounce)", this);
-        if (bveAutoEndAtSection && bveProgress >= 1f) EndBveWave();
-        // Read contact AFTER Wave resolution so its energy is charged to the
-        // segment in which the physical collision was observed.
-        ObservePhysicsContactExcitation(dt);
-
-        // A stale group or a temporarily invisible knot must never inject
-        // energy into the ball. The oscillator simply decays to its baseline.
-        bool measured = trackingValid && active != null &&
-            active.group == bveCycleGroup && observationStationReady && !bveExiting;
-        nonInertialTarget = measured
-            ? Mathf.Clamp(trackingWaveObservation * nonInertialObservationGain,
-                -nonInertialMaxOffset, nonInertialMaxOffset) : 0f;
-        float spatialOmega;
-        float terrainDrive = ObserveTerrainFrameAcceleration(point,velocity,dt,measured,u,waveLength,out spatialOmega);
-        terrainFrameOmega = spatialOmega;
-        nonInertialInputJump = 0f;
-        if (measured)
-        {
-            // The impulse is a bounded change in measured relative normal
-            // velocity, not an acceleration inferred across reference resets.
-            float velocityInFrame = Mathf.Clamp(trackingPhysicalSpeed,
-                -nonInertialMaxSpeed, nonInertialMaxSpeed);
-            if (nonInertialHadInput)
-            {
-                // Do not add the same collision twice through velocity-difference and Collision.impulse.
-                if (lastContactKick <= 0f) {
-                    nonInertialInputJump = Mathf.Clamp(
-                        velocityInFrame - nonInertialLastInputVelocity,
-                        -nonInertialMaxSpeed * .25f, nonInertialMaxSpeed * .25f);
-                    float beforeVelocityEnergy = OscillatorDiagnosticEnergy();
-                    nonInertialVelocity += nonInertialInputJump * nonInertialImpactGain;
-                    waveEnergyVelocityInput += OscillatorDiagnosticEnergy() - beforeVelocityEnergy;
-                }
-            }
-            nonInertialLastInputVelocity = velocityInFrame;
-            nonInertialHadInput = true;
-        }
-        else nonInertialHadInput = false;
-
-        // Stable semi-implicit damped second-order system:
-        // x''+2*zeta*omega*x'+omega^2*(x-gain*q_highpass)=0.
-        // Angular speed, damping and drive depend on COMOVING measurements,
-        // never on a fixed staircase wave number, amplitude or FutureSpline.
-        float omega = Mathf.Max(2f * Mathf.PI * Mathf.Clamp(nonInertialFrequencyHz,.2f,5f),terrainFrameOmega);
-        float damp = niHighFrequencyDamping;
-        if (bveExiting) damp = Mathf.Max(1f, damp);
-        // Integrate with short steps to avoid numerical instability even if
-        // users increase fixedDeltaTime or frequency in the Inspector.
-        int steps = Mathf.Clamp(Mathf.CeilToInt(dt * omega / .22f), 1, 12);
-        float h = dt / steps;
-        for (int i = 0; i < steps; i++)
-        {
-            // Work/loss estimates are diagnostics; do not feed them back.
-            float diagnosticV = nonInertialVelocity;
-            waveEnergyTargetWork += omega * omega * nonInertialTarget * diagnosticV * h;
-            waveEnergyDampingLoss += 2f * damp * omega * diagnosticV * diagnosticV * h;
-            float accel = omega * omega * (nonInertialTarget - nonInertialOffset)
-                          - 2f * damp * omega * nonInertialVelocity
-                          + terrainDrive; // -moving terrain-frame acceleration
-            waveEnergyTerrainInput += terrainDrive * diagnosticV * h;
-            if (i==0 && Mathf.Abs(terrainDrive) > .01f) waveEnergyTerrainCount++;
-            nonInertialVelocity = Mathf.Clamp(nonInertialVelocity + accel * h,
-                -niOscillatorMaxSpeed, niOscillatorMaxSpeed);
-            nonInertialOffset = Mathf.Clamp(nonInertialOffset + nonInertialVelocity * h,
-                -nonInertialMaxOffset, nonInertialMaxOffset);
-            if (Mathf.Abs(nonInertialOffset) >= nonInertialMaxOffset &&
-                Mathf.Sign(nonInertialOffset) == Mathf.Sign(nonInertialVelocity))
-                nonInertialVelocity = 0f;
-        }
-
-        waveEnergySteps++;
-        waveEnergyMaxAbsOffset = Mathf.Max(waveEnergyMaxAbsOffset, Mathf.Abs(nonInertialOffset));
-
-        // Diagnostic only: check whether the physical impulse really reached
-        // the oscillator and how much the spring/damper changed it this frame.
-        if (contactTransferPending && debugContactTransfer) {
-            float angle = trackingValid ?
-                Vector3.Angle(trackingNormal, MapStandaloneDirection(bveN)) : -1f;
-            float omegaForEnergy = omega;
-            float energyBefore = .5f * (
-                lastContactVelocityBefore * lastContactVelocityBefore +
-                omegaForEnergy * omegaForEnergy *
-                Mathf.Pow(lastContactOffsetAtKick - lastContactTargetAtKick, 2f));
-            float energyAfter = .5f * (
-                lastContactVelocityAfter * lastContactVelocityAfter +
-                omegaForEnergy * omegaForEnergy *
-                Mathf.Pow(lastContactOffsetAtKick - lastContactTargetAtKick, 2f));
-            Debug.Log($"[IFSW][CONTACT_TRANSFER] t={Time.fixedTime:F3} " +
-                $"group={bveCycleGroup} station={observationLastStation:F3} " +
-                $"xAtKick={lastContactOffsetAtKick:F4} " +
-                $"xAfterIntegration={nonInertialOffset:F4} " +
-                $"velocityBeforeKick={lastContactVelocityBefore:F4} " +
-                $"velocityAfterKick={lastContactVelocityAfter:F4} " +
-                $"velocityAfterIntegration={nonInertialVelocity:F4} " +
-                $"effectiveKick={lastContactKick:F4} " +
-                $"target={nonInertialTarget:F4} " +
-                $"energyAtKickBefore={energyBefore:F4} energyAtKickAfter={energyAfter:F4} " +
-                $"observerToSolverNormalAngle={angle:F2}", this);
-        }
-
-        // V26: the integrated NONINERTIAL state owns 100% of the wave.
-        // No Hermite height, no external BVE pose and no 20% residual overlay.
-        bveBaseOffset=nonInertialOffset;
-        bveResidualOffset=bveTerminalOffset=0f;
-        if(debugExpressiveWave && measured &&
-           (niGroupLogged!=bveCycleGroup || niRegionLogged!=bveWaveIndex)) {
-            niGroupLogged=bveCycleGroup;
-            niRegionLogged=bveWaveIndex;
-            Debug.Log($"[IFSW][NI_REGION] group={bveCycleGroup} " +
-                $"wave={bveWaveIndex} type={bveWaveType+1} u={u:F3} " +
-                $"terrainEnvelope={terrainFrameAmplitude:F3} " +
-                $"q={nonInertialOffset:F3} v={nonInertialVelocity:F3} " +
-                $"target={nonInertialTarget:F3} aFrame={niFrameTransportAcceleration:F2} " +
-                $"aDrive={terrainDrive:F2} apexHint=" +
-                $"{(bveWaveIndex==0?expressiveFirstApex:expressiveLaterApex):F2} " +
-                $"source=NONINERTIAL",this);
-        }
-        bveCurrentAmplitude = Mathf.Abs(bveBaseOffset);
-        float entryGain = Mathf.SmoothStep(0f, 1f,
-            bveElapsed / Mathf.Max(.01f, entryBlendSeconds));
-        bveRawOffset = Mathf.Clamp((bveBaseOffset+bveResidualOffset)*entryGain,
-            -nonInertialMaxOffset,nonInertialMaxOffset);
-        sonarWaveHeight = bveRawOffset;
-        if (measured)
-        {
-            Vector3 normal = UnmapStandaloneDirection(trackingNormal);
-            if (normal.sqrMagnitude > E)
-                bveN = Vector3.RotateTowards(bveN, normal.normalized,
-                    Mathf.Deg2Rad * 180f * dt, 0f).normalized;
-        }
-        sonarWaveNormal = MapStandaloneDirection(bveN).normalized;
-        // All three vectors are in VISUAL world space. The diagnostic doesn't
-        // change the wave normal or any of the five splines.
-        if (debugNormalAlignment && trackingValid && active != null &&
-            active.group == bveCycleGroup &&
-            Time.fixedTime >= nextNormalAlignmentLog) {
-            Vector3 renderNormal = Vector3.up;
-            if (TryGetVisualMotionPoint(out Vector3 carrierPoint) && active.axis.Count >= 2) {
-                float renderStation = StationOn(active,carrierPoint,out _,out _);
-                PointOn(active,renderStation,out Vector3 renderTangent);
-                renderNormal = Vector3.ProjectOnPlane(Vector3.up,renderTangent).normalized;
-            }
-            float observerSolverAngle = Vector3.Angle(trackingNormal,sonarWaveNormal);
-            float observerRenderAngle = Vector3.Angle(trackingNormal,renderNormal);
-            float solverRenderAngle = Vector3.Angle(sonarWaveNormal,renderNormal);
-            if (observerSolverAngle >= normalMismatchWarningDegrees ||
-                solverRenderAngle >= normalMismatchWarningDegrees ||
-                observerRenderAngle >= normalMismatchWarningDegrees) {
-                Debug.Log($"[IFSW][NORMAL_ALIGNMENT] group={bveCycleGroup} " +
-                    $"station={observationLastStation:F3} " +
-                    $"observerSolverDeg={observerSolverAngle:F2} " +
-                    $"observerRenderDeg={observerRenderAngle:F2} " +
-                    $"solverRenderDeg={solverRenderAngle:F2} " +
-                    $"observerN={trackingNormal:F4} " +
-                    $"solverN={sonarWaveNormal:F4} " +
-                    $"renderN={renderNormal:F4}", this);
-            }
-            nextNormalAlignmentLog = Time.fixedTime + .5f;
-        }
-        float speed = (bveRawOffset - bveLastOffset) / dt;
-        if (!bveFirstApexLogged && bveLastOffsetSpeed > .02f && speed <= 0f &&
-            bveLastOffset > .05f)
-        {
-            bveFirstApexLogged = true;
-            if (debugBveTransitions)
-                Debug.Log($"[IFSW][NI_APEX] group={bveCycleGroup} " +
-                    $"progress={bveProgress:F4} offset={bveLastOffset:F4}", this);
-        }
-        bveLastOffsetSpeed = speed;
-        bveLastOffset = bveRawOffset;
-        if (debugBveState && Time.fixedTime >= bveNextStateLog)
-        {
-            bveNextStateLog = Time.fixedTime + .25f;
-            Debug.Log($"[IFSW][NI_STATE] group={bveCycleGroup} " +
-                $"region={bveWaveIndex} q={trackingRelativeHeight:F4} " +
-                $"vRel={trackingPhysicalSpeed:F4} vFrame={trackingFrameSpeed:F4} " +
-                $"drive={nonInertialTarget:F4} impulse={nonInertialInputJump:F4} " +
-                $"contactImpulse={lastContactImpulsePerMass:F4} " +
-                $"contactKick={lastContactKick:F4} " +
-                $"x={nonInertialOffset:F4} dx={nonInertialVelocity:F4} " +
-                $"valid={measured} raw={bveRawOffset:F4}", this);
-        }
-        bvePreviousPhysicsPoint = point;
-        if (bveExiting && bveExitElapsed > .35f &&
-            (Mathf.Abs(nonInertialOffset) < .01f &&
-             Mathf.Abs(nonInertialVelocity) < .15f || bveExitElapsed > 2f))
-            ResetBveWave(false);
-    }
-
-    // Siblings of a minimally sampled StairWay*_Physics determine the multiplier,
-    // as in ExampleBVE. Spline/render partCount is ONLY a fallback if there is
-    // no physics sibling match; the oscillation does not require the splines.
-    int ResolveBvePhysicsMultiplier() {
-        for(int k=0;k<4;k++) {
-            int index=k==0?0:k==1?1:k==2?2:3;
-            Collider collider=bveSampleColliders[index];
-            if (!collider) continue;
-            Transform t=collider.transform;
-            string group;
-            while(t && !TryParsePhysicsStairGroup(t.name,out group)) t=t.parent;
-            if (!t || !t.parent || !TryParsePhysicsStairGroup(t.name,out group)) continue;
-            int count=0;
-            Transform root=t.parent;
-            for(int i=0;i<root.childCount;i++) {
-                if (TryParsePhysicsStairGroup(root.GetChild(i).name,out string sibling) &&
-                    sibling==group) count++;
-            }
-            if (count>0) return Mathf.Clamp(count,1,8);
-        }
-        if (active != null && active.partCount>0) return Mathf.Clamp(active.partCount,1,8);
-        return 1;
-    }
-
-    static bool TryParsePhysicsStairGroup(string name,out string group) {
-        group=null;
-        if (string.IsNullOrEmpty(name) ||
-            !name.EndsWith("_Physics",StringComparison.Ordinal)) return false;
-        string core=name.Substring(0,name.Length-"_Physics".Length);
-        int i=core.LastIndexOf('_');
-        if (i<=0 || !int.TryParse(core.Substring(i+1),out int childIndex)) return false;
-        group=core.Substring(0,i);
-        return group.StartsWith("StairWay",StringComparison.Ordinal);
-    }
-
-    void BeginBveWave() {
-        if (mainBveMode || !driveVisualWithKnotSonar || !HasSource ||
-            !bveProbeValid || (bveActive && !bveExiting) ||
-            !trackingValid || active == null || trackingGroup != active.group ||
-            !observationStationReady) return;
-        FinishWaveEnergyBudget("NEW_GROUP");
-        Vector3 p = SourcePhysicsPoint, v = SourcePhysicsVelocity;
-        Vector3 planar = Vector3.ProjectOnPlane(v, Vector3.up);
-        if (planar.sqrMagnitude > .01f) bveHeading = planar.normalized;
-        Vector3 entryT = bveHeading + Vector3.up * bveGradient;
-        if (entryT.sqrMagnitude < E) { bveArmed = false; return; }
-        bveT = entryT.normalized;
-        Vector3 n = trackingValid && active != null
-            ? UnmapStandaloneDirection(trackingNormal)
-            : Vector3.ProjectOnPlane(Vector3.up, bveT);
-        if (n.sqrMagnitude < E) { bveArmed = false; return; }
-        bveN = n.normalized;
-        sonarWaveNormal = MapStandaloneDirection(bveN).normalized;
-        bvePhysicsStairMultiplier = ResolveBvePhysicsMultiplier();
-        bveCycleMultiplier = bvePhysicsStairMultiplier;
-        bveCycleGroup = active != null ? active.group : bveBeginCount;
-        bveCycleSectionLength = bveSectionLength * bveCycleMultiplier;
-        bveElapsed = bveExitElapsed = bveTraveled = bveProgress = bveFlatElapsed = 0f;
-        bveResidualOffset = bveTerminalOffset = bveRawOffset = sonarWaveHeight = 0f;
-        bveBaseOffset = bveCurrentAmplitude = 0f;
-        bvePreviousPhysicsPoint = p;
-        bveWaveIndex = bveWaveType = -1;
-        bveFirstApexLogged = false;
-        bveNextStateLog = Time.fixedTime;
-        bveLastOffset = bveLastOffsetSpeed = 0f;
-        bveWaveLocal01 = 0f;
-        nonInertialOffset = nonInertialTarget = 0f;
-        nonInertialVelocity = 0f;
-        nonInertialHadInput = false;
-        terrainFrameGroup=-1;
-        terrainFrameAcceleration=terrainFrameOmega=terrainLastTravelSpeed=0f;
-        niFrameHistoryValid=niFrameHasVelocitySample=false;
-        niFrameTransportAcceleration=niFrameTransportRaw=0f;
-        niRegionLogged=niGroupLogged=-1;
-        // Only a REAL measured comoving velocity can excite the initial wave.
-        if (trackingValid && active != null && active.group == bveCycleGroup) {
-            nonInertialVelocity = Mathf.Clamp(trackingPhysicalSpeed * nonInertialEntryGain,
-                -nonInertialMaxSpeed, nonInertialMaxSpeed);
-            nonInertialLastInputVelocity = trackingPhysicalSpeed;
-            nonInertialHadInput = true;
-        }
-        bveActive = true;
-        bveExiting = bveArmed = false;
-        bveLastBegin = Time.fixedTime;
-        bveBeginCount++;
-        ResetBvePresentation(0f);
-        if (debugBveTransitions || debugBveParityEvents)
-            Debug.Log($"[IFSW][NI_BEGIN] t={Time.fixedTime:F3} group={bveCycleGroup} " +
-                $"length={bveCycleSectionLength:F3} multiplier={bveCycleMultiplier} " +
-                $"entryRelSpeed={nonInertialVelocity:F4} tracking={trackingValid} " +
-                $"N={bveN:F4} probe={bveProbeValid}", this);
-    }
-
-    void EndBveWave() {
-        if (!bveActive || bveExiting) return;
-        bveExiting = true;
-        bveExitElapsed = 0f;
-        if (debugBveTransitions)
-            Debug.Log($"[IFSW][NI_END] group={bveCycleGroup} progress={bveProgress:F3}", this);
-    }
-
-    void ResetBveWave(bool resetPresentation) {
-        FinishWaveEnergyBudget("RESET");
-        terrainFrameGroup = -1;
-        terrainFrameAcceleration = terrainFrameOmega = terrainLastTravelSpeed = 0f;
-        bveActive=bveExiting=false;
-        niFrameHistoryValid=niFrameHasVelocitySample=false;
-        niFrameTransportAcceleration=niFrameTransportRaw=0f;
-        niRegionLogged=niGroupLogged=-1;
-        bveBaseOffset=bveResidualOffset=bveTerminalOffset=bveRawOffset=sonarWaveHeight=0f;
-        nonInertialOffset = nonInertialVelocity = nonInertialTarget = 0f;
-        nonInertialHadInput = false;
-        bveWaveLocal01=1f;
-        bveWaveIndex=bveWaveType=-1;
-        bveFirstApexLogged=false;
-        bveCycleGroup=-1;
-        bveCycleMultiplier=0;
-        bveCycleSectionLength=0f;
-        if (resetPresentation) ResetBvePresentation(0f);
-    }
-
-    // Exactly BVE topology: 123 before F; then repeated 23 chunks.
-    void ResolveBveCycle(float progress,out float u,out float waveLength,out int priorType) {
-        int repeat=Mathf.Max(0,bveCycleMultiplier-1);
-        if (repeat==0 || progress<bveFBoundary) {
-            float zone=repeat==0?1f:bveFBoundary;
-            float x=Mathf.Clamp01(progress/zone)*3f;
-            int k=Mathf.Clamp(Mathf.FloorToInt(x),0,2);
-            bveWaveIndex=k;bveWaveType=k;
-            priorType=Mathf.Max(0,k-1);
-            u=k==2 && x>=3f?1f:Mathf.Clamp01(x-k);
-            waveLength=bveCycleSectionLength*zone/3f;
-        } else {
-            float x=Mathf.Clamp01((progress-bveFBoundary)/(1f-bveFBoundary))*repeat;
-            // Exact chunk boundaries belong to their LEFT chunk (BVE convention).
-            int chunk=Mathf.Clamp(Mathf.CeilToInt(x)-1,0,repeat-1);
-            float local=Mathf.Clamp((x-chunk)*2f,0f,2f);
-            int k=local>=2f?1:Mathf.Clamp(Mathf.FloorToInt(local),0,1);
-            bveWaveIndex=3+2*chunk+k;
-            bveWaveType=k+1;
-            priorType=k==0?2:1;
-            u=k==1 && local>=2f?1f:Mathf.Clamp01(local-k);
-            waveLength=bveCycleSectionLength*(1f-bveFBoundary)/(repeat*2f);
-        }
-    }
-
-    void OnDrawGizmosSelected() {
-        if (contactListenerOnly || !drawKnotSonarGizmos) return;
-        for (int i = 0; i < sonarAnchorCount; ++i) {
-            Gizmos.color = sonarAnchorIsObservation[i] ? new Color(.95f,.25f,.8f,.35f) :
-                           new Color(.2f,.9f,1f,.55f);
-            Gizmos.DrawWireSphere(sonarAnchors[i], knotSonarRadius);
+        if (contactOwner) return;
+        if (contactProbe && contactProbe != this && contactProbe.contactOwner == this)
+            Destroy(contactProbe);
+        if (equalizerOwnedDisplay) {
+            if (Application.isPlaying) Destroy(equalizerOwnedDisplay);
+            else DestroyImmediate(equalizerOwnedDisplay);
+        }
+        if (owner) { if (Application.isPlaying) Destroy(owner.gameObject); else DestroyImmediate(owner.gameObject); }
+        for (int i = 0; i < Count; i++) {
+            if (meshes[i]) { if (Application.isPlaying) Destroy(meshes[i]); else DestroyImmediate(meshes[i]); }
+            if (materials[i]) { if (Application.isPlaying) Destroy(materials[i]); else DestroyImmediate(materials[i]); }
         }
     }
 
     void LateUpdate() {
-        if (contactListenerOnly) return;
-        // V26 is self-contained: external BVE is never an input.
-        // The five-spline lifecycle continues independently.
+        if (contactOwner || !owner) return;
+        // Generated renderers can appear after Start or after a new chunk is emitted.
         UpdateVisualRootPose();
-        if(Time.time>=nextScan) {
-            nextScan=Time.time+rendererScanSeconds;
+        if (Time.time >= nextScan || pairs.Count == 0) {
+            nextScan = Time.time + rendererScanSeconds;
             ScanStage();
         }
-        // Kept as a read-only compatibility branch for old scenes, but Start()
-        // never acquires old BVE ownership in V20.
-        // Independent-only: never read an external BVE component at runtime.
-        bool mainAvailable=false;
-        if (mainAvailable != mainBveMode) {
-            mainBveMode=mainAvailable;
-            displayedBall=null;
-            hasPreviousBall=false; // ownership change is not a teleport
-            ResetBveWave(true);
-            sourcePositionValid=false;
-            bveFrameReady=false;
-            if (ownedVisualBall) ownedVisualBall.gameObject.SetActive(!mainBveMode);
-            UpdateVisualStatus();
+        // A missing player reference must not prevent container creation.
+        // Once it exists, entry is evaluated in THIS frame (no FixedUpdate dependency).
+        if (pairs.Count > 0 && TryGetTrackingPoint(out Vector3 point)) {
+            ProcessPair(point);
+        } else if (debugSplineLifecycle && Time.time >= nextMissingReferenceWarning) {
+            nextMissingReferenceWarning = Time.time + 3f;
+            Debug.LogWarning("[IFSW][5SPLINE] Waiting for " +
+                (pairs.Count == 0 ? "StairWay*_Render geometry" :
+                "a visualMotionSource, displayedBall, or mapped InSubject") +
+                "; root=" + (generatedVisualRoot ? generatedVisualRoot.name : "NULL") +
+                "; input=" + trackingSource, this);
         }
-        if (mainBveMode) {
-            if (!displayedBall || displayedBall == ownedVisualBall) {
-                displayedBall=FindMainBveDisplay();
-                if (displayedBall) UpdateVisualStatus();
-            }
-        } else {
-            if (!visualMotionSource) ResolveVisualMotionSource();
-            if (!displayedBall || !displayedBall.gameObject.activeInHierarchy) {
-                EnsureIndependentVisualBall();
-                if (displayedBall) UpdateVisualStatus();
-            }
-        }
-        // Run the shorter version's EXACT pair lifecycle in VISUAL world space.
-        // Main BVE output is an observation, NEVER a transform we write.
-        // When its output is not yet created, the independent visual-motion
-        // reference still permits five-spline creation and state transitions.
-        bool hasLifecyclePoint = false;
-        Vector3 ball = Vector3.zero;
-        if (mainBveMode && displayedBall) {
-            ball = displayedBall.position;
-            hasLifecyclePoint = true;
-        } else if (TryGetVisualMotionPoint(out Vector3 visualPoint)) {
-            ball = visualPoint;
-            hasLifecyclePoint = true;
-        } else if (displayedBall && displayedBall != ownedVisualBall) {
-            ball = displayedBall.position;
-            hasLifecyclePoint = true;
-        }
-        if (hasLifecyclePoint && pairs.Count>0) {
-            Vector3 observed = displayedBall ? displayedBall.position : ball;
-            moveStep=hasPreviousBall ? ball-previousBall : Vector3.zero;
-            if(hasPreviousBall) {
-                float dt=Mathf.Max(.001f,Time.time-previousSampleTime);
-                float v=Vector3.ProjectOnPlane(moveStep,Vector3.up).magnitude/dt;
-                if(v<80f) measuredSpeed=Mathf.Lerp(measuredSpeed,v,1f-Mathf.Exp(-6f*dt));
-            }
-            previousBall=ball;
-            previousSampleTime=Time.time;
-            hasPreviousBall=true;
-            ProcessPair(ball,observed);
-            exitElapsed = state=="CORNER_HOLD" ? exitElapsed+Time.deltaTime : 0f;
-        }
-        // BVE renders afterwards, so its own output cannot change the
-        // SAME-FRAME stair entry/exit decision from the short lifecycle.
-        if (!mainBveMode && displayedBall)
-            UpdateDrivenVisual();
-        // Observe the FINAL rendered Transform, after the standalone visual filter.
-        // This is also the same reference measurement when Main BVE is enabled.
-        LogBallTrajectory();
-        // Display-only safety: clearing knots must also remove the tube mesh.
-        // This does NOT change the shorter code's creation/deletion conditions.
         FlushOwnedSplineMeshes();
+        UpdateEqualizerDisplay();
     }
 
-    // Read-only trajectory recorder. Logs actual display output, not just oscillator Y.
-    // Works with Main BVE enabled OR the standalone IFSW wave implementation.
-    // Both modes share the same [IFSW][BALL_TRACE] column names for direct comparison.
-    void LogBallTrajectory() {
-        if (!debugBallTrajectory) return;
-        bool stageActive = active != null && (state == "ACTIVE" || state == "CORNER_HOLD");
-        bool running = mainBveMode ? stageActive : bveActive;
-        if (!running || !displayedBall || !displayedBall.gameObject.activeInHierarchy) {
-            if (ballTraceRunning) {
-                FinishBallTraceWave("STOP");
-                Debug.Log($"[IFSW][BALL_END] t={Time.time:F3} fixed={Time.fixedTime:F3} " +
-                    $"mode={(ballTraceLastMainMode ? "MAIN_BVE" : "STANDALONE")} group={ballTraceGroup}", this);
-            }
-            ballTraceRunning = false;
-            ballTraceWave = -1;
-            ballTracePreviousHeightValid = false;
-            ballTraceEntryHeightValid = false;
+    // The five splines are updated in LateUpdate. InSubject is observed in
+    // FixedUpdate, where velocities and finite differences have physical meaning.
+    void FixedUpdate() {
+        if (contactOwner) return;
+        if (inSubject && active != null && state == "ACTIVE")
+            UpdateMeasuredEqualizer(Time.fixedDeltaTime);
+        else equalizerPhysicalImpact = 0f;
+    }
+
+    Vector3 EqualizerMappedPoint(Vector3 point) {
+        return physicsFrame && visualFrame
+            ? visualFrame.TransformPoint(physicsFrame.InverseTransformPoint(point))
+            : point;
+    }
+
+    Vector3 EqualizerMappedDirection(Vector3 direction) {
+        return physicsFrame && visualFrame
+            ? visualFrame.TransformDirection(physicsFrame.InverseTransformDirection(direction))
+            : direction;
+    }
+
+    // Prefer the actual StairWay renderer's collider to an overlapping smooth
+    // physics ramp; fall back to the nearest ground when no stair is hit.
+    bool EqualizerSurfaceHeight(Vector3 stagePoint, out float height, out bool stairHit) {
+        Vector3 origin = stagePoint + Vector3.up * 2f;
+        int count = Physics.RaycastNonAlloc(origin, Vector3.down, equalizerHits,
+            10f, equalizerGroundMask, QueryTriggerInteraction.Ignore);
+        float closest = float.PositiveInfinity;
+        bool stairSelected = false;
+        height = 0f;
+        for (int i = 0; i < count; ++i) {
+            RaycastHit hit = equalizerHits[i];
+            if (!hit.collider || hit.collider.attachedRigidbody == inSubject) continue;
+            bool stair = false;
+            for (Transform tr = hit.collider.transform; tr; tr = tr.parent)
+                if (Parse(tr.name, out bool isStair, out int group, out _) && isStair) {
+                    stair = active != null && group == active.group;
+                    break;
+                }
+            if (stairSelected && !stair || (stairSelected == stair && hit.distance >= closest))
+                continue;
+            closest = hit.distance;
+            height = hit.point.y;
+            stairSelected = stair;
+        }
+        stairHit = stairSelected;
+        return closest < float.PositiveInfinity;
+    }
+
+    // Reference BVE's two Hermite arcs; no new phase flags or amplitude tables.
+    static float WaveHermite(float a, float b, float da, float db, float u) {
+        float A = 2f * (a - b) + da + db;
+        float B = 3f * (b - a) - 2f * da - db;
+        return ((A * u + B) * u + da) * u + a;
+    }
+    static float EqualizerWave(float u, float start, float peak, float end,
+        float apex, float rise, float impact, float period) {
+        float up = Mathf.Min(rise * period * apex, 3f * Mathf.Max(0f, peak - start));
+        float down = Mathf.Min(impact * period * (1f - apex), 3f * Mathf.Max(0f, peak - end));
+        return u < apex ? WaveHermite(start, peak, up, 0f, u / apex) :
+            WaveHermite(peak, end, 0f, -down, (u - apex) / (1f - apex));
+    }
+
+    // Long-version topology R(n)=23+R(n-1); n is the repeated-pair depth.
+    static void Resolve23Recursive(float x, int count, int depth,
+        out int region, out float u, out int n) {
+        if (count == 1 || x <= 1f / count) {
+            float phase = Mathf.Clamp01(x * count) * 2f;
+            int k = phase >= 2f ? 1 : Mathf.FloorToInt(phase);
+            region = 3 + 2 * depth + k;
+            u = phase >= 2f ? 1f : phase - k;
+            n = depth;
             return;
         }
-
-        int group = mainBveMode ? (active != null ? active.group : -1) : bveCycleGroup;
-        bool newCycle = !ballTraceRunning || mainBveMode != ballTraceLastMainMode ||
-            group != ballTraceGroup;
-        if (newCycle) {
-            if (ballTraceRunning) FinishBallTraceWave("GROUP_CHANGE");
-            ballTraceGroup = group;
-            ballTraceLastMainMode = mainBveMode;
-            ballTraceRunning = true;
-            ballTraceWasExiting = false;
-            ballTraceWave = -1;
-            ballTraceSamples = 0;
-            ballTracePreviousHeightValid = false;
-            ballTraceEntryHeightValid = false;
-            ballTraceNextTime = 0f;
-            Debug.Log($"[IFSW][BALL_BEGIN] t={Time.time:F3} fixed={Time.fixedTime:F3} " +
-                $"mode={(mainBveMode ? "MAIN_BVE" : "STANDALONE")} group={group} " +
-                $"length={(mainBveMode ? (active != null ? active.length : 0f) : bveCycleSectionLength):F3} " +
-                $"regions={(mainBveMode ? waveCount : 3 + 2 * Mathf.Max(0, bveCycleMultiplier - 1))} " +
-                $"engine={(mainBveMode ? "EXAMPLE_BVE" : "NONINERTIAL")}", this);
-        }
-
-        // Coordinate-system invariant: compare the displayed ball against the
-        // same VISUAL-side carrier, in the currently observed staircase frame.
-        bool hasBase = TryGetVisualMotionPoint(out Vector3 carrier);
-        Vector3 visualPosition = displayedBall.position;
-        Vector3 tangent = Vector3.forward;
-        Vector3 normal = mainBveMode ? Vector3.up : sonarWaveNormal;
-        float station = -1f, sectionProgress = -1f;
-        if (active != null && active.length > E && active.axis.Count >= 2) {
-            station = StationOn(active, hasBase ? carrier : visualPosition, out _, out _);
-            sectionProgress = Mathf.Clamp01(station / active.length);
-            PointOn(active, station, out tangent);
-            normal = Vector3.ProjectOnPlane(Vector3.up, tangent).normalized;
-        }
-        if (tangent.sqrMagnitude <= E) tangent = Vector3.forward;
-        if (normal.sqrMagnitude <= E) normal = Vector3.up;
-        Vector3 side = Vector3.Cross(normal, tangent).normalized;
-        if (side.sqrMagnitude <= E) side = Vector3.right;
-        Vector3 relative = visualPosition - carrier;
-        float heightN = hasBase ? Vector3.Dot(relative, normal) : float.NaN;
-        float alongT = hasBase ? Vector3.Dot(relative, tangent) : float.NaN;
-        float crossB = hasBase ? Vector3.Dot(relative, side) : float.NaN;
-        if (hasBase && !ballTraceEntryHeightValid) {
-            ballTraceEntryHeight = heightN;
-            ballTraceEntryHeightValid = true;
-        }
-        float entryRelativeN = hasBase && ballTraceEntryHeightValid
-            ? heightN - ballTraceEntryHeight : float.NaN;
-
-        // These legacy 'WAVE' logs now measure path REGIONS; the physical
-        // oscillator has no prescribed per-region bounce or amplitude.
-        if (!mainBveMode && bveWaveIndex >= 0) {
-            if (ballTraceWave != bveWaveIndex) {
-                FinishBallTraceWave("WAVE_CHANGE");
-                ballTraceWave = bveWaveIndex;
-                ballTraceSamples = 0;
-                ballTraceMinHeight = float.PositiveInfinity;
-                ballTraceMaxHeight = float.NegativeInfinity;
-                ballTraceMinRaw = float.PositiveInfinity;
-                ballTraceMaxRaw = float.NegativeInfinity;
-                Debug.Log($"[IFSW][BALL_REGION] t={Time.time:F3} fixed={Time.fixedTime:F3} " +
-                    $"group={group} wave={ballTraceWave} type={bveWaveType + 1} " +
-                    $"progress={bveProgress:F5} u={bveWaveLocal01:F5} " +
-                    $"amplitude={bveCurrentAmplitude:F5}", this);
-            }
-            if (hasBase) {
-                ballTraceSamples++;
-                if (heightN > ballTraceMaxHeight) {
-                    ballTraceMaxHeight = heightN;
-                    ballTraceMaxPhase = bveProgress;
-                    ballTracePeakWorld = visualPosition;
-                }
-                ballTraceMinHeight = Mathf.Min(ballTraceMinHeight, heightN);
-            }
-            ballTraceMinRaw = Mathf.Min(ballTraceMinRaw, bveRawOffset);
-            ballTraceMaxRaw = Mathf.Max(ballTraceMaxRaw, bveRawOffset);
-        }
-        if (!mainBveMode && bveExiting && !ballTraceWasExiting)
-            Debug.Log($"[IFSW][BALL_EXIT] t={Time.time:F3} group={group} " +
-                $"wave={bveWaveIndex} raw={bveRawOffset:F5} presented={bvePresentedOffset:F5}", this);
-        ballTraceWasExiting = !mainBveMode && bveExiting;
-
-        if (Time.time < ballTraceNextTime) return;
-        ballTraceNextTime = Time.time + Mathf.Max(.02f, ballTrajectoryLogInterval);
-        float visualSpeedN = hasBase && ballTracePreviousHeightValid
-            ? (heightN - ballTracePreviousHeight) / Mathf.Max(.0001f, Time.time - ballTracePreviousTime)
-            : float.NaN;
-        ballTracePreviousHeight = heightN;
-        ballTracePreviousHeightValid = hasBase;
-        ballTracePreviousTime = Time.time;
-        string raw = mainBveMode ? "NA" : bveRawOffset.ToString("F5");
-        string presented = mainBveMode ? "NA" : bvePresentedOffset.ToString("F5");
-        string baseWave = mainBveMode ? "NA" : bveBaseOffset.ToString("F5");
-        string residual = mainBveMode ? "NA" : bveResidualOffset.ToString("F5");
-        string terminal = mainBveMode ? "NA" : bveTerminalOffset.ToString("F5");
-        string amplitude = mainBveMode ? "NA" : bveCurrentAmplitude.ToString("F5");
-        Debug.Log($"[IFSW][BALL_TRACE] t={Time.time:F3} fixed={Time.fixedTime:F3} " +
-            $"mode={(mainBveMode ? "MAIN_BVE" : "STANDALONE")} group={group} stage={state} " +
-            $"station={station:F4} section01={sectionProgress:F5} " +
-            $"wave={(mainBveMode ? -1 : bveWaveIndex)} type={(mainBveMode ? -1 : bveWaveType + 1)} " +
-            $"wave01={(mainBveMode ? -1f : bveWaveLocal01):F5} " +
-            $"engine={(mainBveMode ? "MAIN_BVE" : "NONINERTIAL")} " +
-            $"modelProgress={(mainBveMode ? -1f : bveProgress):F5} " +
-            $"physicalTravel={(mainBveMode ? -1f : bveTraveled):F4} amplitude={amplitude} " +
-            $"baseWave={baseWave} residual={residual} terminal={terminal} " +
-            $"raw={raw} presented={presented} " +
-            $"baseValid={hasBase} displayN={heightN:F5} " +
-            $"entryRelativeN={entryRelativeN:F5} displaySpeedN={visualSpeedN:F5} " +
-            $"displayT={alongT:F5} displayB={crossB:F5} " +
-            $"displayPos={visualPosition:F4} carrierPos={(hasBase ? carrier.ToString("F4") : "NA")} " +
-            $"frameN={normal:F4} " +
-            $"solverN={(mainBveMode ? "NA" : bveN.ToString("F4"))} " +
-            $"probe={(mainBveMode ? "NA" : bveProbeValid.ToString())} " +
-            $"filter={(mainBveMode ? "MAIN_BVE" : !softenVisualWave ? "OFF" : adaptiveVisualFilter ? "ADAPTIVE" : "SMOOTH")}", this);
+        Resolve23Recursive((count * x - 1f) / (count - 1f),
+            count - 1, depth + 1, out region, out u, out n);
     }
 
-    void FinishBallTraceWave(string reason) {
-        if (ballTraceWave < 0) return;
-        if (ballTraceSamples > 0) {
-            Debug.Log($"[IFSW][BALL_REGION_RESULT] t={Time.time:F3} group={ballTraceGroup} " +
-                $"wave={ballTraceWave} reason={reason} samples={ballTraceSamples} " +
-                $"peakDisplayN={ballTraceMaxHeight:F5} troughDisplayN={ballTraceMinHeight:F5} " +
-                $"peakToTrough={ballTraceMaxHeight - ballTraceMinHeight:F5} " +
-                $"peakRelativeN={(ballTraceEntryHeightValid ? ballTraceMaxHeight - ballTraceEntryHeight : float.NaN):F5} " +
-                $"troughRelativeN={(ballTraceEntryHeightValid ? ballTraceMinHeight - ballTraceEntryHeight : float.NaN):F5} " +
-                $"peakModelProgress={ballTraceMaxPhase:F5} peakWorld={ballTracePeakWorld:F4} " +
-                $"maxRaw={ballTraceMaxRaw:F5} minRaw={ballTraceMinRaw:F5}", this);
+    // Real recursive nth term: A(n+1) = r*A(n). No stored per-wave table.
+    static float RecursiveTerm(int n, float a, float r) =>
+        n <= 0 ? a : r * RecursiveTerm(n - 1, a, r);
+
+    void UpdateMeasuredEqualizer(float dt) {
+        Pair p = active;
+        Vector3 physicalPosition = inSubject.position;
+        Vector3 physicalVelocity = inSubject.velocity;
+        Vector3 position = EqualizerMappedPoint(physicalPosition);
+        Vector3 velocity = EqualizerMappedDirection(physicalVelocity);
+        float station = StationOn(p, position, out _, out _);
+        Vector3 origin = PointOn(p, station, out Vector3 splineTangent);
+        Vector3 forward = Flat(splineTangent);
+        if (forward.sqrMagnitude < E) forward = p.heading;
+
+        // Stage renderers live in the visual frame. Physics-frame rays can sample
+        // unrelated smooth collision ramps even when StairWay has step colliders.
+        float spacing = Mathf.Max(equalizerProbeSpacing,
+            Mathf.Clamp(p.length / Mathf.Max(1, p.partCount * 6) * .6f, .45f, 1.25f));
+        bool measured =
+            EqualizerSurfaceHeight(position - forward * (1.5f * spacing), out float h0, out bool s0) &
+            EqualizerSurfaceHeight(position - forward * (.5f * spacing), out float h1, out bool s1) &
+            EqualizerSurfaceHeight(position + forward * (.5f * spacing), out float h2, out bool s2) &
+            EqualizerSurfaceHeight(position + forward * (1.5f * spacing), out float h3, out bool s3);
+        int stairProbes = (s0 ? 1 : 0) + (s1 ? 1 : 0) + (s2 ? 1 : 0) + (s3 ? 1 : 0);
+        float axisGrade = splineTangent.y / Mathf.Max(.01f, Flat(splineTangent).magnitude);
+        float grade = measured ? Mathf.Lerp(axisGrade,
+            Mathf.Clamp((h3-h0)/(3f*spacing), axisGrade-.75f, axisGrade+.75f), .5f)
+            : axisGrade;
+        Vector3 t = (forward + Vector3.up * grade).normalized;
+        if (t.sqrMagnitude < E) t = splineTangent;
+        Vector3 desiredNormal = Vector3.ProjectOnPlane(Vector3.up, t).normalized;
+        if (desiredNormal.sqrMagnitude < E) desiredNormal = Vector3.up;
+        Vector3 normal = equalizerGroup == p.group
+            ? Vector3.Slerp(equalizerLastNormal, desiredNormal,
+                1f - Mathf.Exp(-2f * Mathf.PI * 10f * dt)).normalized
+            : desiredNormal;
+        float ground = s0 && s1 && s2 ? (h2 - 2f*h1 + h0) * .5f :
+            s1 && s2 && s3 ? (h3 - 2f*h2 + h1) * .5f : 0f;
+        float q = Vector3.Dot(position - origin, normal);
+
+        float groundPitch = p.length / Mathf.Max(1, 2 * p.partCount + 1);
+        equalizerPitch = Mathf.Clamp(groundPitch, .7f, 8f);
+        if (equalizerGroup != p.group) {
+            equalizerGroup = p.group;
+            equalizerPeakRegion = -1;
+            equalizerBase = equalizerWave = 0f; // base = traveled distance, not height bias
+            equalizerLastPhysicalPosition = physicalPosition;
+            equalizerSlow = q; // same Knot-normal height origin for both signals
+            equalizerAccelSlow = equalizerOffset = equalizerSpeed = 0f;
+            equalizerDisplayOffset = equalizerDisplaySpeed = 0f;
+            equalizerLastQSpeed = Vector3.Dot(velocity, normal);
+            equalizerLastOrigin = origin;
+            equalizerLastOriginSpeed = Vector3.zero;
+            equalizerLastNormal = normal;
+            equalizerLastNormalSpeed = Vector3.zero;
+            equalizerNextLog = 0f;
+            equalizerEntrySpeed = Mathf.Max(.1f, Vector3.Dot(velocity, normal));
+            float g = Mathf.Max(.1f, -Vector3.Dot(Physics.gravity, normal));
+            equalizerReferenceHeight = Mathf.Clamp(
+                Mathf.Lerp(.45f, equalizerEntrySpeed * equalizerEntrySpeed / (2f * g), .35f),
+                .02f, equalizerMaximumOffset);
+            Debug.Log($"[IFSW][EQ_BEGIN] group={p.group} pitch={equalizerPitch:F3} " +
+                $"referenceEnergyHeight={equalizerReferenceHeight:F4} " +
+                $"normal={normal} source=INSUBJECT_PHYSICS_ONLY", this);
         }
-        ballTraceWave = -1;
-        ballTraceSamples = 0;
+
+        Vector3 originSpeed = (origin - equalizerLastOrigin) / dt;
+        Vector3 originAcceleration = (originSpeed - equalizerLastOriginSpeed) / dt;
+        Vector3 normalSpeed = (normal - equalizerLastNormal) / dt;
+        Vector3 normalAcceleration = (normalSpeed - equalizerLastNormalSpeed) / dt;
+        float physicalSpeed = Vector3.Dot(velocity, normal);
+        // q_dot = (Vball - Vorigin).N + (P - O).N_dot
+        float coordinateSpeed = Vector3.Dot(velocity - originSpeed, normal) +
+            Vector3.Dot(position - origin, normalSpeed);
+        equalizerFrameAcceleration = -Vector3.Dot(originAcceleration, normal) +
+            2f * Vector3.Dot(normalSpeed, velocity - originSpeed) +
+            Vector3.Dot(normalAcceleration, position - origin);
+        equalizerObservedAcceleration = (coordinateSpeed - equalizerLastQSpeed) / dt;
+
+        // ONE authoritative wave center: measured entry energy + Knot travel.
+        // Same 3/7 prefix and recursively repeated 2->3 suffix as reference BVE.
+        float ds = Mathf.Max(0f, Vector3.Dot(
+            EqualizerMappedDirection(physicalPosition - equalizerLastPhysicalPosition), splineTangent));
+        float speedAlong = ds / Mathf.Max(.001f, dt);
+        equalizerBase = Mathf.Min(p.length, equalizerBase + ds);
+        int repeat = Mathf.Max(0, p.partCount - 1);
+        float boundary = repeat == 0 ? 1f : 3f / 7f;
+        float progress = Mathf.Clamp01(equalizerBase / Mathf.Max(.1f, p.length));
+        bool prefix = progress < boundary || repeat == 0;
+        int region, depth = 0;
+        float u;
+        if (prefix) {
+            float x = Mathf.Clamp01(progress / boundary) * 3f;
+            region = Mathf.Min(2, Mathf.FloorToInt(x));
+            u = x >= 3f ? 1f : x - region;
+        } else Resolve23Recursive(Mathf.Clamp01((progress - boundary) / (1f - boundary)),
+            repeat, 0, out region, out u, out depth);
+        int type = region < 3 ? region : 1 + (region - 3) % 2;
+        int prior = region == 0 ? 0 : region < 3 ? region - 1 : type == 1 ? 2 : 1;
+        float L = p.length * (prefix ? boundary / 3f : (1f - boundary) / (2f * repeat));
+        float retain = Mathf.Min(.96f, .86f * .86f * Mathf.Exp(-.02f *
+            (p.length / Mathf.Max(1, p.partCount)) / 3f));
+        float A1 = equalizerReferenceHeight;
+        float A2 = A1 * retain, A3 = A2 * retain;
+        // Prefix reproduces A1/A2/A3; suffix repeats 23 at recursion depth n.
+        // Reusing .86^2 at EVERY depth would extinguish the repeated waves.
+        float r = Mathf.Exp(-.02f * p.length * (1f - boundary) / Mathf.Max(1, repeat));
+        float amp = (type == 0 ? A1 : type == 1 ? A2 : A3) *
+            (region < 3 ? 1f : RecursiveTerm(depth, 1f, r));
+        // A new 2-wave begins where the PREVIOUS pair's 3-wave ended.
+        float prev = (prior == 0 ? A1 : prior == 1 ? A2 : A3) *
+            (region < 3 ? 1f : RecursiveTerm(type == 1 ? Mathf.Max(0, depth - 1) : depth, 1f, r));
+        float fade = repeat == 0 ? Mathf.Exp(-.02f * equalizerBase) : 1f;
+        amp *= fade; prev *= fade;
+        float gN = Mathf.Max(.1f, -Vector3.Dot(Physics.gravity, normal));
+        float apex = type == 0 ? .82f : .50f;
+        float rise = region == 0 ? equalizerEntrySpeed : .86f * Mathf.Sqrt(2f * gN * prev * 1.75f);
+        equalizerWave = EqualizerWave(u, region == 0 ? 0f : -.75f * prev,
+            amp, -.75f * amp, apex, rise,
+            Mathf.Sqrt(2f * gN * amp * 1.75f), L / Mathf.Max(.1f, speedAlong));
+        float window = Mathf.Sin(Mathf.PI * u) * Mathf.Sin(Mathf.PI * (u - apex));
+        equalizerWave += amp * (type == 0 ? .08f : type == 1 ? .22f : .12f) *
+            window * window * Mathf.Sin(2f * Mathf.PI * u);
+        if (region == 2 * p.partCount)
+            equalizerWave *= 1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - .8f) * 5f));
+
+        // Residual ONLY: avoid spring-following the Hermite wave a second time.
+        float alpha = 1f - Mathf.Exp(-2f * Mathf.PI * 1.4f * dt);
+        equalizerSlow += alpha * (q - equalizerSlow);
+        float aPhysical = equalizerObservedAcceleration - equalizerFrameAcceleration;
+        equalizerAccelSlow += alpha * (aPhysical - equalizerAccelSlow);
+        equalizerGroundSignal = ground * normal.y;
+        float target = Mathf.Clamp(equalizerObservationGain * (q - equalizerSlow) +
+            equalizerTerrainGain * equalizerGroundSignal, -.20f, .20f);
+
+        float kick = equalizerPhysicalImpact;
+        equalizerPhysicalImpact = 0f;
+        if (equalizerDebug && kick > .08f)
+            Debug.Log($"[IFSW][EQ_CONTACT] group={p.group} impulseSpeed={kick:F4}", this);
+        equalizerSpeed += equalizerImpactGain * kick;
+        float drive = Mathf.Clamp(equalizerAccelerationGain * (aPhysical - equalizerAccelSlow) +
+            equalizerFrameGain * Mathf.Clamp(equalizerFrameAcceleration, -20f, 20f), -250f, 250f);
+        float frequency = Mathf.Clamp(speedAlong / Mathf.Max(.2f, L), 2f, 9f);
+        float omega = 2f * Mathf.PI * frequency;
+        int steps = Mathf.Clamp(Mathf.CeilToInt(dt * omega / .28f), 1, 12);
+        float h = dt / steps;
+        for (int i = 0; i < steps; ++i) {
+            float acceleration = omega * omega * (target - equalizerOffset) -
+                2f * equalizerDamping * omega * equalizerSpeed + drive;
+            equalizerSpeed = Mathf.Clamp(equalizerSpeed + acceleration * h, -65f, 65f);
+            equalizerOffset = Mathf.Clamp(equalizerOffset + equalizerSpeed * h, -.20f, .20f);
+            if (Mathf.Abs(equalizerOffset) >= .20f && equalizerSpeed * equalizerOffset > 0f)
+                equalizerSpeed = 0f;
+        }
+
+        float totalOffset = Mathf.Clamp(equalizerWave + equalizerOffset,
+            -equalizerMaximumOffset, equalizerMaximumOffset);
+        int waveType = type + 1;
+        if (equalizerPeakRegion != region && u >= apex) {
+            equalizerPeakRegion = region;
+            Debug.Log($"[IFSW][EQ_APEX] group={p.group} region={region} waveType={waveType} " +
+                $"travel={equalizerBase:F3} progress={progress:F4} " +
+                $"baseWave={equalizerWave:F4} offset={totalOffset:F4} kind=MODEL_APEX vPhysical={physicalSpeed:F3}", this);
+        }
+        if (equalizerDebug && Time.fixedTime >= equalizerNextLog) {
+            equalizerNextLog = Time.fixedTime + .20f;
+            Debug.Log($"[IFSW][EQ_STATE] fixed={Time.fixedTime:F3} group={p.group} " +
+                $"region={region} waveType={waveType} wave01={u:F4} " +
+                $"station={station:F4} progress={station/Mathf.Max(.1f,p.length):F5} " +
+                $"q={q:F4} vCoord={coordinateSpeed:F4} vPhysical={physicalSpeed:F4} " +
+                $"vFrame={(coordinateSpeed-physicalSpeed):F4} terrain={equalizerGroundSignal:F4} " +
+                $"aObserved={equalizerObservedAcceleration:F4} aFrame={equalizerFrameAcceleration:F4} " +
+                $"contactKick={kick:F4} target={target:F4} baseWave={equalizerWave:F4} " +
+                $"depth={depth} amp={amp:F4} residual={equalizerOffset:F4} " +
+                $"offset={totalOffset:F4} travel={equalizerBase:F3} " +
+                $"vOsc={equalizerSpeed:F4} refHeight={equalizerReferenceHeight:F4} " +
+                $"frequency={frequency:F3} probes={measured} stairProbes={stairProbes}/4 spacing={spacing:F2} mode=MEASURED", this);
+        }
+
+        equalizerLastQSpeed = coordinateSpeed;
+        equalizerLastOrigin = origin;
+        equalizerLastOriginSpeed = originSpeed;
+        equalizerLastNormal = normal;
+        equalizerLastNormalSpeed = normalSpeed;
+        equalizerLastPhysicalPosition = physicalPosition;
+        equalizerNormal = normal;
+    }
+
+    void UpdateEqualizerDisplay() {
+        if (!inSubject) return;
+        if (!equalizerDisplay) {
+            // This component owns ONLY this sphere; existing subject is never
+            // moved or disabled. Remove the primitive's collider immediately.
+            equalizerOwnedDisplay = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            equalizerOwnedDisplay.name = "__IFSW_EqualizerVisualOnly";
+            Collider c = equalizerOwnedDisplay.GetComponent<Collider>();
+            c.enabled = false;
+            Destroy(c);
+            equalizerDisplay = equalizerOwnedDisplay.transform;
+            equalizerDisplay.localScale = Vector3.one * (equalizerVisualRadius * 2f);
+        }
+        if (equalizerDisplay.IsChildOf(inSubject.transform) ||
+            (visualMotionSource && equalizerDisplay.IsChildOf(visualMotionSource)) ||
+            (displayedBall && equalizerDisplay.IsChildOf(displayedBall))) {
+            // Prevent accidental writes to a tracked input or a physics body.
+            Debug.LogError("[IFSW][EQ_OUTPUT_BLOCKED] Output must be a separate renderer-only Transform.", this);
+            equalizerDisplay = null;
+            return;
+        }
+        float goal = equalizerGroup >= 0 && state == "ACTIVE" ?
+            Mathf.Clamp(equalizerWave + equalizerOffset, -equalizerMaximumOffset, equalizerMaximumOffset) : 0f;
+        equalizerDisplayOffset = Mathf.SmoothDamp(equalizerDisplayOffset, goal,
+            ref equalizerDisplaySpeed, .018f, 100f, Time.deltaTime);
+        equalizerDisplay.position = EqualizerMappedPoint(inSubject.position) +
+            equalizerNormal * equalizerDisplayOffset;
+        if (visualMotionSource) equalizerDisplay.rotation = visualMotionSource.rotation;
+    }
+
+    void FindVisualMotionSource() {
+        if (visualMotionSource) return;
+        GameObject rootObject = GameObject.Find("VisualPlayerRoot");
+        if (!rootObject) return;
+        Transform root = rootObject.transform;
+        Transform child = root.Find("subject");
+        if (!child) child = root.Find("Subject");
+        if (!child) {
+            foreach (Transform t in root.GetComponentsInChildren<Transform>(true)) {
+                if (t.name.Equals("subject", StringComparison.OrdinalIgnoreCase)) {
+                    child = t;
+                    break;
+                }
+            }
+        }
+        if (child) visualMotionSource = child;
+    }
+
+    bool TryGetTrackingPoint(out Vector3 point) {
+        if (!visualMotionSource) FindVisualMotionSource();
+        if (visualMotionSource) {
+            trackingSource = "VisualPlayerRoot/subject";
+            point = visualMotionSource.position;
+            return true;
+        }
+        if (displayedBall) {
+            trackingSource = "Assigned displayedBall (read only)";
+            point = displayedBall.position;
+            return true;
+        }
+        if (inSubject && physicsFrame && visualFrame) {
+            trackingSource = "Mapped InSubject";
+            point = visualFrame.TransformPoint(physicsFrame.InverseTransformPoint(inSubject.position));
+            return true;
+        }
+        if (subjectFallback) {
+            trackingSource = "Assigned subjectFallback";
+            point = subjectFallback.position;
+            return true;
+        }
+        if (inSubject && allowUnmappedPhysicsFallback) {
+            trackingSource = "Unmapped InSubject (check world alignment)";
+            point = inSubject.position;
+            return true;
+        }
+        trackingSource = "NO_TRACKING_SOURCE";
+        point = Vector3.zero;
+        return false;
     }
 
     void FlushOwnedSplineMeshes() {
@@ -2751,6 +724,9 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
             for (int i = 0; i < paths[k].Count; i++)
                 paths[k][i] = delta.MultiplyPoint3x4(paths[k][i]);
         previousVisualRootMatrix = now;
+        previousObserved = delta.MultiplyPoint3x4(previousObserved);
+        entryCornerPoint = delta.MultiplyPoint3x4(entryCornerPoint);
+        exitCornerPoint = delta.MultiplyPoint3x4(exitCornerPoint);
         // Do not parent under a generated stage root: that root may be rebuilt.
         // Match its transform while retaining an independently owned hierarchy.
         owner.SetPositionAndRotation(generatedVisualRoot.position, generatedVisualRoot.rotation);
@@ -2862,10 +838,10 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
                     // replace the unexposed plan with the latest renderer pose.
                     if(changed) {
                         if(state=="PREPARED" && !cornerBuilt) {
-                            BuildRails(active); // paths[0..2] only; no SplineContainer writes
+                            BuildRails(active); // buffered until entry; no SplineContainer writes
                             beforePublishReplans++;
                         }
-                        if(state!="CORNER_HOLD") BuildFuture(active);
+                        if (state=="ACTIVE") RebuildGeometricGuide(active);
                     }
                 }
             } else {
@@ -2948,7 +924,18 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
                     AppendAxis(pair.axis,corrected);
             }
         }
-        pair.downhill=maxSlope>=minimumDownhillDegrees && pair.axis.Count>=2;
+        // Some generated StairWay meshes are split into almost-flat steps.
+        // Detect the total descent as well as each renderer's local pitch.
+        float totalRun = 0f;
+        for (int j=1; j<pair.axis.Count; j++)
+            totalRun += PlanarDistance(pair.axis[j-1], pair.axis[j]);
+        float totalDescent = pair.axis.Count>=2 ?
+            pair.axis[0].y - pair.axis[pair.axis.Count-1].y : 0f;
+        float aggregateSlope = Mathf.Atan2(totalDescent, Mathf.Max(.01f,totalRun)) * Mathf.Rad2Deg;
+        pair.downhill = pair.axis.Count>=2 &&
+            (maxSlope>=minimumDownhillDegrees ||
+             aggregateSlope>=minimumDownhillDegrees ||
+             (trustStairWayRendererNames && aggregateSlope>=-2f));
         if(pair.axis.Count<2) {
             pair.length=0f;
             return;
@@ -3083,196 +1070,186 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
         return Vector3.Lerp(a,pair.axis[i+1],t);
     }
 
-    // The next pair is selected by STAGE order first; proximity is only a gate.
-    // No global nearest-chain switch, no +12 part index limit, no 5m join split.
-    int FindCandidate(Vector3 ball) {
-        for(int i=0;i<pairs.Count;i++) {
-            Pair pair=pairs[i];
-            if(!pair.downhill || pair.group<=lastCompletedGroup ||
-               (active!=null && i<pairIndex)) continue;
-            float station=StationOn(pair,ball,out Vector3 foot,out float across);
-            Vector3 toEntry=pair.entry-ball;
-            float gap=Vector3.ProjectOnPlane(toEntry,Vector3.up).magnitude;
-            float projected=Vector3.Dot(toEntry,pair.flatHeading);
-            // A clamped closest point at the far EXIT of a stale stair is not
-            // evidence that we have entered that stair. This caused the t=0
-            // StairWay1 false positive in the V7 trace.
-            bool entered=station>.12f && station<pair.length-.15f &&
-                across<maxEntryCrossTrack && Mathf.Abs(ball.y-foot.y)<3.5f;
-            bool approaching=gap<=lookAheadDistance && projected>=-1f &&
-                Mathf.Abs(ball.y-pair.entry.y)<4f &&
-                Mathf.Abs(Vector3.Dot(toEntry,Side(pair.flatHeading)))<maxEntryCrossTrack+laneHalfWidth;
-            if(entered || approaching) return i;
+    // Choose the next stage group in build order; tolerate renderer/physics height gaps.
+    int FindCandidate(Vector3 point) {
+        for (int i = 0; i < pairs.Count; i++) {
+            Pair p = pairs[i];
+            if (!p.downhill || p.axis.Count < 2 || p.group <= lastCompletedGroup ||
+                (active != null && i < pairIndex)) continue;
+            float station = StationOn(p, point, out Vector3 foot, out float cross);
+            Vector3 toEntry = Vector3.ProjectOnPlane(p.entry - point, Vector3.up);
+            float gap = toEntry.magnitude;
+            float ahead = Vector3.Dot(toEntry, p.flatHeading);
+            bool approaching = gap <= lookAheadDistance && ahead >= -1.5f &&
+                Mathf.Abs(point.y - p.entry.y) <= verticalDetectionTolerance &&
+                Mathf.Abs(Vector3.Dot(toEntry, Side(p.flatHeading))) <=
+                    maxEntryCrossTrack + laneHalfWidth;
+            bool inside = station > .08f && station < p.length + .1f &&
+                cross < maxEntryCrossTrack + laneHalfWidth &&
+                Mathf.Abs(point.y - foot.y) <= verticalDetectionTolerance;
+            if (approaching || inside) return i;
         }
         return -1;
     }
 
-    // Four moments: (1) flat A+B precompute, (2) stair entry publish,
-    // (3) ACTIVE without rail rebuild, (4) hold rails until NEXT FLAT.
-    void ProcessPair(Vector3 ball, Vector3 observed) {
-        int candidate=FindCandidate(ball);
-        if(active==null) {
-            if(candidate>=0) Prepare(candidate,ball);
-            else return;
+    void ProcessPair(Vector3 point) {
+        int candidate = FindCandidate(point);
+        if (active == null) {
+            if (candidate < 0) return;
+            Prepare(candidate);
         }
-        if(active==null) return;
-        if(state=="PREPARED" && !cornerBuilt && candidate>=0 && candidate>pairIndex) {
-            // A nearer later pair won the chronological/geometry gate while
-            // the prior candidate never reached its entry boundary.
-            Finish("PRE_ENTRY_PAIR_CHANGED");
-            Prepare(candidate,ball);
-        }
-        if(active==null) return;
-        Pair p=active;
-        float geometricStation=StationOn(p,ball,out Vector3 point,out float crossTrack);
-        stairStation=geometricStation/Mathf.Max(.01f,p.length)*sectionLength;
-        entryDistance=Vector3.ProjectOnPlane(p.entry-ball,Vector3.up).magnitude;
-        // Publish against the STAIR ENTRY PLANE in X/Z, not StationOn's
-        // vertical-weighted nearest point. During an A+B right-angle turn,
-        // the ball may be high/low or laterally offset at that plane; V12's
-        // height gate delayed publication by as much as several meters.
-        // A small lead allows one discrete frame of travel at game speed.
-        Vector3 entryHeading=Flat(p.axis[1]-p.axis[0]);
-        Vector3 entryDelta=Vector3.ProjectOnPlane(ball-p.entry,Vector3.up);
-        float entrySignedXZ=Vector3.Dot(entryDelta,entryHeading);
-        float entryRadialXZ=entryDelta.magnitude;
-        float entryRadius=Mathf.Max(5f,maxEntryCrossTrack+laneHalfWidth);
-        bool crossedEntry=entrySignedXZ>=-cornerEntryLeadMeters &&
-            entrySignedXZ<=Mathf.Min(8f,p.length*.65f) &&
-            entryRadialXZ<=entryRadius;
-        if(state=="PREPARED" && !cornerBuilt && crossedEntry) {
-            if(paths[Center].Count>=2) {
-                for(int rail=Out;rail<=Inside;rail++) WriteSpline(rail);
-                cornerBuilt=true;
-                LifecycleEvent("CORNER_PUBLISHED");
-            }
-        }
-        // Preserve V10 A+b entrance timing and wave observations unchanged.
-        bool geometricallyInside=geometricStation>.12f &&
-            geometricStation<p.length-.10f && crossTrack<maxEntryCrossTrack &&
-            Mathf.Abs(ball.y-point.y)<3.5f;
+        if (active == null) return;
+        Pair p = active;
+        float station = StationOn(p, point, out Vector3 foot, out float across);
+        stairStation = station;
+        entryDistance = PlanarDistance(point, p.entry);
+        // Plane crossing works even when stair mesh sits above the physical collider.
+        Vector3 heading = Flat(p.axis[1] - p.axis[0]);
+        Vector3 delta = Vector3.ProjectOnPlane(point - p.entry, Vector3.up);
+        float signed = Vector3.Dot(delta, heading);
+        bool entryPlaneCrossed = signed >= -cornerEntryLeadMeters &&
+            signed <= Mathf.Max(4f, Mathf.Min(8f, p.length * .7f)) &&
+            delta.magnitude <= Mathf.Max(5f, maxEntryCrossTrack + laneHalfWidth);
+        bool inside = station > .08f && station <= p.length + .1f &&
+            across <= maxEntryCrossTrack + laneHalfWidth &&
+            Mathf.Abs(point.y - foot.y) <= verticalDetectionTolerance;
 
-        if(state=="PREPARED" && geometricallyInside) {
-            state="ACTIVE";
-            LifecycleEvent("STAIR_ACTIVE");
-            // Wave entry is handled by FixedUpdate's physical slope probe,
-            // not by the visual Spline entry timing.
-            // Fix the lane based on the actual STAIR frame on arrival. Previous
-            // pre-entry measurements at a right-angle turn are only provisional.
-            float stairLane=Vector3.Dot(ball-point,p.side);
-            if(Finite(stairLane) && Mathf.Abs(stairLane)<=laneHalfWidth+1.5f) {
-                lateralOffset=stairLane;
-                entryLaneTrusted=true;
-            }
-            // Freeze the entry model before any calibration so later lane syncs
-            // do not accidentally change the vertical Hermite phase.
-            futureModelSpeed=Mathf.Max(1f,measuredSpeed>1f?measuredSpeed:fallbackSpeed);
-            // The first actual observation defines support along the stair's
-            // local N. A world-Y flat-board gap is NOT a stair-normal offset.
-            PointOn(p,geometricStation,out Vector3 entryTangent);
-            Vector3 entryNormal=Vector3.ProjectOnPlane(Vector3.up,entryTangent).normalized;
-            if(entryNormal.sqrMagnitude<E) entryNormal=Vector3.up;
-            float entryU=Mathf.Clamp01(geometricStation/Mathf.Max(.01f,p.length));
-            float g = inSubject && displayedBall
-                ? Mathf.Max(.1f, -Vector3.Dot(Physics.gravity, entryNormal))
-                : Mathf.Max(.1f, Physics.gravity.magnitude);
-            float expectedWave=WaveAt(entryU,futureModelSpeed,g);
-            float normalSupport=Vector3.Dot(observed-point,entryNormal)-expectedWave;
-            if(Finite(normalSupport) && Mathf.Abs(normalSupport)<=4f) {
-                supportHeight=normalSupport;
-                futureNormalAnchored=true;
-            }
-            pendingLaneDeltas.Clear();
-            lastLaneSampleStation = -1f;
-            // The first measured entry gets ONE independent forecast energy
-            // snapshot; no Later Wave Observed amplitude is ever copied.
-            futureEnergyFrozen=false;
-            BuildFuture(p);
+        // Candidate may be found after the player has entered, e.g. spawned
+        // on a stair or an ArcSlab->StairWay frame was skipped. Either test
+        // is enough to publish; all five write in the SAME frame.
+        if (state == "PREPARED" && (entryPlaneCrossed || inside)) {
+            PublishFive(p, point);
         }
-        if(state=="PREPARED") return;
-
-        Vector3 tangent;
-        PointOn(p,geometricStation,out tangent);
-        Vector3 observedHeading=Flat(moveStep);
-        Vector3 expected=Flat(tangent);
-        float headingDot=observedHeading.sqrMagnitude>E?Vector3.Dot(observedHeading,expected):-1f;
-        if(headingDot>=postTurnHeadingDot) headingStableFrames++;
-        else headingStableFrames=0;
-        isTurnBusy=hasRightAngleTurn && headingStableFrames<3;
-        float sidewaysDistance=Mathf.Abs(Vector3.Dot(ball-point,Side(expected)));
-        float sidewaysStep=Mathf.Abs(Vector3.Dot(moveStep,Side(expected)));
-        // A constant lateral lane (even beyond +/-laneHalfWidth) is NOT by
-        // itself a detour. V9 wrongly blocked lane sync on StairWay9/10 here.
-        isDetouring=(sidewaysStep>.08f && headingDot<.82f) ||
-            (sidewaysDistance>laneHalfWidth+1.5f && headingDot<.92f);
-
-        if(state=="ACTIVE" && geometricallyInside) {
-            // Future retains its INDEPENDENT entry-state prediction.
-            // Never calibrate it from this Observed display or from BVE.
-            if(paths[Observed].Count==0 || Vector3.Distance(previousObserved,observed)>=observedSpacing) {
-                paths[Observed].Add(observed);
-                previousObserved=observed;
-                if(paths[Observed].Count>maxObservedKnots) paths[Observed].RemoveAt(0);
-                WriteSpline(Observed);
+        if (state == "PREPARED") {
+            // Avoid permanently sticking to a never-entered, old candidate.
+            if (candidate >= 0 && candidate > pairIndex &&
+                entryDistance > lookAheadDistance * 1.25f) {
+                Finish("MISSED_ENTRY", false);
+                Prepare(candidate);
+                ProcessPair(point);
             }
-            if(!laneSynced)
-                GatherLaneCalibration(observed, geometricStation, expected, headingDot);
-            lastObservedStation=Mathf.Max(lastObservedStation,geometricStation);
-        }
-
-        if(state=="ACTIVE" && lastObservedStation>=p.length*.70f) {
-            Vector3 exitDirection=Flat(p.exit-p.axis[p.axis.Count-2]);
-            bool pastExit=Vector3.Dot(ball-p.exit,exitDirection)>=exitConfirmDistance;
-            // If the stage turns immediately onto its next flat, the player
-            // may already be on that flat before crossing the old exit axis.
-            if(pastExit || IsOnFollowingFlat(p,ball)) {
-                exitReached=true;
-                state="CORNER_HOLD";
-                LifecycleEvent("WAVES_CLEAR_AT_EXIT");
-                // Visual Spline exit does not end the independent physical wave.
-                sonarAnchorCount=sonarNearbyKnots=0;
-                // A+b exists only on the actual downhill stair. Keep A+B on
-                // the next flat, but NEVER display a stale Future for minutes.
-                paths[Observed].Clear(); WriteSpline(Observed);
-                paths[Future].Clear(); futureStations.Clear(); WriteSpline(Future);
-            }
-        }
-        // The flat, not a distance threshold beyond the stair, owns the lifetime.
-        if(state=="CORNER_HOLD" && IsOnFollowingFlat(p,ball)) {
-            Finish("NEXT_FLAT_ARRIVAL");
-            if(candidate>=0 && pairs[candidate].group>p.group) Prepare(candidate,ball);
             return;
         }
-        // If the player is already on a later StairWay, the intervening flat
-        // has necessarily been passed. This also handles a narrow/rotated flat
-        // which never satisfied the old 1.6m flat proximity gate.
-        if(state=="CORNER_HOLD") {
-            int reached=FindReachedSuccessor(ball);
-            if(reached>=0) {
-                Finish("NEXT_STAIR_REACHED");
-                Prepare(reached,ball);
+        if (state == "ACTIVE") {
+            // An adjacent stair may be reached without a detectable flat frame.
+            int successor = FindReachedSuccessor(point);
+            if (successor >= 0) {
+                Finish("DIRECT_NEXT_STAIR");
+                Prepare(successor);
+                ProcessPair(point);
                 return;
+            }
+            if (inside) AppendObservedPoint(point, station);
+            lastObservedStation = Mathf.Max(lastObservedStation, station);
+            bool pastExit = Vector3.Dot(point - p.exit,
+                Flat(p.exit - p.axis[p.axis.Count-2])) >= exitConfirmDistance;
+            if (lastObservedStation >= p.length * .7f &&
+                (pastExit || IsOnFollowingFlat(p, point))) {
+                exitReached = true;
+                state = "CORNER_HOLD";
+                paths[Observed].Clear(); WriteSpline(Observed);
+                paths[Future].Clear(); WriteSpline(Future);
+                LifecycleEvent("STAIR_EXIT_KEEP_CORNERS");
+            }
+        }
+        if (state == "CORNER_HOLD") {
+            if (IsOnFollowingFlat(p, point)) {
+                Finish("NEXT_FLAT_ARRIVAL");
+                if (candidate >= 0 && pairs[candidate].group > p.group) {
+                    Prepare(candidate);
+                    ProcessPair(point);
+                }
+            } else {
+                int reached = FindReachedSuccessor(point);
+                if (reached >= 0) {
+                    Finish("NEXT_STAIR_REACHED");
+                    Prepare(reached);
+                    ProcessPair(point);
+                }
             }
         }
     }
 
-    // A successor counts as reached only when the display point is INSIDE
-    // its own visible, downhill stair geometry (not merely near its entrance).
-    // This never reads an external component/SplineContainer.
-    int FindReachedSuccessor(Vector3 ball) {
-        if(active==null) return -1;
-        for(int i=pairIndex+1;i<pairs.Count;i++) {
-            Pair next=pairs[i];
-            if(!next.downhill || next.axis.Count<2) continue;
-            float s=StationOn(next,ball,out Vector3 foot,out float cross);
-            if(s>.15f && s<next.length-.15f &&
-               cross<maxEntryCrossTrack && Mathf.Abs(ball.y-foot.y)<3.5f)
-                return i;
+    void Prepare(int index) {
+        Pair p = pairs[index];
+        if (!p.downhill || p.axis.Count < 2) return;
+        active = p;
+        pairIndex = index;
+        stairGroup = p.group;
+        state = "PREPARED";
+        isDownhillStair = p.downhill;
+        hasFlatBefore = p.flat >= 0;
+        hasRightAngleTurn = p.turn90;
+        cornerBuilt = exitReached = false;
+        lastObservedStation = 0f;
+        beforePublishReplans = railTurnCount = 0;
+        lastReason = "";
+        // Precompute A+B in memory but do not show prematurely on the flat.
+        for (int i = 0; i < Count; i++) {
+            paths[i].Clear();
+            WriteSpline(i);
+        }
+        BuildRails(p);
+        LifecycleEvent("PREPARED_NOT_PUBLISHED");
+    }
+
+    void PublishFive(Pair p, Vector3 observedPoint) {
+        if (cornerBuilt) return;
+        equalizerGroup = -1; // one reset on the shared flat -> stair publication
+        // Recheck plan using latest renderer geometry (including 90-degree turns).
+        BuildRails(p);
+        RebuildGeometricGuide(p);
+        // Initial Observed curve is a two-knot segment so it exists immediately.
+        // Both knots lie along the same stair corridor, independently of the ball.
+        paths[Observed].Clear();
+        Vector3 start = p.entry + Vector3.up * geometricLineLift;
+        paths[Observed].Add(start);
+        paths[Observed].Add(PointOn(p, Mathf.Min(.3f, p.length), out _) +
+            Vector3.up * geometricLineLift);
+        previousObserved = paths[Observed][paths[Observed].Count - 1];
+        for (int i = 0; i < Count; i++) WriteSpline(i);
+        cornerBuilt = true;
+        state = "ACTIVE";
+        LifecycleEvent("PUBLISHED_ALL_FIVE_AT_ENTRY");
+        // From this point the read-only observed path can replace its seed.
+        float station = StationOn(p, observedPoint, out _, out _);
+        if (station > .3f) AppendObservedPoint(observedPoint, station);
+    }
+
+    // Pure geometry: no Hermite, damping, energy, impact or future-ball model.
+    // This fifth curve intentionally represents ONLY the stair guide axis.
+    void RebuildGeometricGuide(Pair p) {
+        paths[Future].Clear();
+        for (int i = 0; i < p.axis.Count; i++)
+            paths[Future].Add(p.axis[i] + Vector3.up * (geometricLineLift * 2f));
+        if (state == "ACTIVE") WriteSpline(Future);
+    }
+
+    // Fourth curve: record a read-only position trail, never move the subject.
+    void AppendObservedPoint(Vector3 point, float station) {
+        if (active == null || station < .05f || station > active.length) return;
+        if (Vector3.Distance(previousObserved, point) < observedSpacing) return;
+        // Lift ONLY geometry, not player Transform/Rigidbody.
+        Vector3 p = point + Vector3.up * geometricLineLift;
+        paths[Observed].Add(p);
+        if (paths[Observed].Count > maxObservedKnots)
+            paths[Observed].RemoveAt(0);
+        previousObserved = point;
+        WriteSpline(Observed);
+    }
+
+    int FindReachedSuccessor(Vector3 point) {
+        if (active == null) return -1;
+        for (int i = pairIndex + 1; i < pairs.Count; i++) {
+            Pair p = pairs[i];
+            if (!p.downhill || p.axis.Count < 2) continue;
+            float s = StationOn(p, point, out Vector3 foot, out float cross);
+            if (s > .15f && s < p.length - .15f &&
+                cross < maxEntryCrossTrack + laneHalfWidth &&
+                Mathf.Abs(point.y - foot.y) <= verticalDetectionTolerance) return i;
         }
         return -1;
     }
-
-
 
     bool IsOnFollowingFlat(Pair p,Vector3 ball) {
         for(int i=p.last+1;i<pieces.Count;i++) {
@@ -3293,118 +1270,24 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
         return false;
     }
 
-    void Prepare(int index,Vector3 ball) {
-        Pair pair=pairs[index];
-        if(!pair.downhill || pair.axis.Count<2) return;
-        active=pair;
-        pairIndex=index;
-        stairGroup=pair.group;
-        state="PREPARED";
-        isDownhillStair=true;
-        hasFlatBefore=pair.flat>=0;
-        hasRightAngleTurn=pair.turn90;
-        isDetouring=isTurnBusy=laneSynced=false;
-        cornerBuilt=exitReached=entryLaneTrusted=hasEntryCornerPoint=false;
-        hasExitCornerPoint=false;
-        signedEntryYaw=pair.entryYaw;
-        signedExitYaw=pair.exitYaw;
-        beforePublishReplans=0;
-        railTurnCount=0;
-        futureLateralShift=0f;
-        lastObservedStation=0f;
-        headingStableFrames=0;
-        futureNormalAnchored=false;
-        futureAmplitudeReference=0f;
-        futureEnergyFrozen=false;
-        pendingLaneDeltas.Clear();
-        lastLaneSampleStation=-1f;
-        futureModelSpeed=Mathf.Max(1f,measuredSpeed>1f?measuredSpeed:fallbackSpeed);
-        lastReason="";
-        waveRiseSpeed = riseSpeed;
-        if (inSubject && physicsFrame && visualFrame) {
-            PointOn(pair, .01f, out Vector3 entryTangent);
-            Vector3 entryNormal = Vector3.ProjectOnPlane(Vector3.up, entryTangent).normalized;
-            float vN = Vector3.Dot(ToVisualDirection(inSubject.velocity), entryNormal);
-            if (vN > .1f) waveRiseSpeed = vN;
+    void Finish(string reason, bool markComplete = true) {
+        equalizerGroup = -1;
+        if (markComplete && active != null)
+            lastCompletedGroup = Mathf.Max(lastCompletedGroup, active.group);
+        active = null;
+        pairIndex = stairGroup = -1;
+        state = "IDLE";
+        lastReason = reason;
+        isDownhillStair = hasFlatBefore = hasRightAngleTurn = false;
+        cornerBuilt = exitReached = false;
+        lastObservedStation = 0f;
+        for (int i = 0; i < Count; i++) {
+            paths[i].Clear();
+            WriteSpline(i);
         }
-        multiplier=multiplierOverride>0?multiplierOverride:Mathf.Clamp(pair.partCount,1,8);
-        waveCount=3+2*(multiplier-1);
-        sectionLength=nominalStairLength*multiplier;
-        paths[Observed].Clear();
-        WriteSpline(Observed);
-        Vector3 foot;
-        float lateral;
-        if(pair.flat>=0) {
-            Piece flat=pieces[pair.flat];
-            Vector3 segment=flat.b-flat.a;
-            Vector3 projected=Flat(segment);
-            float t=projected.sqrMagnitude>E
-                ?Mathf.Clamp01(Vector3.Dot(Vector3.ProjectOnPlane(ball-flat.a,Vector3.up),projected)/
-                    Mathf.Max(.01f,Vector3.ProjectOnPlane(segment,Vector3.up).magnitude)) : 0f;
-            foot=Vector3.Lerp(flat.a,flat.b,t);
-            Vector3 flatSide=Side(pair.flatHeading);
-            float yaw=Vector3.SignedAngle(pair.flatHeading,pair.heading,Vector3.up);
-            Vector3 rotatedSide=Quaternion.AngleAxis(yaw,Vector3.up)*flatSide;
-            float sign=Vector3.Dot(rotatedSide,pair.side)>=0f?1f:-1f;
-            float measuredLane=Vector3.Dot(ball-foot,flatSide);
-            // At a 90-degree turn the entry can be close by in 3D while the
-            // display still belongs to a previous arc. Never clamp an invalid
-            // lateral estimate to +/-2.5m and call it a measurement.
-            float horizontalError=Vector3.ProjectOnPlane(ball-foot,Vector3.up).magnitude;
-            bool trusted=horizontalError<=laneHalfWidth+maxEntryCrossTrack &&
-                Mathf.Abs(ball.y-foot.y)<2.5f && Mathf.Abs(measuredLane)<=laneHalfWidth+1.5f;
-            lateral=trusted?measuredLane*sign:0f;
-            entryLaneTrusted=trusted;
-            } else {
-            StationOn(pair,ball,out foot,out _);
-            lateral=Vector3.Dot(ball-foot,pair.side);
-            entryLaneTrusted=false;
-        }
-        lateralOffset=Mathf.Clamp(lateral,-laneHalfWidth,laneHalfWidth);
-        float support=ball.y-foot.y;
-        // Support is estimated only on the preceding FLAT. No platform ->
-        // conservative neutral height, never a feedback loop into the ball.
-        supportHeight=(pair.flat>=0 && entryLaneTrusted && support>-.5f && support<3f) ? support : .75f;
-        // A+B: precompute all 3 independent world-space rails while on the
-        // flat. Do not publish to their SplineContainers until entry crossing.
-        for(int i=Out;i<=Inside;i++) { paths[i].Clear(); WriteSpline(i); }
-        BuildRails(pair);
-        BuildFuture(pair);
-        predictionRevisions++;
-        sonarAnchorCount=sonarNearbyKnots=sonarGroundContacts=0;
-        LifecycleEvent("PREPARED");
-    }
-
-    void Finish(string reason) {
-        if(active!=null) {
-            lastCompletedGroup=Mathf.Max(lastCompletedGroup,active.group);
-        }
-        active=null; pairIndex=-1; stairGroup=-1;
-        state="IDLE";
-        lastReason=reason;
-        isDownhillStair=hasFlatBefore=hasRightAngleTurn=isDetouring=isTurnBusy=laneSynced=false;
-        cornerBuilt=exitReached=entryLaneTrusted=hasEntryCornerPoint=false;
-        hasExitCornerPoint=false;
-        railTurnCount=0;
-        lastObservedStation=0f;
-        headingStableFrames=0;
-        futureLateralShift=0f;
-        futureModelSpeed=0f;
-        futureNormalAnchored=false;
-        futureAmplitudeReference=0f;
-        futureEnergyFrozen=false;
-        pendingLaneDeltas.Clear();
-        lastLaneSampleStation=-1f;
-        for(int i=0;i<Count;i++) { paths[i].Clear(); WriteSpline(i); }
-        sonarAnchorCount=sonarNearbyKnots=sonarGroundContacts=0;
-        sonarGeometryDetected=false;
-        // ExampleBVE wave state outlives the A+b visual splines and ends at
-        // its OWN traveled-distance boundary. Never reset here.
         LifecycleEvent("FINISH_" + reason);
     }
 
-    // A+B: precompute three SHARP world-space rails; this method must never
-    // publish a SplineContainer or re-run once Corner has been latched.
     void BuildRails(Pair pair) {
         for(int i=Out;i<=Inside;i++) paths[i].Clear();
         List<Vector3> center=paths[Center];
@@ -3499,174 +1382,6 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
         railTurnCount=turns;
     }
 
-    // No per-type amplitude table: this is an estimated energy envelope,
-    // used as a forcing magnitude in a future non-inertial ODE only.
-    void ApplySharedFutureAmplitudes() {
-        firstA=secondA=thirdA=Mathf.Max(.001f,futureAmplitudeReference);
-    }
-
-    // Estimate the SAME terrain-intensity model while still on the approach.
-    // The first physically observed intensity supersedes this provisional
-    // estimate ONCE after ACTIVE, never continuously or on every Wave.
-    float PredictEntryTerrainAmplitude(Pair pair, Vector3 normal,Vector3 tangent) {
-        Vector3 visualVelocity=ToVisualDirection(SourcePhysicsVelocity);
-        float speed=Mathf.Max(0f,Vector3.Dot(visualVelocity,tangent));
-        if(speed<.25f) speed=Mathf.Max(0f,futureModelSpeed);
-        float slope=Mathf.Asin(Mathf.Clamp(-tangent.y,0f,1f))*Mathf.Rad2Deg;
-        float frameAlignment=Mathf.Max(0f,Vector3.Dot(normal,Vector3.up));
-        float contactWeight=.55f; // same missing-samples case as real terrain observer
-        if (inSubject && TryTerrainHeight(SourcePhysicsPoint,out float groundY)) {
-            Collider body=terrainBodyCollider;
-            if(!body) body=inSubject.GetComponentInChildren<Collider>();
-            if(body && body.enabled) {
-                float gap=Mathf.Max(0f,body.bounds.min.y-groundY);
-                contactWeight=Mathf.Clamp01(1f-gap/Mathf.Max(1.2f,probeHeight));
-            }
-        }
-        return ComovingTerrainAmplitude(speed,slope,contactWeight,frameAlignment)*
-            expressiveAmplitudeGain;
-    }
-
-    void BuildFuture(Pair pair) {
-        paths[Future].Clear(); futureStations.Clear();
-        if(!pair.downhill || pair.length<E) { WriteSpline(Future); return; }
-        PointOn(pair, .01f, out Vector3 entryTangent);
-        Vector3 entryNormal=Vector3.ProjectOnPlane(Vector3.up,entryTangent).normalized;
-        if(entryNormal.sqrMagnitude<E) entryNormal=Vector3.up;
-        // Spline geometry and wave normals are visual-world vectors.
-        float g=Mathf.Max(.1f,-Vector3.Dot(Physics.gravity, entryNormal));
-        if(!futureEnergyFrozen) {
-            futureAmplitudeReference=PredictEntryTerrainAmplitude(pair,entryNormal,entryTangent);
-            futureEnergyFrozen=true;
-        }
-        ApplySharedFutureAmplitudes(); // diagnostics, not wave-height commands
-        float speed=Mathf.Max(1f,futureModelSpeed);
-        int samples=Mathf.Max(futureMinimumKnots,waveCount*12+1);
-        float predictedMinimum=float.PositiveInfinity, predictedMaximum=float.NegativeInfinity;
-        for(int i=0;i<samples;i++) {
-            float u=i/(float)(samples-1);
-            Vector3 point=PointOn(pair,pair.length*u,out Vector3 tangent);
-            Vector3 normal=Vector3.ProjectOnPlane(Vector3.up,tangent).normalized;
-            if(normal.sqrMagnitude<E) normal=Vector3.up;
-            Vector3 lateralSide=Side(tangent);
-            if(lateralSide.sqrMagnitude<E) lateralSide=pair.side;
-            float predictedWave=WaveAt(u,speed,g);
-            predictedMinimum=Mathf.Min(predictedMinimum,predictedWave);
-            predictedMaximum=Mathf.Max(predictedMaximum,predictedWave);
-            Vector3 position=point+lateralSide*(lateralOffset+futureLateralShift) +
-                normal*(supportHeight+predictedWave);
-            paths[Future].Add(position);
-            futureStations.Add(sectionLength*u);
-        }
-        WriteSpline(Future);
-        if(debugExpressiveWave)
-            Debug.Log($"[IFSW][NI_FUTURE_PREDICT] group={pair.group} " +
-                $"independent=True speed={speed:F2} envelope={futureAmplitudeReference:F3} " +
-                $"waveMin={predictedMinimum:F3} waveMax={predictedMaximum:F3} " +
-                $"peakToTrough={predictedMaximum-predictedMinimum:F3} " +
-                $"samples={samples} noExternalBVE=True",this);
-    }
-
-    // Calibrate Future B ONCE, using a short stable observation window.
-    // A single frame near a 90-degree turn is not a trustworthy lane reading.
-    void GatherLaneCalibration(Vector3 observed,float station,Vector3 heading,float headingDot) {
-        if(active==null || laneSynced || futureStations.Count<2 || state!="ACTIVE") return;
-        float sidewaysStep=Mathf.Abs(Vector3.Dot(moveStep,Side(heading)));
-        if(headingDot < Mathf.Min(.84f,postTurnHeadingDot) || sidewaysStep>.20f ||
-           station<.35f || station>Mathf.Min(active.length*.65f,12f) ||
-           moveStep.magnitude>teleportLogDistance) return;
-        float waveStation=station/Mathf.Max(.01f,active.length)*sectionLength;
-        int k=1;
-        while(k<futureStations.Count-1 && futureStations[k]<waveStation) k++;
-        float t=Mathf.InverseLerp(futureStations[k-1],futureStations[k],waveStation);
-        Vector3 futurePoint=Vector3.Lerp(paths[Future][k-1],paths[Future][k],t);
-        float delta=Vector3.Dot(observed-futurePoint,Side(heading));
-        if(!Finite(delta) || Mathf.Abs(delta)>maxLateralSync) return;
-        if(station-lastLaneSampleStation<.12f) return;
-        lastLaneSampleStation=station;
-        if(pendingLaneDeltas.Count>0 &&
-           Mathf.Abs(delta-pendingLaneDeltas[pendingLaneDeltas.Count-1])>laneStableTolerance) {
-            pendingLaneDeltas.Clear(); // discard a turn/detour transition, never accumulate bad samples
-        }
-        pendingLaneDeltas.Add(delta);
-        if(pendingLaneDeltas.Count>8) pendingLaneDeltas.RemoveAt(0);
-        if(pendingLaneDeltas.Count<laneRequiredSamples) return;
-        List<float> sorted=new List<float>(pendingLaneDeltas);
-        sorted.Sort();
-        float median=sorted[sorted.Count/2];
-        SyncFutureLaterally(median);
-    }
-
-    void SyncFutureLaterally(float correction) {
-        if(active==null || laneSynced) return;
-        futureLateralShift+=correction;
-        laneSynced=true;
-        BuildFuture(active);
-        pendingLaneDeltas.Clear();
-    }
-
-
-    static bool Finite(float x) => !float.IsNaN(x) && !float.IsInfinity(x);
-
-    // Predict with the same SECOND-ORDER physical display oscillator, from
-    // the independently measured entry speed and stage geometry only.
-    // No live Observed samples, displayed-ball poses, BVE, or future knowledge
-    // of actual collision impulses may change this forecast.
-    void ResolveFuturePhase(float progress,out int region,out float u,out float L) {
-        int repeat=Mathf.Max(0,multiplier-1);
-        if(repeat==0 || progress<fBoundary) {
-            float zone=repeat==0?1f:fBoundary;
-            float x=Mathf.Clamp01(progress/zone)*3f;
-            region=Mathf.Clamp(Mathf.FloorToInt(x),0,2);
-            u=region==2 && x>=3f?1f:Mathf.Clamp01(x-region);
-            L=Mathf.Max(.2f,sectionLength*zone/3f);
-        } else {
-            float x=Mathf.Clamp01((progress-fBoundary)/(1f-fBoundary))*repeat;
-            int chunk=Mathf.Clamp(Mathf.CeilToInt(x)-1,0,repeat-1);
-            float local=Mathf.Clamp((x-chunk)*2f,0f,2f);
-            int index=local>=2f?1:Mathf.Clamp(Mathf.FloorToInt(local),0,1);
-            region=3+2*chunk+index;
-            u=index==1 && local>=2f?1f:Mathf.Clamp01(local-index);
-            L=Mathf.Max(.2f,sectionLength*(1f-fBoundary)/(repeat*2f));
-        }
-    }
-
-    float PredictNonInertialOffset(float progress,float speed,float gravity) {
-        float targetDistance=Mathf.Clamp01(progress)*Mathf.Max(.2f,sectionLength);
-        if(targetDistance<=.00001f) return 0f;
-        float vTravel=Mathf.Max(1f,speed);
-        float x=0f;
-        // Entrance vN is a READ-ONLY physical snapshot, never an ExampleBVE kick.
-        float v=Mathf.Clamp(waveRiseSpeed*nonInertialEntryGain,
-            -nonInertialMaxSpeed,nonInertialMaxSpeed);
-        int count=Mathf.Clamp(Mathf.CeilToInt(targetDistance/.15f),1,1500);
-        float ds=targetDistance/count;
-        float dt=ds/vTravel;
-        float amp=futureAmplitudeReference;
-        for(int i=0;i<count;i++) {
-            float fraction=((i+.5f)*ds)/Mathf.Max(.2f,sectionLength);
-            ResolveFuturePhase(fraction,out int region,out float localU,out float L);
-            SpatialFrameDerivatives(localU,L,region,out float d1,out float d2);
-            float coherence=Mathf.Clamp(L/Mathf.Max(.5f,terrainSpatialPitch),.65f,2.5f);
-            float drive=-amp*d2*vTravel*vTravel/(L*L)*coherence*niCorrugationDriveGain;
-            drive=Mathf.Clamp(drive,-niOscillatorAccelerationLimit,niOscillatorAccelerationLimit);
-            float omega=Mathf.Max(2f*Mathf.PI*nonInertialFrequencyHz,
-                2f*Mathf.PI*Mathf.Min(vTravel/L,terrainMaxFrameFrequencyHz));
-            float a= -omega*omega*x-2f*niHighFrequencyDamping*omega*v+drive;
-            v=Mathf.Clamp(v+a*dt,-niOscillatorMaxSpeed,niOscillatorMaxSpeed);
-            x=Mathf.Clamp(x+v*dt,-nonInertialMaxOffset,nonInertialMaxOffset);
-        }
-        return x;
-    }
-
-    // In V26 Future is an independent integration of the SAME non-inertial
-    // oscillator family.  No precomputed Hermite A1/A2/A3 waveform remains.
-    float WaveAt(float progress,float speed,float gravity) {
-        return PredictNonInertialOffset(progress,speed,gravity);
-    }
-
-    // World-space paths are the only source; each independently owned container
-    // holds a local-space Spline. Linear tangents guarantee sharp 90-degree rails.
     void WriteSpline(int index) {
         if(!containers[index]) return;
         Spline spline=containers[index].Spline;
