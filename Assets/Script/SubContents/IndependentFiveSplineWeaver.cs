@@ -59,7 +59,7 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
     [SerializeField, Range(1f, 20f)] float maximumCornerReach = 16f;
     [SerializeField, Range(1f, 20f)] float cornerToleranceDegrees = 8f;
 
-    [Header("Two geometric stair splines (NO motion prediction)")]
+    [Header("Observed ball trail / Future recursive wave spline")]
     [SerializeField, Range(.02f, .5f)] float observedSpacing = .08f;
     [SerializeField, Range(8, 2048)] int maxObservedKnots = 600;
     [SerializeField, Range(0f, .5f)] float geometricLineLift = .08f;
@@ -229,6 +229,7 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
         float alignment = Mathf.Max(0f, Vector3.Dot(n.normalized, w.equalizerNormal));
         if (alignment < .25f) return;
         w.equalizerPhysicalImpact = Mathf.Min(3f, w.equalizerPhysicalImpact + rise * alignment);
+        Debug.Log($"[IFSW][EQ_HIT] collider={collision.collider.name} layer={LayerMask.LayerToName(collision.collider.gameObject.layer)}");
     }
 
     void OnEnable() {
@@ -264,6 +265,8 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
             nextScan = Time.time + rendererScanSeconds;
             ScanStage();
         }
+        // Sample the real rendered Equalizer before recording its observed trail.
+        UpdateEqualizerDisplay();
         // A missing player reference must not prevent container creation.
         // Once it exists, entry is evaluated in THIS frame (no FixedUpdate dependency).
         if (pairs.Count > 0 && TryGetTrackingPoint(out Vector3 point)) {
@@ -277,7 +280,6 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
                 "; input=" + trackingSource, this);
         }
         FlushOwnedSplineMeshes();
-        UpdateEqualizerDisplay();
     }
 
     // The five splines are updated in LateUpdate. InSubject is observed in
@@ -362,6 +364,46 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
     static float RecursiveTerm(int n, float a, float r) =>
         n <= 0 ? a : r * RecursiveTerm(n - 1, a, r);
 
+    // One waveform authority for the display and each future Spline knot.
+    float SampleRecursiveWave(Pair p, float progress, float speedAlong, float gN,
+        out int region, out float u, out int depth, out float amp) {
+        int repeat = Mathf.Max(0, p.partCount - 1);
+        float boundary = repeat == 0 ? 1f : 3f / 7f;
+        bool prefix = progress < boundary || repeat == 0;
+        depth = 0;
+        if (prefix) {
+            float x = Mathf.Clamp01(progress / boundary) * 3f;
+            region = Mathf.Min(2, Mathf.FloorToInt(x));
+            u = x >= 3f ? 1f : x - region;
+        } else Resolve23Recursive(Mathf.Clamp01((progress - boundary) / (1f - boundary)),
+            repeat, 0, out region, out u, out depth);
+        int type = region < 3 ? region : 1 + (region - 3) % 2;
+        int prior = region == 0 ? 0 : region < 3 ? region - 1 : type == 1 ? 2 : 1;
+        float L = p.length * (prefix ? boundary / 3f : (1f - boundary) / (2f * repeat));
+        float retain = Mathf.Min(.96f, .86f * .86f * Mathf.Exp(-.02f *
+            (p.length / Mathf.Max(1, p.partCount)) / 3f));
+        float A1 = equalizerGroup == p.group ? equalizerReferenceHeight : .45f;
+        float A2 = A1 * retain, A3 = A2 * retain;
+        float r = Mathf.Exp(-.02f * p.length * (1f - boundary) / Mathf.Max(1, repeat));
+        amp = (type == 0 ? A1 : type == 1 ? A2 : A3) *
+            (region < 3 ? 1f : RecursiveTerm(depth, 1f, r));
+        float prev = (prior == 0 ? A1 : prior == 1 ? A2 : A3) *
+            (region < 3 ? 1f : RecursiveTerm(type == 1 ? Mathf.Max(0, depth - 1) : depth, 1f, r));
+        float fade = repeat == 0 ? Mathf.Exp(-.02f * p.length * progress) : 1f;
+        amp *= fade; prev *= fade;
+        float apex = type == 0 ? .82f : .50f;
+        float rise = region == 0 ? equalizerEntrySpeed : .86f * Mathf.Sqrt(2f * gN * prev * 1.75f);
+        float wave = EqualizerWave(u, region == 0 ? 0f : -.75f * prev,
+            amp, -.75f * amp, apex, rise,
+            Mathf.Sqrt(2f * gN * amp * 1.75f), L / Mathf.Max(.1f, speedAlong));
+        float window = Mathf.Sin(Mathf.PI * u) * Mathf.Sin(Mathf.PI * (u - apex));
+        wave += amp * (type == 0 ? .08f : type == 1 ? .22f : .12f) *
+            window * window * Mathf.Sin(2f * Mathf.PI * u);
+        if (region == 2 * p.partCount)
+            wave *= 1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - .8f) * 5f));
+        return wave;
+    }
+
     void UpdateMeasuredEqualizer(float dt) {
         Pair p = active;
         Vector3 physicalPosition = inSubject.position;
@@ -423,6 +465,7 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
             Debug.Log($"[IFSW][EQ_BEGIN] group={p.group} pitch={equalizerPitch:F3} " +
                 $"referenceEnergyHeight={equalizerReferenceHeight:F4} " +
                 $"normal={normal} source=INSUBJECT_PHYSICS_ONLY", this);
+            RebuildGeometricGuide(p); // one measured-energy forecast at stair entry
         }
 
         Vector3 originSpeed = (origin - equalizerLastOrigin) / dt;
@@ -447,43 +490,13 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
         int repeat = Mathf.Max(0, p.partCount - 1);
         float boundary = repeat == 0 ? 1f : 3f / 7f;
         float progress = Mathf.Clamp01(equalizerBase / Mathf.Max(.1f, p.length));
-        bool prefix = progress < boundary || repeat == 0;
-        int region, depth = 0;
-        float u;
-        if (prefix) {
-            float x = Mathf.Clamp01(progress / boundary) * 3f;
-            region = Mathf.Min(2, Mathf.FloorToInt(x));
-            u = x >= 3f ? 1f : x - region;
-        } else Resolve23Recursive(Mathf.Clamp01((progress - boundary) / (1f - boundary)),
-            repeat, 0, out region, out u, out depth);
+        equalizerWave = SampleRecursiveWave(p, progress, speedAlong,
+            Mathf.Max(.1f, -Vector3.Dot(Physics.gravity, normal)),
+            out int region, out float u, out int depth, out float amp);
         int type = region < 3 ? region : 1 + (region - 3) % 2;
-        int prior = region == 0 ? 0 : region < 3 ? region - 1 : type == 1 ? 2 : 1;
-        float L = p.length * (prefix ? boundary / 3f : (1f - boundary) / (2f * repeat));
-        float retain = Mathf.Min(.96f, .86f * .86f * Mathf.Exp(-.02f *
-            (p.length / Mathf.Max(1, p.partCount)) / 3f));
-        float A1 = equalizerReferenceHeight;
-        float A2 = A1 * retain, A3 = A2 * retain;
-        // Prefix reproduces A1/A2/A3; suffix repeats 23 at recursion depth n.
-        // Reusing .86^2 at EVERY depth would extinguish the repeated waves.
-        float r = Mathf.Exp(-.02f * p.length * (1f - boundary) / Mathf.Max(1, repeat));
-        float amp = (type == 0 ? A1 : type == 1 ? A2 : A3) *
-            (region < 3 ? 1f : RecursiveTerm(depth, 1f, r));
-        // A new 2-wave begins where the PREVIOUS pair's 3-wave ended.
-        float prev = (prior == 0 ? A1 : prior == 1 ? A2 : A3) *
-            (region < 3 ? 1f : RecursiveTerm(type == 1 ? Mathf.Max(0, depth - 1) : depth, 1f, r));
-        float fade = repeat == 0 ? Mathf.Exp(-.02f * equalizerBase) : 1f;
-        amp *= fade; prev *= fade;
-        float gN = Mathf.Max(.1f, -Vector3.Dot(Physics.gravity, normal));
+        float L = p.length * (progress < boundary || repeat == 0 ? boundary / 3f :
+            (1f - boundary) / (2f * repeat));
         float apex = type == 0 ? .82f : .50f;
-        float rise = region == 0 ? equalizerEntrySpeed : .86f * Mathf.Sqrt(2f * gN * prev * 1.75f);
-        equalizerWave = EqualizerWave(u, region == 0 ? 0f : -.75f * prev,
-            amp, -.75f * amp, apex, rise,
-            Mathf.Sqrt(2f * gN * amp * 1.75f), L / Mathf.Max(.1f, speedAlong));
-        float window = Mathf.Sin(Mathf.PI * u) * Mathf.Sin(Mathf.PI * (u - apex));
-        equalizerWave += amp * (type == 0 ? .08f : type == 1 ? .22f : .12f) *
-            window * window * Mathf.Sin(2f * Mathf.PI * u);
-        if (region == 2 * p.partCount)
-            equalizerWave *= 1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - .8f) * 5f));
 
         // Residual ONLY: avoid spring-following the Hermite wave a second time.
         float alpha = 1f - Mathf.Exp(-2f * Mathf.PI * 1.4f * dt);
@@ -1139,7 +1152,7 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
                 ProcessPair(point);
                 return;
             }
-            if (inside) AppendObservedPoint(point, station);
+            if (inside) AppendObservedPoint(equalizerDisplay ? equalizerDisplay.position : point, station);
             lastObservedStation = Mathf.Max(lastObservedStation, station);
             bool pastExit = Vector3.Dot(point - p.exit,
                 Flat(p.exit - p.axis[p.axis.Count-2])) >= exitConfirmDistance;
@@ -1199,29 +1212,40 @@ public sealed class IndependentFiveSplineWeaver : MonoBehaviour
         // Recheck plan using latest renderer geometry (including 90-degree turns).
         BuildRails(p);
         RebuildGeometricGuide(p);
-        // Initial Observed curve is a two-knot segment so it exists immediately.
-        // Both knots lie along the same stair corridor, independently of the ball.
+        // Two coincident-in-time seed knots on the actual rendered ball path.
         paths[Observed].Clear();
-        Vector3 start = p.entry + Vector3.up * geometricLineLift;
-        paths[Observed].Add(start);
-        paths[Observed].Add(PointOn(p, Mathf.Min(.3f, p.length), out _) +
+        Vector3 start = equalizerDisplay ? equalizerDisplay.position : observedPoint;
+        paths[Observed].Add(start + Vector3.up * geometricLineLift);
+        paths[Observed].Add(start + (p.axis[1] - p.axis[0]).normalized * .02f +
             Vector3.up * geometricLineLift);
-        previousObserved = paths[Observed][paths[Observed].Count - 1];
+        previousObserved = start;
         for (int i = 0; i < Count; i++) WriteSpline(i);
         cornerBuilt = true;
         state = "ACTIVE";
         LifecycleEvent("PUBLISHED_ALL_FIVE_AT_ENTRY");
         // From this point the read-only observed path can replace its seed.
         float station = StationOn(p, observedPoint, out _, out _);
-        if (station > .3f) AppendObservedPoint(observedPoint, station);
+        if (station > .3f) AppendObservedPoint(equalizerDisplay ? equalizerDisplay.position : observedPoint, station);
     }
 
-    // Pure geometry: no Hermite, damping, energy, impact or future-ball model.
-    // This fifth curve intentionally represents ONLY the stair guide axis.
+    // Forecast only: same recursive Hermite baseline, never predicts actual impacts.
+    // Sample the whole stair at constant arc-length intervals, not only its corners.
     void RebuildGeometricGuide(Pair p) {
         paths[Future].Clear();
-        for (int i = 0; i < p.axis.Count; i++)
-            paths[Future].Add(p.axis[i] + Vector3.up * (geometricLineLift * 2f));
+        int count = Mathf.Clamp(Mathf.CeilToInt(p.length / .20f), 24, 256);
+        Vector3 velocity = inSubject ? EqualizerMappedDirection(inSubject.velocity) : Vector3.zero;
+        float baseHeight = equalizerGroup == p.group ? equalizerSlow : equalizerVisualRadius;
+        for (int i = 0; i <= count; ++i) {
+            float s = p.length * i / count;
+            Vector3 axis = PointOn(p, s, out Vector3 tangent);
+            Vector3 normal = Vector3.ProjectOnPlane(Vector3.up, tangent).normalized;
+            if (normal.sqrMagnitude < E) normal = Vector3.up;
+            float speed = Mathf.Max(.1f, Vector3.Dot(velocity, tangent));
+            float gravity = Mathf.Max(.1f, -Vector3.Dot(Physics.gravity, normal));
+            float wave = SampleRecursiveWave(p, s / Mathf.Max(.1f, p.length), speed,
+                gravity, out _, out _, out _, out _);
+            paths[Future].Add(axis + normal * (baseHeight + wave + geometricLineLift));
+        }
         if (state == "ACTIVE") WriteSpline(Future);
     }
 
