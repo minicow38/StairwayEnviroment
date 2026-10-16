@@ -10,5 +10,6 @@
 .DS_Store
 *.sln.DotSettings.user
 *.apk
+*.aab
 *_BurstDebugInformation_DoNotShip/
 mono_crash.mem*

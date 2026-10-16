@@ -312,7 +312,7 @@ GameObject:
   - component: {fileID: 64372320}
   - component: {fileID: 64372324}
   - component: {fileID: 64372323}
-  - component: {fileID: 64372327}
+  - component: {fileID: 64372325}
   m_Layer: 0
   m_Name: BallVisualEqualizer
   m_TagString: Untagged
@@ -571,7 +571,7 @@ TrailRenderer:
   m_Autodestruct: 0
   m_Emitting: 1
   m_ApplyActiveColorSpace: 1
---- !u!114 &64372327
+--- !u!114 &64372325
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -580,79 +580,148 @@ MonoBehaviour:
   m_GameObject: {fileID: 64372314}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5bad39c372c5a7540bec13c21ba05b15, type: 3}
+  m_Script: {fileID: 11500000, guid: cf06f638ced3fa648bee0ad72f677983, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  generatedVisualRoot: {fileID: 1492337658}
-  rendererScanSeconds: 0.25
-  fallbackPieceLength: 9.9
-  renderLocalHeight: 0
-  visualMotionSource: {fileID: 572935009}
-  displayedBall: {fileID: 0}
   inSubject: {fileID: 1083418863}
-  subjectFallback: {fileID: 572935009}
-  physicsFrame: {fileID: 350604442}
-  visualFrame: {fileID: 1492337658}
-  allowUnmappedPhysicsFallback: 1
-  lookAheadDistance: 8
-  minimumDownhillDegrees: 10
-  trustStairWayRendererNames: 1
-  maxEntryCrossTrack: 5
-  exitConfirmDistance: 0.65
-  cornerEntryLeadMeters: 0.35
-  nextFlatArrivalTolerance: 1.6
-  verticalDetectionTolerance: 7
-  laneHalfWidth: 2.5
-  turnToPositiveZ: 1
-  miterLimit: 4
-  maximumCornerReach: 16
-  cornerToleranceDegrees: 8
-  observedSpacing: 0.03
-  maxObservedKnots: 900
-  geometricLineLift: 0.08
-  equalizerDisplay: {fileID: 64372315}
-  equalizerGroundMask:
+  visualTarget: {fileID: 0}
+  autoCreateDisplayForRigidbody: 1
+  hideOriginalRendererWhileTesting: 1
+  actualDisplayTarget: {fileID: 64372315}
+  enableDisplaySpikes: 0
+  displaySpikeCount: 60
+  displaySpikeLength: 0.25
+  displaySpikeWidth: 0.06
+  displaySpikeSides: 6
+  displaySpikeMaterial: {fileID: 0}
+  coordinateSource: {fileID: 572935013}
+  physicsFrame: {fileID: 0}
+  visualFrame: {fileID: 0}
+  subjectRotation: {fileID: 0}
+  followSubjectRotation: 1
+  addVisualRoll: 0
+  visualRadius: 0.5
+  rotationFollowHz: 8
+  surfaceLayers:
     serializedVersion: 2
-    m_Bits: 2240
-  equalizerProbeSpacing: 0.45
-  equalizerVisualRadius: 0.5
-  equalizerDamping: 0.65
-  equalizerObservationGain: 1
-  equalizerImpactGain: 0.65
-  equalizerTerrainGain: 0.45
-  equalizerAccelerationGain: 0.09
-  equalizerFrameGain: 0.06
-  equalizerMaximumOffset: 3
-  equalizerDebug: 1
-  tubeRadius: 0.035
-  tubeSides: 6
-  meshRefreshSeconds: 0.09
-  optionalTubeMaterial: {fileID: 0}
-  showFiveInGame: 1
-  debugSplineLifecycle: 0
-  detectedPieces: 0
-  detectedPairs: 0
-  pairIndex: -1
-  stairGroup: -1
-  state: IDLE
-  lastReason: 
-  knotCounts: 0000000000000000000000000000000000000000
-  isDownhillStair: 0
-  hasFlatBefore: 0
-  hasRightAngleTurn: 0
-  cornerBuilt: 0
-  exitReached: 0
-  entryDistance: 0
-  stairStation: 0
-  railTurnCount: 0
-  beforePublishReplans: 0
-  entryCornerPoint: {x: 0, y: 0, z: 0}
-  exitCornerPoint: {x: 0, y: 0, z: 0}
-  hasEntryCornerPoint: 0
-  hasExitCornerPoint: 0
-  signedEntryYaw: 0
-  signedExitYaw: 0
-  trackingSource: UNRESOLVED
+    m_Bits: 16383
+  probeSpacing: 0.45
+  probeHeight: 2
+  probeDepth: 8
+  frameFollowHz: 10
+  roughFollowHz: 12
+  roughnessReference: 0.4
+  autoBeginOnDownhill: 1
+  autoEndAtSection: 1
+  sectionLength: 9.9
+  entrySlopeDegrees: 12
+  minimumEntryPlanarSpeed: 2
+  teleportThreshold: 2.5
+  initialStartPatternMultiplier: 1
+  targetSlopeProgressPerecent: 0.42857143
+  initialCY: 0
+  initialHeight: 0.45
+  fallbackInitialNormalSpeed: 3.1367
+  energyBlend: 0.35
+  restitution: 0.86
+  lowerRatio: 0.75
+  firstApexFraction: 0.82
+  laterApexFraction: 0.5
+  dampingPerMeter: 0.02
+  exitDamping: 9
+  referencePlanarSpeed: 18
+  motionHeightInfluence: 0.06
+  patternVariation: 0.08
+  terminalBounceRatio: 0.22
+  terminalBounceDuration: 0.32
+  firstRoughness: 0.08
+  secondRoughness: 0.22
+  thirdRoughness: 0.12
+  measuredRoughnessGain: 0.1
+  signedRoughAccelerationGain: 90
+  accelerationResidualGain: 0.18
+  residualLowPassHz: 2
+  springK: 420
+  damperC: 18
+  maximumResidual: 0.2
+  maximumAcceleration: 450
+  maximumJerk: 2500
+  entryBlendSeconds: 0.1
+  softenVisualWave: 1
+  impactSmoothSeconds: 0.015
+  flightSmoothSeconds: 0.035
+  contactBlendFraction: 0.16
+  adaptiveVisualFilter: 1
+  adaptiveSpeedGain: 1.4
+  adaptiveDerivativeHz: 8
+  adaptiveMinimumSmoothSeconds: 0.008
+  resetFilterOnSharpNormalChange: 1
+  filterNormalResetDegrees: 65
+  enableDebugLog: 1
+  debugPeriodicState: 1
+  debugWaveTransitions: 1
+  debugProbeTransitions: 1
+  debugLogInterval: 0.25
+  active: 0
+  exiting: 0
+  probeValid: 0
+  firstWavePeakReady: 0
+  waveIndex: -1
+  waveType: -1
+  activeWaveCount: 3
+  repeat23ChunkCount: 0
+  recursiveChunkIndex: -1
+  firstWavePeakRevision: 0
+  traveled: 0
+  progress01: 0
+  currentAmplitude: 0
+  efLocal01: 0
+  fgLocal01: 0
+  signedFLimit: 0
+  fSide: 0
+  fDistance01: 0
+  slope0: 0
+  slope1: 0
+  slope2: 0
+  signedCurvature: 0
+  roughness: 0
+  filteredRoughness: 0
+  baseOffset: 0
+  residualOffset: 0
+  residualSpeed: 0
+  residualAcceleration: 0
+  visualOffset: 0
+  presentedOffset: 0
+  presentedSpeed: 0
+  presentationSmoothSeconds: 0
+  adaptiveVisualSpeed: 0
+  adaptiveCutoffHz: 0
+  currentWaveLocal01: 0
+  visualFilterResetCount: 0
+  upperNormal: 0
+  lowerNormal: 0
+  firstWavePeakCY: 0
+  firstWavePeakProgress01: 0
+  tangent: {x: 0, y: 0, z: 1}
+  normal: {x: 0, y: 1, z: 0}
+  binormal: {x: 1, y: 0, z: 0}
+  outputWritable: 0
+  sampledHeights:
+  - 0
+  - 0
+  - 0
+  - 0
+  effectiveSectionLength: 0
+  effectiveFBoundary: 0
+  recursiveA1: 0
+  recursiveA2: 0
+  recursiveA3: 0
+  motionPattern: 0
+  motionCharacter01: 0
+  entryPlanarSpeed: 0
+  entryAlignment01: 0
+  terminalAmplitude: 0
+  terminalOffset: 0
 --- !u!1 &122906458
 GameObject:
   m_ObjectHideFlags: 0
@@ -4407,7 +4476,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 264172cbfccfe4aad9703e8ceefb4592, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
-  maxGroundSpeed: 16
+  maxGroundSpeed: 24
   GroundAcceleration: 35
   TargetAccelerationLimit: 120
   knotDetector: {fileID: 156220176}
@@ -4415,7 +4484,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 1023
   travelDirection: {x: 0, y: 0, z: 1}
-  targetSlopeProgressPercent: 30
+  targetSlopeProgressPercent: 60
   correspondSubject: {fileID: 572935013}
   ballVisualSlopeDrive: {fileID: 423131475}
   physicsRoot: {fileID: 350604442}

@@ -126,6 +126,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
     Matrix4x4 stableSplineToWorld;
     bool stableSplineFrameCaptured;
 
+
     void Start() => RebuildCache();
 
     // RuntimeでSplineを書き換えた場合は、生成完了後に一度呼ぶ。
@@ -152,11 +153,6 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
             stableSplineFrameCaptured = true;
 
-            Debug.Log(
-                $"[KNOT STABLE FRAME CAPTURED] " +
-                $"position={splineContainer.transform.position:F4} " +
-                $"rotation={splineContainer.transform.eulerAngles:F2}",
-                this);
         }
 
         // ============================================================
@@ -272,6 +268,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
                 segments.Count - used
             );
         }
+
     }
 
     // Physics側のFixedUpdateから1回だけ呼ぶ。
@@ -302,7 +299,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
         ReadNextSlope(index, t, out bool nextSlope, out float nextDistance,
             out Vector3 nextTangent, out Vector3 nextNormal, out float nextAngle, out float nextCurvature);
 
-        return CurrentGuide = new GuideFrame
+        CurrentGuide = new GuideFrame
         {
             valid = true, splineIndex = seg.splineIndex, segmentIndex = seg.segmentIndex,
             sectionIndex = seg.sectionIndex,
@@ -314,6 +311,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
             nextIsSlope = nextSlope, distanceToNextSlope = nextDistance, nextTangent = nextTangent,
             nextNormal = nextNormal, nextSlopeAngle = nextAngle, nextCurvature = nextCurvature
         };
+        return CurrentGuide;
     }
 
     // The anchor identifies the logical slope section. This method never
@@ -707,6 +705,7 @@ public sealed class NearestKnotDetector : MonoBehaviour
             d += s.length;
         }
     }
+
 
     void UpdateNearestKnot(SegmentInfo s, float t, Vector3 p)
     {

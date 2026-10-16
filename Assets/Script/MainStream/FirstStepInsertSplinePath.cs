@@ -7,11 +7,27 @@ using UnityEngine.Splines;
 using System.Collections;
 using Object = UnityEngine.Object;
 
+using Unity.Profiling;
+
 //using System;
 
 [DisallowMultipleComponent]
 public class CoreStepInsertSplinePathNatural : MonoBehaviour
 {
+    static readonly ProfilerMarker BatchAddMarker =
+        new ProfilerMarker("CoreStep.BatchAddRange");
+
+    static readonly ProfilerMarker DistributedCommitMarker =
+        new ProfilerMarker("CoreStep.KnotCommitFrame");
+    
+    static readonly ProfilerMarker InstantiateMarker =
+        new ProfilerMarker("CoreStep.BoardInstantiate");
+
+    static readonly ProfilerMarker PhysicsConfigMarker =
+        new ProfilerMarker("CoreStep.PhysicsConfig");
+
+    static readonly ProfilerMarker VisualConfigMarker =
+        new ProfilerMarker("CoreStep.VisualConfig");
     // Board生成中だけ使う一時ペア。
     // classではなくstructにして、各BoardごとのManaged Object生成を避ける。
     struct BoardPair
@@ -139,8 +155,58 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     const int Center = 1;
     const int Max = 6;
     const float E = 0.00001f;
+    
+    static readonly ProfilerMarker BuildMarker =
+        new ProfilerMarker("CoreStep.Build");
+
+    static readonly ProfilerMarker EmitMarker =
+        new ProfilerMarker("CoreStep.Emit");
+    
+    static readonly ProfilerMarker KnotMarker =
+        new ProfilerMarker("CoreStep.Knot");
+
+    static readonly ProfilerMarker BoardMarker =
+        new ProfilerMarker("CoreStep.Board");
+
+    static readonly ProfilerMarker CornersMarker =
+        new ProfilerMarker("CoreStep.CacheCorners");
 
     readonly Spline[] lanes = new Spline[Lanes];
+
+    // Reuse the same lists across initial generation and all future chunks.
+    // Knot positions and duplicate-removal rules are unchanged.
+    readonly List<float3>[] pendingKnots =
+    {
+        new List<float3>(256),
+        new List<float3>(256),
+        new List<float3>(256)
+    };
+    // Per-lane scratch lists are reused; Spline instances are never replaced.
+    readonly List<float3>[] knotCommitScratch =
+    {
+        new List<float3>(32),
+        new List<float3>(32),
+        new List<float3>(32)
+    };
+
+    readonly int[] knotCommitOffsets = new int[Lanes];
+
+    // Chunk generation policy. Only ordinary added chunks are distributed.
+    // Change these constants after profiling on the target Android device.
+    const int InitialKnotsPerLanePerFrame = 8;
+    const int MaximumKnotsPerLanePerFrame = 24;
+    const float KnotCommitBudgetMs = 1.5f;
+    const float InitialFramesPerStep = 18f;
+    const int FinishBeforeNextTriggerSteps = 2;
+
+    Coroutine knotCommitRoutine;
+    int knotCommitTotal;
+    int knotCommitCompleted;
+    int knotCommitTriggerTouch;
+
+    public float KnotCommitProgress01 =>
+        knotCommitTotal > 0 ? (float)knotCommitCompleted / knotCommitTotal : 1f;
+
     readonly Vector3[] left = new Vector3[Max];
     readonly Vector3[] prev = new Vector3[Max];
     readonly Vector3[] next = new Vector3[Max];
@@ -241,7 +307,20 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     {
 
         if (rebuilding)
-            return;
+        {
+            // UI must continue updating while the knot coroutine is running.
+            UpdateUiIfChanged();
+
+            // Death may interrupt a distributed append. The subsequent death
+            // rebuild clears all splines and recreates the original initial stage.
+            if (!MainGameManager.OnDead || knotCommitRoutine == null || deathRestartRoutine != null)
+                return;
+
+            StopCoroutine(knotCommitRoutine);
+            knotCommitRoutine = null;
+            ResetKnotCommitState();
+            rebuilding = false;
+        }
 
         // MainGameManager.Start() の実行順に左右されないよう、
         // 通常プレイ時の最初の先行生成ラインを最低8に保つ。
@@ -275,7 +354,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
             Start();
 
-            rebuilding = false;
+            // Start() is synchronous for initial/death builds; an added chunk
+            // stays locked until its coroutine has finished the last append.
+            rebuilding = knotCommitRoutine != null;
         }
 
         if (MainGameManager.OnDead && deathRestartRoutine == null)
@@ -369,6 +450,18 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         bool restartingFromDeath =
             MainGameManager.OnDead;
 
+        // Context-menu/direct Start() calls must not reuse a staging buffer
+        // while the previous chunk is still being committed.
+        if (knotCommitRoutine != null)
+        {
+            if (!restartingFromDeath)
+                return;
+
+            StopCoroutine(knotCommitRoutine);
+            knotCommitRoutine = null;
+            ResetKnotCommitState();
+        }
+
         // ============================================================
         // 死亡再生成時は、旧ステージを参照する遅延処理を先に停止する。
         // ============================================================
@@ -459,12 +552,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (resumeOnly)
             {
                 resumeOnly.PrepareForStageRebuild();
-            }
-            else
-            {
-                Debug.LogError(
-                    "[STAGE REBUILD] InSubjectのSlopeStickCoreを取得できないため、Visual座標系を復元できません。",
-                    this);
             }
         }
 
@@ -593,13 +680,39 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             }
         }
 
-        Build(0, 0, RootStartpoint);
-
-        for (int i = ContinuousPattern;
-             i < startPattern.Count;
-             i++)
+        using (BuildMarker.Auto())
         {
-            Emit(i, i > 0);
+            Build(0, 0, RootStartpoint);
+        }
+
+        for (int laneIndex = 0; laneIndex < Lanes; laneIndex++)
+            pendingKnots[laneIndex].Clear();
+
+        using (EmitMarker.Auto())
+        {
+            for (int i = ContinuousPattern;
+                 i < startPattern.Count;
+                 i++)
+            {
+                Emit(i, i > 0);
+            }
+
+            // New chunks are committed by a coroutine *after* Emit().
+            // Initial/death builds retain the original single-frame behavior.
+            if (!addingChunk)
+            {
+                for (int laneIndex = 0; laneIndex < Lanes; laneIndex++)
+                {
+                    List<float3> positions = pendingKnots[laneIndex];
+                    if (positions.Count == 0)
+                        continue;
+
+                    using (BatchAddMarker.Auto())
+                    {
+                        lanes[laneIndex].AddRange(positions, TangentMode.Linear);
+                    }
+                }
+            }
         }
 
         int finalOffset =
@@ -621,9 +734,18 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         accumulatedSpline = lanes[Center];
 
-        // 新しいSplineをNearestKnotDetectorへ確定する。
-        if (knotDetector)
+        // The original detector cache remains in use until this chunk's
+        // three lane additions finish. Initial/death builds finish now.
+        if (addingChunk)
+        {
+            PrepareKnotCommitState();
+            knotCommitRoutine = StartCoroutine(CommitKnotsOverFrames());
+            rebuilding = true;
+        }
+        else if (knotDetector)
+        {
             knotDetector.RebuildCache();
+        }
 
         // ============================================================
         // 死亡後：新しく生成済みのArcSlab2_0_PhysicsへInSubjectを戻す。
@@ -712,6 +834,133 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         }
     }
 
+    void ResetKnotCommitState()
+    {
+        knotCommitTotal = 0;
+        knotCommitCompleted = 0;
+
+        for (int laneIndex = 0; laneIndex < Lanes; laneIndex++)
+        {
+            knotCommitOffsets[laneIndex] = 0;
+            knotCommitScratch[laneIndex].Clear();
+            pendingKnots[laneIndex].Clear();
+        }
+    }
+
+    void PrepareKnotCommitState()
+    {
+        knotCommitTotal = 0;
+        knotCommitCompleted = 0;
+        knotCommitTriggerTouch = MainGameManager.LimitTouchingphase - ChunkTriggerStep;
+
+        for (int laneIndex = 0; laneIndex < Lanes; laneIndex++)
+        {
+            knotCommitOffsets[laneIndex] = 0;
+            knotCommitScratch[laneIndex].Clear();
+            knotCommitTotal += pendingKnots[laneIndex].Count;
+        }
+
+    }
+
+    IEnumerator CommitKnotsOverFrames()
+    {
+        // Never spend the initial generation frame committing the first batch.
+        yield return null;
+
+        int lastObservedStep = MainGameManager.lastTouch;
+        int lastObservedFrame = Time.frameCount;
+        float framesPerStep = InitialFramesPerStep;
+        int adaptiveBatch = InitialKnotsPerLanePerFrame;
+
+        while (knotCommitCompleted < knotCommitTotal)
+        {
+            // FixedUpdate cancels this coroutine before a death rebuild.
+            if (MainGameManager.OnDead)
+                yield return null;
+            else
+            {
+                int touch = MainGameManager.lastTouch;
+                if (touch > lastObservedStep)
+                {
+                    int changedSteps = touch - lastObservedStep;
+                    int frameDelta = Mathf.Max(1, Time.frameCount - lastObservedFrame);
+                    float observed = Mathf.Clamp((float)frameDelta / changedSteps, 1f, 180f);
+                    framesPerStep = Mathf.Lerp(framesPerStep, observed, 0.4f);
+                    lastObservedStep = touch;
+                    lastObservedFrame = Time.frameCount;
+                }
+
+                // The denominator is the actual number of Knot positions
+                // calculated for this chunk, not the fixed 9 patterns.
+                float playerProgress = Mathf.Clamp01(
+                    (touch - knotCommitTriggerTouch) / (float)ChunkTriggerStep);
+                float completedProgress = KnotCommitProgress01;
+
+                int desiredFinishAt = knotCommitTriggerTouch +
+                    ChunkTriggerStep - FinishBeforeNextTriggerSteps;
+                int stepsRemaining = Mathf.Max(1, desiredFinishAt - touch);
+                float framesRemaining = Mathf.Max(1f, stepsRemaining * framesPerStep);
+                int remaining = knotCommitTotal - knotCommitCompleted;
+
+                // Match throughput to how close the player is to the next
+                // generation boundary. A minimum batch still runs if stopped.
+                int scheduledPerLane = Mathf.CeilToInt(remaining / (Lanes * framesRemaining));
+                if (completedProgress < playerProgress + 0.20f)
+                    scheduledPerLane = Mathf.Max(scheduledPerLane, 2);
+
+                int perLane = Mathf.Clamp(
+                    Mathf.Min(scheduledPerLane, adaptiveBatch),
+                    1, MaximumKnotsPerLanePerFrame);
+
+                double start = Time.realtimeSinceStartupAsDouble;
+                using (DistributedCommitMarker.Auto())
+                {
+                    for (int laneIndex = 0; laneIndex < Lanes; laneIndex++)
+                    {
+                        List<float3> source = pendingKnots[laneIndex];
+                        int cursor = knotCommitOffsets[laneIndex];
+                        int count = Mathf.Min(perLane, source.Count - cursor);
+                        if (count <= 0)
+                            continue;
+
+                        List<float3> slice = knotCommitScratch[laneIndex];
+                        slice.Clear();
+                        for (int i = 0; i < count; i++)
+                            slice.Add(source[cursor + i]);
+
+                        using (BatchAddMarker.Auto())
+                        {
+                            lanes[laneIndex].AddRange(slice, TangentMode.Linear);
+                        }
+
+                        knotCommitOffsets[laneIndex] += count;
+                        knotCommitCompleted += count;
+                    }
+                }
+
+                double elapsedMs = (Time.realtimeSinceStartupAsDouble - start) * 1000.0;
+
+                // The current AddRange call cannot be interrupted mid-call.
+                // These adjustments control only the size of the *next* batch.
+                if (elapsedMs > KnotCommitBudgetMs)
+                    adaptiveBatch = Mathf.Max(1, adaptiveBatch / 2);
+                else if (elapsedMs < KnotCommitBudgetMs * 0.65f)
+                    adaptiveBatch = Mathf.Min(MaximumKnotsPerLanePerFrame, adaptiveBatch + 1);
+
+                if (knotCommitCompleted < knotCommitTotal)
+                    yield return null;
+            }
+        }
+
+        // Only publish the new detector snapshot after all three live Splines
+        // have received every Knot from this chunk.
+        if (knotDetector)
+            knotDetector.RebuildCache();
+
+        knotCommitRoutine = null;
+        rebuilding = false;
+    }
+
     IEnumerator FinishDeathRestart()
     {
         // この時点では新しい __GeneratedPhysics / ArcSlab2_0_Physics が
@@ -729,9 +978,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         MainGameManager.OnDead = false;
         deathRestartRoutine = null;
 
-        Debug.Log(
-            "[STAGE REBUILD COMPLETE] 死亡後のステージ再生成が完了しました。",
-            this);
     }
 
     void EnsureWorkingBuffers()
@@ -827,10 +1073,17 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
     {
         int offset = plan * Max;
         int pointCount = counts[plan];
-        CacheCorners(offset, pointCount);
+
+        using (CornersMarker.Auto())
+        {
+            CacheCorners(offset, pointCount);
+        }
 
         stepHandlePoint = points[offset + 1];
-        playBackDownWard = (points[offset + pointCount - 2], points[offset + pointCount - 1]);
+        playBackDownWard = (
+            points[offset + pointCount - 2],
+            points[offset + pointCount - 1]
+        );
 
         for (int i = 0; i < pointCount - 1; i++)
         {
@@ -844,16 +1097,32 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             float length = Mathf.Sqrt(sqr);
 
             if (i == 0 && !skipFirstKnot)
-                Knot(offset, i, -1f);
+            {
+                using (KnotMarker.Auto())
+                {
+                    Knot(offset, i, -1f);
+                }
+            }
 
             int inside = Mathf.CeilToInt(length / knot) - 1;
 
             for (int k = 1; k <= inside; k++)
-                Knot(offset, i, k / (float)(inside + 1));
+            {
+                using (KnotMarker.Auto())
+                {
+                    Knot(offset, i, k / (float)(inside + 1));
+                }
+            }
 
-            Knot(offset, i + 1, -1f);
+            using (KnotMarker.Auto())
+            {
+                Knot(offset, i + 1, -1f);
+            }
 
-            float horizontalLength = Mathf.Sqrt(direction.x * direction.x + direction.z * direction.z);
+            float horizontalLength = Mathf.Sqrt(
+                direction.x * direction.x +
+                direction.z * direction.z
+            );
 
             float slopeAngle = horizontalLength > E
                 ? Mathf.Atan2(Mathf.Abs(direction.y), horizontalLength) * Mathf.Rad2Deg
@@ -864,7 +1133,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (slope)
                 PlaneTime = false;
 
-            Board(start, direction, slope, slope ? scales[plan] : 1, plan, i);
+            using (BoardMarker.Auto())
+            {
+                Board(start, direction, slope,
+                    slope ? scales[plan] : 1, plan, i);
+            }
         }
     }
 
@@ -940,10 +1213,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             last[laneIndex] = world;
 
             Vector3 local = toSpline.MultiplyPoint3x4(world);
-            Spline spline = lanes[laneIndex];
-            int knotIndex = spline.Count;
-            spline.Add(new BezierKnot(new float3(local.x, local.y, local.z)));
-            spline.SetTangentMode(knotIndex, TangentMode.Linear);
+            pendingKnots[laneIndex].Add(new float3(local.x, local.y, local.z));
         }
     }
 
@@ -1191,18 +1461,31 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         for (int i = 0; i < mulPlane; i++)
         {
+            GameObject physicsObject;
             GameObject visualObject;
 
-            GameObject physicsObject = Instantiate(PrimitivePlane, generatedPhysicsRoot, false);
+            using (InstantiateMarker.Auto())
+            {
+                physicsObject = Instantiate(PrimitivePlane, generatedPhysicsRoot, false);
+            }
+
             if (slope)
             {
-                visualObject = Instantiate(StairwayPrefab, generatedVisualRoot, false);
+                using (InstantiateMarker.Auto())
+                {
+                    visualObject = Instantiate(StairwayPrefab, generatedVisualRoot, false);
+                }
+
                 StackStairway1.Add(physicsObject);
                 StackStairway2.Add(visualObject);
             }
             else
             {
-                visualObject = Instantiate(PrimitivePlane, generatedVisualRoot, false);
+                using (InstantiateMarker.Auto())
+                {
+                    visualObject = Instantiate(PrimitivePlane, generatedVisualRoot, false);
+                }
+
                 ArcSlab1.Add(physicsObject);
                 ArcSlab2.Add(visualObject);
             }
@@ -1210,8 +1493,15 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             physicsObject.name = $"{boardName}_{i}_Physics";
             visualObject.name = $"{boardName}_{i}_Render";
 
-            ConfigurePhysicsRepresentation(physicsObject, physicsLayer);
-            ConfigureVisualRepresentation(visualObject, slope);
+            using (PhysicsConfigMarker.Auto())
+            {
+                ConfigurePhysicsRepresentation(physicsObject, physicsLayer);
+            }
+
+            using (VisualConfigMarker.Auto())
+            {
+                ConfigureVisualRepresentation(visualObject, slope);
+            }
 
             boardPairBuffer[i].Physics = physicsObject.transform;
             boardPairBuffer[i].Visual = visualObject.transform;
@@ -1236,10 +1526,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (!physicsObject)
             return;
 
-        if (physicsLayer < 0)
-            Debug.LogError("SlopeまたはStairway Layerが見つかりません。", this);
-
-        bool hasCollider = false;
 
         // 以前は Transform / Renderer / Joint / Collider を別々に検索していた。
         // ここではHierarchyを一度だけ走査し、最終状態を同じまま適用する。
@@ -1258,15 +1544,10 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (hidePhysicsRenderers && component is Renderer renderer)
                 renderer.enabled = false;
 
-            if (component is Collider)
-                hasCollider = true;
-
             if (removeGeneratedRigidbodies && component is Joint joint)
                 DestroyComponentSafely(joint);
         }
 
-        if (!hasCollider)
-            Debug.LogWarning($"{physicsObject.name}にColliderがありません。", physicsObject);
     }
     void ConfigureVisualRepresentation(
         GameObject visualObject,
@@ -1279,10 +1560,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         // Joint除去やMaterial適用まで進まず、その場で終了する。
         if (inSlope && visualStairwayLayer < 0)
         {
-            Debug.LogError(
-                $"Visual Stairway Layer '{visualStairwayLayerName}' が存在しません。",
-                visualObject);
-
             return;
         }
 
@@ -1440,7 +1717,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         if (!stairPlane || !splineBox || !PrimitivePlane || !StairwayPrefab)
         {
-            Debug.LogError("stairPlane、SplineContainer、PrimitivePlane、StairwayPrefabを確認してください。", this);
             return false;
         }
 
@@ -1460,7 +1736,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         }
         else
         {
-            Debug.LogError("stairPlaneにMeshFilterまたはRendererがありません。", stairPlane);
             return false;
         }
 
@@ -1500,14 +1775,12 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         if (!collisionStageRoot || !renderStageRoot)
         {
-            Debug.LogError("CollisionStageRootまたはRenderStageRootを取得できません。Inspectorで設定してください。", this);
             return false;
         }
 
         if (collisionStageRoot == renderStageRoot || collisionStageRoot.IsChildOf(renderStageRoot) ||
             renderStageRoot.IsChildOf(collisionStageRoot))
         {
-            Debug.LogError("CollisionStageRootとRenderStageRootは独立させてください。", this);
             return false;
         }
 
@@ -1515,7 +1788,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         generatedVisualRoot = GetOrCreateChild(renderStageRoot, generatedVisualPlayerName);
         ResetGeneratedRootTransform(generatedPhysicsRoot);
         ResetGeneratedRootTransform(generatedVisualRoot);
-        ValidateRootScales();
         return true;
     }
 
@@ -1606,14 +1878,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         generatedRoot.localPosition = Vector3.zero;
         generatedRoot.localRotation = Quaternion.identity;
         generatedRoot.localScale = Vector3.one;
-    }
-
-    void ValidateRootScales()
-    {
-        if ((collisionStageRoot.lossyScale - renderStageRoot.lossyScale).sqrMagnitude <= 0.000001f)
-            return;
-
-        Debug.LogWarning("CollisionStageRootとRenderStageRootのScaleが異なります。両方を同じScaleにしてください。", this);
     }
 
     static void DestroyChildren(Transform root)
@@ -1862,12 +2126,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (!decoratedStairwayInstanceIds.Add(
                     stairwayInstanceId))
             {
-                Debug.LogWarning(
-                    $"[ITEM CHUNK SKIP] " +
-                    $"already processed index={i}, " +
-                    $"stairway={ActiveStairway1.name}",
-                    ActiveStairway1);
-
                 continue;
             }
 
@@ -1967,12 +2225,6 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             if (!decoratedStairwayInstanceIds.Add(
                     stairwayInstanceId))
             {
-                Debug.LogWarning(
-                    $"[ITEM CHUNK SKIP] " +
-                    $"already processed index={i}, " +
-                    $"stairway={ActiveStairway1.name}",
-                    ActiveStairway1);
-
                 continue;
             }
 
