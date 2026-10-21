@@ -22,14 +22,30 @@ public sealed class TrailLengthController : MonoBehaviour
 
     [Header("Visibility diagnostic")]
     [Tooltip("Use an unlit cyan material and visible minimum width to isolate material/alpha problems. Disable after confirming that the mesh is visible.")]
-    [SerializeField] bool diagnosticCyanMaterial = true;
+    [SerializeField] bool diagnosticCyanMaterial = false;
+
+    [Header("Solid ribbon appearance")]
+    [Tooltip("Use conical fixed-length geometry. The appearance comes from Ribbon Material when one is assigned.")]
+    [SerializeField] bool solidRibbon = true;
+    [Min(.02f)] [SerializeField] float ribbonWidth = .5f;
+    [Tooltip("Assign a Material asset for __Trail_FixedArcLength. Overrides generated Solid and Diagnostic materials. Its properties are not modified by this script.")]
+    [SerializeField] Material ribbonMaterial;
+    [Tooltip("Rounding the thinnest part of the cone. 0 = perfectly linear taper.")]
+    [Range(0f, .4f)] [SerializeField] float tailTaper = .12f;
+    [Tooltip("1 = straight, natural cone; larger = thinner longer tail; smaller = fuller tail.")]
+    [Range(.5f, 2f)] [SerializeField] float conePower = 1f;
+    [Tooltip("Limits excessive widening at bends. Preserves a smooth ribbon silhouette.")]
+    [Range(1f, 1.8f)] [SerializeField] float cornerMiterLimit = 1.3f;
+    [Range(.08f, .4f)] [SerializeField] float meshSegmentLength = .16f;
 
     // Stored in the NON-ROTATING physics world frame; oldest -> newest.
     readonly List<Vector3> history = new List<Vector3>(128);
     readonly List<Vector3> path = new List<Vector3>(128); // world-space, oldest -> tip
+    readonly List<Vector3> meshPath = new List<Vector3>(256); // purely visual subdivision
     readonly List<Vector3> vertices = new List<Vector3>(256);
     readonly List<Vector2> uv = new List<Vector2>(256);
     readonly List<Color> colors = new List<Color>(256);
+    readonly List<Vector3> normals = new List<Vector3>(256);
     readonly List<int> triangles = new List<int>(768);
 
     TrailRenderer displayTrail;
@@ -38,7 +54,10 @@ public sealed class TrailLengthController : MonoBehaviour
     MeshRenderer ribbonRenderer;
     Material fallbackMaterial;
     Material diagnosticMaterial;
+    Material solidMaterial;
     bool lastDiagnosticCyanMaterial;
+    bool lastSolidRibbon;
+    Material lastRibbonMaterial;
     AnimationCurve widthCurve;
     Gradient colorGradient;
     bool initialized;
@@ -117,6 +136,8 @@ public sealed class TrailLengthController : MonoBehaviour
         CacheAppearance();
         DisableNativeTrails();
         lastDiagnosticCyanMaterial = diagnosticCyanMaterial;
+        lastSolidRibbon = solidRibbon;
+        lastRibbonMaterial = ribbonMaterial;
         initialized = true;
        
         Debug.Log(
@@ -147,10 +168,13 @@ public sealed class TrailLengthController : MonoBehaviour
         }
         DisableNativeTrails();
 
-        if (lastDiagnosticCyanMaterial != diagnosticCyanMaterial)
+        if (lastDiagnosticCyanMaterial != diagnosticCyanMaterial ||
+            lastSolidRibbon != solidRibbon || lastRibbonMaterial != ribbonMaterial)
         {
             CacheAppearance();
             lastDiagnosticCyanMaterial = diagnosticCyanMaterial;
+            lastSolidRibbon = solidRibbon;
+            lastRibbonMaterial = ribbonMaterial;
         }
 
         Transform head = displayTrail.transform;
@@ -205,8 +229,10 @@ public sealed class TrailLengthController : MonoBehaviour
                 $"meshLayer={LayerMask.LayerToName(ribbonObject.layer)} " +
                 $"cameraSeesLayer={cameraSeesLayer} " +
                 $"shader={ribbonRenderer.sharedMaterial?.shader?.name} " +
-                $"widthAtTip={widthAtTip:F4} alphaMax={maxAlpha:F3} " +
-                $"cyanDiagnostic={diagnosticCyanMaterial} " +
+                $"sourceWidthAtTip={widthAtTip:F4} sourceAlphaMax={maxAlpha:F3} " +
+                $"solid={solidRibbon} solidWidth={ribbonWidth:F2} " +
+                $"ribbonMaterial={(ribbonMaterial ? ribbonMaterial.name : "None")} " +
+                $"cyanDiagnostic={diagnosticCyanMaterial && !solidRibbon && !ribbonMaterial} " +
                 $"tip={path[path.Count - 1]} " +
                 $"cameraDistance={(viewCamera ? Vector3.Distance(viewCamera.transform.position, path[path.Count - 1]) : -1f):F2}", this
             );
@@ -254,7 +280,9 @@ public sealed class TrailLengthController : MonoBehaviour
         vertices.Clear();
         uv.Clear();
         colors.Clear();
+        normals.Clear();
         triangles.Clear();
+        meshPath.Clear();
 
         if (path.Count < 2)
         {
@@ -262,42 +290,103 @@ public sealed class TrailLengthController : MonoBehaviour
             return;
         }
 
-        float total = 0f;
+        // Straight subdivision keeps the EXACT centerline arc length. Curving
+        // the points with a spline here would subtly change the 5 m length.
+        meshPath.Add(path[0]);
         for (int i = 1; i < path.Count; i++)
-            total += Vector3.Distance(path[i - 1], path[i]);
+        {
+            Vector3 a = path[i - 1];
+            Vector3 b = path[i];
+            int steps = Mathf.Clamp(
+                Mathf.CeilToInt(Vector3.Distance(a, b) / meshSegmentLength), 1, 12);
+            for (int j = 1; j <= steps; j++)
+                meshPath.Add(Vector3.Lerp(a, b, (float)j / steps));
+        }
+
+        float total = 0f;
+        for (int i = 1; i < meshPath.Count; i++)
+            total += Vector3.Distance(meshPath[i - 1], meshPath[i]);
         if (total < .0001f) { ribbonMesh.Clear(); return; }
 
         float traveled = 0f;
         Vector3 previousSide = Vector3.zero;
-        Vector3 cameraPosition = viewCamera ? viewCamera.transform.position : path[path.Count - 1] + Vector3.back * 10f;
+        Vector3 cameraFacing = viewCamera ? -viewCamera.transform.forward : Vector3.back;
+        // Mirrors the two native TrailRenderer alignment modes.
+        bool useTransformZ = trail && trail.alignment == LineAlignment.TransformZ;
+        Vector3 fixedFacing = useTransformZ ? displayTrail.transform.forward : cameraFacing;
+        if (fixedFacing.sqrMagnitude < 1e-6f) fixedFacing = Vector3.back;
+        fixedFacing.Normalize();
 
-        for (int i = 0; i < path.Count; i++)
+        for (int i = 0; i < meshPath.Count; i++)
         {
-            if (i > 0) traveled += Vector3.Distance(path[i - 1], path[i]);
+            if (i > 0)
+                traveled += Vector3.Distance(meshPath[i - 1], meshPath[i]);
+
+            // 0 = old tail, 1 = current ball. Distance fraction, not time.
             float u = Mathf.Clamp01(traveled / total);
 
-            Vector3 tangent = i == 0 ? path[1] - path[0] :
-                i == path.Count - 1 ? path[i] - path[i - 1] : path[i + 1] - path[i - 1];
-            tangent.Normalize();
+            Vector3 before = i == 0
+                ? (meshPath[1] - meshPath[0]).normalized
+                : (meshPath[i] - meshPath[i - 1]).normalized;
+            Vector3 after = i == meshPath.Count - 1
+                ? before
+                : (meshPath[i + 1] - meshPath[i]).normalized;
 
-            Vector3 towardsCamera = (cameraPosition - path[i]).normalized;
-            Vector3 side = Vector3.Cross(towardsCamera, tangent);
-            if (side.sqrMagnitude < .000001f)
-                side = Vector3.Cross(Vector3.up, tangent);
-            if (side.sqrMagnitude < .000001f)
-                side = Vector3.Cross(Vector3.right, tangent);
-            side.Normalize();
-            if (i > 0 && Vector3.Dot(side, previousSide) < 0f) side = -side;
+            // Native TrailRenderer-like camera-facing flat ribbon.
+            Vector3 sideBefore = SafeSide(fixedFacing, before, previousSide);
+            Vector3 sideAfter = SafeSide(fixedFacing, after, sideBefore);
+            if (Vector3.Dot(sideBefore, sideAfter) < 0f)
+                sideAfter = -sideAfter;
+
+            Vector3 side = sideBefore + sideAfter;
+            if (side.sqrMagnitude < 1e-6f)
+                side = sideAfter;
+            else side.Normalize();
+
+            // Miter the edge at corners without the excessive spikes that
+            // occur when a wide ribbon bends sharply.
+            float denominator = Mathf.Max(.001f, Mathf.Abs(Vector3.Dot(side, sideAfter)));
+            float miter = Mathf.Min(cornerMiterLimit, 1f / denominator);
+            if (Vector3.Dot(before, after) < -.5f) miter = 1f;
+            if (i > 0 && Vector3.Dot(side, previousSide) < 0f)
+                side = -side;
             previousSide = side;
 
-            float width = Mathf.Max(0f, trail.widthMultiplier * widthCurve.Evaluate(1f - u));
-            if (diagnosticCyanMaterial) width = Mathf.Max(.15f, width);
-            Vector3 half = side * (width * .5f);
-            vertices.Add(ribbonObject.transform.InverseTransformPoint(path[i] - half));
-            vertices.Add(ribbonObject.transform.InverseTransformPoint(path[i] + half));
-            Color color = diagnosticCyanMaterial ? Color.white : colorGradient.Evaluate(u);
+            float width;
+            Color color;
+            if (solidRibbon)
+            {
+                // Full-length CONICAL taper: tail=0, halfway≈50%, ball=100%.
+                // Unlike the previous version, the width grows along all of
+                // the trail, not only the first 12% at its old end.
+                float taper = Mathf.Pow(u, Mathf.Max(.05f, conePower));
+                if (tailTaper > .001f)
+                    taper *= Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(u / tailTaper));
+                width = Mathf.Max(0f, ribbonWidth) * taper;
+                color = Color.white; // color is supplied by the opaque material
+            }
+            else
+            {
+                // TrailRenderer curve convention: here reversed to guarantee
+                // wide at the ball and tapered toward the old tail.
+                width = Mathf.Max(0f, trail.widthMultiplier * widthCurve.Evaluate(1f - u));
+                if (diagnosticCyanMaterial) width = Mathf.Max(.15f, width);
+                // User-assigned materials keep their own texture, color and alpha.
+                color = (ribbonMaterial || diagnosticCyanMaterial)
+                    ? Color.white : colorGradient.Evaluate(1f - u);
+            }
+
+            Vector3 halfWidth = side * (width * miter * .5f);
+            Vector3 p = meshPath[i];
+            vertices.Add(ribbonObject.transform.InverseTransformPoint(p - halfWidth));
+            vertices.Add(ribbonObject.transform.InverseTransformPoint(p + halfWidth));
             colors.Add(color);
             colors.Add(color);
+            // Consistent normals even with duplicated back-faces (native
+            // TrailRenderer may use a material that reads mesh normals).
+            Vector3 normal = ribbonObject.transform.InverseTransformDirection(fixedFacing);
+            normals.Add(normal);
+            normals.Add(normal);
             uv.Add(new Vector2(u, 0f));
             uv.Add(new Vector2(u, 1f));
 
@@ -310,8 +399,8 @@ public sealed class TrailLengthController : MonoBehaviour
             triangles.Add(a + 2);
             triangles.Add(a + 3);
 
-            // Diagnostic: include the reversed faces to rule out backface culling.
-            if (diagnosticCyanMaterial)
+            // Double-sided ribbon for robust views during stage rotation.
+            if (solidRibbon || diagnosticCyanMaterial)
             {
                 triangles.Add(a + 1);
                 triangles.Add(a + 2);
@@ -325,10 +414,22 @@ public sealed class TrailLengthController : MonoBehaviour
         ribbonMesh.Clear();
         ribbonMesh.SetVertices(vertices);
         ribbonMesh.SetColors(colors);
+        ribbonMesh.SetNormals(normals);
         ribbonMesh.SetUVs(0, uv);
         ribbonMesh.SetTriangles(triangles, 0);
         ribbonMesh.RecalculateBounds();
-        ribbonMesh.RecalculateNormals();
+        // Avoid RecalculateNormals: reversed faces would cancel out normals.
+    }
+
+    // Perpendicular to a segment, with stable fallback when it points at camera.
+    static Vector3 SafeSide(Vector3 facing, Vector3 tangent, Vector3 fallback)
+    {
+        Vector3 side = Vector3.Cross(facing, tangent);
+        if (side.sqrMagnitude < 1e-6f)
+            side = fallback.sqrMagnitude > 1e-6f ? fallback : Vector3.Cross(Vector3.up, tangent);
+        if (side.sqrMagnitude < 1e-6f)
+            side = Vector3.Cross(Vector3.right, tangent);
+        return side.sqrMagnitude > 1e-6f ? side.normalized : Vector3.right;
     }
 
     void CreateRibbon()
@@ -356,7 +457,44 @@ public sealed class TrailLengthController : MonoBehaviour
         if (!trail) return;
         widthCurve = trail.widthCurve;
         colorGradient = trail.colorGradient;
-        if (diagnosticCyanMaterial)
+        if (ribbonMaterial)
+        {
+            // Reuse the exact Material from the Inspector; never alter its
+            // tint, emission, alpha, textures or shader properties.
+            ribbonRenderer.sharedMaterial = ribbonMaterial;
+        }
+        else if (solidRibbon)
+        {
+            if (!solidMaterial)
+            {
+                Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
+                if (!shader) shader = Shader.Find("Unlit/Color");
+                if (!shader) shader = Shader.Find("Sprites/Default");
+                if (shader)
+                {
+                    solidMaterial = new Material(shader);
+                    solidMaterial.name = "__Trail_SolidRibbon";
+                    solidMaterial.hideFlags = HideFlags.DontSave;
+                }
+                else Debug.LogWarning("[Trail] Could not find an unlit shader.", this);
+            }
+            if (solidMaterial)
+            {
+                // Force visible RGB/alpha even if the source TrailRenderer's
+                // Gradient Alpha has been authored entirely at zero.
+                // Generated fallback when no custom Material is assigned.
+                Color opaque = new Color(1f, .80f, .28f, 1f);
+                if (solidMaterial.HasProperty("_BaseColor"))
+                    solidMaterial.SetColor("_BaseColor", opaque);
+                if (solidMaterial.HasProperty("_Color"))
+                    solidMaterial.SetColor("_Color", opaque);
+                if (solidMaterial.HasProperty("_Cull"))
+                    solidMaterial.SetFloat("_Cull", 0f);
+                ribbonRenderer.sharedMaterial = solidMaterial;
+            }
+            else ribbonRenderer.sharedMaterial = trail.sharedMaterial;
+        }
+        else if (diagnosticCyanMaterial)
         {
             if (!diagnosticMaterial)
             {
@@ -447,6 +585,6 @@ public sealed class TrailLengthController : MonoBehaviour
         if (ribbonMesh) Destroy(ribbonMesh);
         if (fallbackMaterial) Destroy(fallbackMaterial);
         if (diagnosticMaterial) Destroy(diagnosticMaterial);
+        if (solidMaterial) Destroy(solidMaterial);
     }
 }
-

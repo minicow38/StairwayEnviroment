@@ -1082,6 +1082,12 @@ public float AdvancePredictedSplineDriveReadOnly(
     void FixedUpdate()
     {
         // Updateで予約した90度旋回を、物理/Spline観測より先に1回だけ適用する。
+        Debug.Log(
+            $"[TOP CHECK] " +
+            $"pos={rb.position:F3} " +
+            $"velocity={rb.velocity:F3} " +
+            $"isKinematic={rb.isKinematic}"
+        );
         ApplyPendingQuarterTurn();
 
         // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。
@@ -1144,7 +1150,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         previousGroundedForDropoutLog = grounded;
 
         if (currentHit.transform != null)
-            if (lastHitOriginDistance > 12 && !grounded)
+            if (lastHitOriginDistance > 15 && !grounded)
             {
 
                 if (!MainGameManager.OnDead)
