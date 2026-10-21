@@ -54,6 +54,8 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     // Scene初期状態のVisual/Stage座標系を保存します。
     // VisualPlayerRootはworld Pose、StageRootは親との関係を保つためlocal Poseで保持します。
+
+    public bool StickBeforeNextTurn;
     bool hasInitialVisualPlayerRootPose;
     Vector3 initialVisualPlayerRootPosition;
     Quaternion initialVisualPlayerRootRotation = Quaternion.identity;
@@ -601,7 +603,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             durationOverrideSeconds > 0f
                 ? Mathf.Max(0.01f, durationOverrideSeconds)
                 : turnDuration;
-        if(MainGameManager.core.AcceleFirstTurn)
+        if(MainGameManager.core.AcceleFirstTurn &&( (MainGameManager.core.StickSlopePharse &&!StickBeforeNextTurn) ||(!MainGameManager.core.StickSlopePharse)))
         turnTween = DOTween.To(
                 () => 0f,
                 Apply,
@@ -618,6 +620,7 @@ public sealed class CorrespondSubject : MonoBehaviour
                     RestrickTurnObj = MainGameManager.core.currentHit.transform;
                     if(MainGameManager.HopingSwipeTurn.activeInHierarchy)
                         MainGameManager.HopingSwipeTurn.SetActive(false);
+                    StickBeforeNextTurn = true;
                     PointToPlane++;
                 }
 

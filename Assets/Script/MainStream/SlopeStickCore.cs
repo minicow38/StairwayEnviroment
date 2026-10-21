@@ -115,7 +115,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(0f)] [SerializeField] float maxStick = 1000f;
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
 
-
+    public bool StickSlopePharse = false;
     public bool AcceleFirstTurn = false;
     [Header("PlayerMotivation")] [SerializeField]
     public bool BeginCommandOnTouch = false;
@@ -1176,7 +1176,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         
         
-        
         float load = grounded ? 0f : SupportLoad(guide);
         bool grace = !grounded && graceTimer > 0f && load <= 1f && CanGrace(guide);
 
@@ -1205,12 +1204,18 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (guide.isSlope && !wasSlope)
         {
             AcceleFirstTurn = true;
+            StickSlopePharse = false;
+            correspondSubject.StickBeforeNextTurn = false;
 
             TrySwitchStageCollidersOnSlopeEntry(hit);
             driveState = 0f;
             TransportToSpline(guide);
         }
-        
+        if (wasSlope && !guide.isSlope)
+        {
+            StickSlopePharse = true;
+        }
+      
 
         
 
