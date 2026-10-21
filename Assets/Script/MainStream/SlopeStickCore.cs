@@ -916,8 +916,13 @@ public float AdvancePredictedSplineDriveReadOnly(
     IEnumerator delayTurn()
     {
         yield return new WaitForSeconds(1f);
-        if(!AcceleFirstTurn)
-        MainGameManager.PlayButton.SetActive(true);
+        if (!AcceleFirstTurn)
+        {
+            MainGameManager.PlayButton.SetActive(true);
+            turnTransitionActive = false;
+            waitingForTurnGuide = false;
+            BeginCommandOnTouch = false;
+        }
 
 
     }
@@ -929,6 +934,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         MainGameManager.DropOut.SetActive(true);
         yield return new WaitForSeconds(2f);
         MainGameManager.DropOut.SetActive(false);
+        AcceleFirstTurn = false;
         MainGameManager.OpenChunkStage = true;
         
          
