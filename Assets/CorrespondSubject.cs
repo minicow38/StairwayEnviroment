@@ -601,7 +601,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             durationOverrideSeconds > 0f
                 ? Mathf.Max(0.01f, durationOverrideSeconds)
                 : turnDuration;
-
+        if(MainGameManager.core.AcceleFirstTurn)
         turnTween = DOTween.To(
                 () => 0f,
                 Apply,

@@ -1,3 +1,11 @@
+// Short ExampleBallVisualEqualizer with bounded wave height, stable Hermite period,
+// gentler first-wave descent and restrained moving-frame rotation.
+// Diagnostics remain available; no writes to the observed Rigidbody.
+// Copy as ExampleBallVisualEqualizer.cs; do not compile a second class of this name.
+// Standalone implementation: no IndependentFiveSpline / MeasuredBallEqualizerOnly integration.
+// Keeps the measured Rigidbody, 4-probe geometry, Hermite / 1-2-3 + 2-3 recursion,
+// and the existing renderer-only proxy when the visual source has a Rigidbody.
+// Optional spikes, if enabled in the scene, are prepared once at startup.
 using UnityEngine;
 using System.Collections.Generic;
 [DefaultExecutionOrder(12000)]
@@ -8,8 +16,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     const int MaxPatternMultiplier = 8;
     readonly RaycastHit[] hits = new RaycastHit[16];
 
-    // Mathematical state containers. They keep related values together
-    // without changing the public/Inspector-facing runtime fields.
+    // Internal mathematical state for the three wave amplitudes.
     struct WaveAmplitudes {
         public float A1, A2, A3;
 
@@ -18,18 +25,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         }
     }
 
-    struct FCoordinate {
-        // -1 = E->F side, +1 = F->G side. F itself belongs to the right side.
-        public int Side;
-        public float Distance01;
-
-        public float LegacySignedValue {
-            get { return Side < 0 ? Distance01 : -Distance01; }
-        }
-    }
-
-    [Header("Required: only primary motion injection")]
+    [Header("Observed Rigidbody / visual target")]
     [SerializeField] Rigidbody inSubject;
+
     [SerializeField] Transform visualTarget;
 
     [Header("Output wiring: no writes to the existing Rigidbody")]
@@ -38,7 +36,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     [SerializeField] Transform actualDisplayTarget;
 
     [Header("Display-only spikes (generated proxy only)")]
-    [Tooltip("Attach visual spikes only to ExampleBVE_Display_*. Toggle at runtime in the Inspector.")]
+    [Tooltip("Fixed at startup: attach visual spikes only to generated display.")]
     [SerializeField] bool enableDisplaySpikes = false;
     [SerializeField, Range(1, 512)] int displaySpikeCount = 60;
     [SerializeField, Min(0.001f)] float displaySpikeLength = 0.25f;
@@ -70,13 +68,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     GameObject generatedSpikes;
     Mesh generatedSpikesMesh;
     MeshRenderer generatedSpikesRenderer;
-    MeshRenderer spikeSourceRenderer;
-    MeshFilter spikeSourceFilter;
-    Mesh spikeSourceMesh;
-    int appliedSpikeCount, appliedSpikeSides;
-    float appliedSpikeLength, appliedSpikeWidth;
-    bool spikeSourceWarningReported;
 
+    // Required by the existing TrailLengthController integration only.
+    // This is not an API for injecting or overriding wave calculations.
     public TrailRenderer DisplayTrail =>
         trailRendererBindings.Count > 0 ? trailRendererBindings[0].display : null;
 
@@ -97,6 +91,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     [SerializeField, Min(.1f)] float probeHeight = 2f;
     [SerializeField, Min(.2f)] float probeDepth = 8f;
     [SerializeField, Min(.01f)] float frameFollowHz = 10f;
+    [Tooltip("Caps abrupt tangent/frame turns without changing InSubject physics. " +
+             "900 deg/s is at most 18 degrees at a 0.02 s fixed step.")]
+    [SerializeField, Min(90f)] float frameTurnLimitDegreesPerSecond = 900f;
     [SerializeField, Min(.01f)] float roughFollowHz = 12f;
     [SerializeField, Min(.01f)] float roughnessReference = .40f;
 
@@ -118,14 +115,22 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     [Tooltip("Physics-Y integration constant f(0)=CY. This NEVER changes X/Z.")]
     [SerializeField] float initialCY;
     [SerializeField, Min(.01f)] float initialHeight = .45f;
+    [Tooltip("Visual A1 cannot exceed this fraction of its first-wave travel length. " +
+             "Preserves energy-based height below the limit; never affects Rigidbody.")]
+    [SerializeField, Range(.1f, 1f)] float maximumFirstWaveHeightRatio = .70f;
     [SerializeField, Min(0f)] float fallbackInitialNormalSpeed = 3.1367f;
     [SerializeField, Range(0f, 1f)] float energyBlend = .35f;
     [SerializeField, Range(.05f, .99f)] float restitution = .86f;
     [SerializeField, Range(.05f, 1f)] float lowerRatio = .75f;
-    [SerializeField, Range(.15f, .95f)] float firstApexFraction = .82f;
+    [Tooltip("First wave reaches its peak early enough to leave a safe descent distance. " +
+             "Older scenes with 0.82 are limited to 0.65 at runtime.")]
+    [SerializeField, Range(.15f, .65f)] float firstApexFraction = .64f;
     [SerializeField, Range(.15f, .85f)] float laterApexFraction = .50f;
     [SerializeField, Min(0f)] float dampingPerMeter = .02f;
     [SerializeField, Min(.01f)] float exitDamping = 9f;
+    [Tooltip("Minimum speed used only to capture each wave's Hermite tangent period. " +
+             "The period is held for that wave instead of following instantaneous dot(v,T).")]
+    [SerializeField, Min(1f)] float minimumWavePeriodSpeed = 6f;
 
     [Header("Unified motion character")]
     [Tooltip("Reference planar speed used only to classify a safe deterministic wave character.")]
@@ -175,157 +180,65 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     [SerializeField] bool resetFilterOnSharpNormalChange = true;
     [SerializeField, Range(30f, 170f)] float filterNormalResetDegrees = 65f;
 
-    [Header("Debug / trajectory analysis")]
-    [SerializeField] bool enableDebugLog = true;
-    [SerializeField] bool debugPeriodicState = true;
-    [SerializeField] bool debugWaveTransitions = true;
-    [SerializeField] bool debugProbeTransitions = true;
-    [SerializeField, Min(.05f)] float debugLogInterval = .25f;
+    // Diagnostic only: never used by wave, Rigidbody, or display calculations.
+    [Header("Vibration diagnostics (observation only)")]
+    [SerializeField] bool debugVibration = false;
+    [SerializeField, Min(.05f)] float vibrationBurstSeconds = .45f;
+    [SerializeField, Min(.01f)] float vibrationPeriodicSeconds = .20f;
+    [SerializeField, Min(.01f)] float vibrationStepJumpWarning = .25f;
+    [SerializeField, Range(1f, 90f)] float vibrationNormalWarningDegrees = 12f;
+    [SerializeField, Min(.01f)] float vibrationDisplayShiftWarning = .20f;
 
-    [Header("Read-only runtime")]
-    [SerializeField] bool active, exiting, probeValid, firstWavePeakReady;
-    [SerializeField] int waveIndex = -1, waveType = -1, activeWaveCount = BaseWaves;
-    [SerializeField] int repeat23ChunkCount, recursiveChunkIndex = -1, firstWavePeakRevision;
-    [SerializeField] float traveled, progress01, currentAmplitude;
-    [SerializeField] float efLocal01, fgLocal01, signedFLimit;
-    [SerializeField] int fSide;
-    [SerializeField] float fDistance01;
-    [SerializeField] float slope0, slope1, slope2, signedCurvature, roughness, filteredRoughness;
-    [SerializeField] float baseOffset, residualOffset, residualSpeed, residualAcceleration, visualOffset;
-    [SerializeField] float presentedOffset, presentedSpeed, presentationSmoothSeconds;
-    [SerializeField] float adaptiveVisualSpeed, adaptiveCutoffHz, currentWaveLocal01;
-    [SerializeField] int visualFilterResetCount;
-    [SerializeField] float upperNormal, lowerNormal, firstWavePeakCY, firstWavePeakProgress01;
-    [SerializeField] Vector3 tangent = Vector3.forward, normal = Vector3.up, binormal = Vector3.right;
+    int vibrationCycleId, vibrationSamples, vibrationClamps;
+    float vibrationBurstEnd, vibrationNextPhysicsLog, vibrationNextDisplayLog;
+    float vibrationPreviousBase, vibrationPreviousResidual, vibrationPreviousVisual;
+    float vibrationMaxBaseJump, vibrationMaxVisualJump, vibrationMaxNormalTurn;
+    float vibrationMaxBaseAbs, vibrationMaxResidualAbs, vibrationMaxVisualAbs;
+    float vibrationMaxDisplayShift;
+    Vector3 vibrationPreviousNormal, vibrationPreviousDisplayRelative;
+    bool vibrationHasPhysicsSample, vibrationHasDisplaySample;
+    int vibrationPreviousWaveIndex;
+    float vibrationPreviousU;
 
-    [SerializeField] bool outputWritable;
-    [SerializeField] float[] sampledHeights = new float[4];
+    bool active, exiting, probeValid;
+    int waveIndex = -1, waveType = -1, activeWaveCount = BaseWaves;
+    int repeat23ChunkCount, recursiveChunkIndex = -1;
+    float traveled, progress01, currentAmplitude, lockedWavePeriod;
+    int fSide;
+    float slope0, slope1, slope2, signedCurvature, roughness, filteredRoughness;
+    float baseOffset, residualOffset, residualSpeed, residualAcceleration, visualOffset;
+    float presentedOffset, presentedSpeed, presentationSmoothSeconds;
+    float adaptiveVisualSpeed, adaptiveCutoffHz, currentWaveLocal01;
+    float upperNormal, lowerNormal;
+    Vector3 tangent = Vector3.forward, normal = Vector3.up, binormal = Vector3.right;
+
+    bool outputWritable;
+    float[] sampledHeights = new float[4];
     readonly Collider[] sampledColliders = new Collider[4];
 
-    [Header("Runtime stair program")]
-    [SerializeField] float effectiveSectionLength;
-    [SerializeField] float effectiveFBoundary;
-    [SerializeField] float recursiveA1, recursiveA2, recursiveA3;
-    [SerializeField] int motionPattern;
-    [SerializeField] float motionCharacter01, entryPlanarSpeed, entryAlignment01;
-    [SerializeField] float terminalAmplitude, terminalOffset;
-    Vector3 heading = Vector3.forward, previousCarrier, previousVelocity, previousApexPosition;
-    Vector3 previousNormal = Vector3.up;
+    float effectiveSectionLength;
+    float effectiveFBoundary;
+    float recursiveA1, recursiveA2, recursiveA3;
+    int motionPattern;
+    float motionCharacter01, entryPlanarSpeed, entryAlignment01;
+    float terminalAmplitude, terminalOffset;
+    Vector3 heading = Vector3.forward, previousCarrier, previousVelocity;
     Quaternion rotationOffset = Quaternion.identity, roll = Quaternion.identity;
     float gradient, filteredSignedCurvature, lowPassedNormalAcceleration;
     float initialWaveHeight, initialWaveSpeed, gravityN, elapsed, exitElapsed, flatElapsed;
-    float previousOffset, previousOffsetSpeed, lastBegin = -999f, lastProbeSlopeDegrees;
+    float lastBegin = -999f, lastProbeSlopeDegrees;
     float previousFilterTarget;
     Vector3 previousFilterNormal = Vector3.up;
     bool visualFilterReady, presentationFrameReady;
     bool initialized, armed = true;
+    float nextWaveLogTime;
 
-    // Debug state only. These do not affect trajectory calculation.
-    float nextDebugLogTime;
-    int lastDebugWaveIndex = int.MinValue;
-    int lastDebugFSide;
-    bool lastDebugProbeValid;
+    // Keep only the observed-body accessor required by existing scene wiring.
+    // No wave-state or first-apex getters are exposed to external solvers.
     public Rigidbody InSubject => inSubject;
-    public bool IsActive => active;
-    public int WaveIndex => waveIndex;
-    public int WaveType => waveType + 1;
-    public int ActiveWaveCount => activeWaveCount;
-    public int Repeat23ChunkCount => repeat23ChunkCount;
-    public int RecursiveChunkIndex => recursiveChunkIndex;
-    public float TargetSlopeProgressPerecent => targetSlopeProgressPerecent;
-    public float SignedFLimit => signedFLimit;
-    public int FSide => fSide;
-    public float FDistance01 => fDistance01;
-    public float Progress01 => progress01;
-    public float Roughness => filteredRoughness;
-    public float SignedCurvature => filteredSignedCurvature;
-    public float NormalOffset => visualOffset;
-    public Vector3 StableT => tangent;
-    public Vector3 StableN => normal;
-    public Vector3 StableB => binormal;
-    public float UpperNormal => upperNormal;
-    public float LowerNormal => lowerNormal;
-    public bool FirstWavePeakReady => firstWavePeakReady;
-    public float FirstWavePeakCY => firstWavePeakCY;
-    public float FirstWavePeakProgress01 => firstWavePeakProgress01;
-    public int FirstWavePeakRevision => firstWavePeakRevision;
-    public Vector3 FirstWavePeakWorld => previousApexPosition;
 
-    void DebugEvent(string tag, string message) {
-        if (!enableDebugLog) return;
-        Debug.Log($"[ExampleBVE][{tag}] t={Time.fixedTime:F3} {message}", this);
-    }
-
-    void DebugPeriodic(
-        Vector3 p,
-        Vector3 v,
-        float u,
-        float localWaveLength,
-        float forwardSpeed,
-        float waveRough) {
-
-        if (!enableDebugLog || !debugPeriodicState)
-            return;
-
-        if (Time.fixedTime < nextDebugLogTime)
-            return;
-
-        nextDebugLogTime =
-            Time.fixedTime +
-            Mathf.Max(.05f, debugLogInterval);
-
-        Debug.Log(
-            $"[ExampleBVE][STATE] " +
-            $"t={Time.fixedTime:F3} " +
-            $"active={active} exiting={exiting} probe={probeValid} armed={armed} " +
-            $"progress={progress01:F4} traveled={traveled:F3}/{effectiveSectionLength:F3} " +
-            $"waveIndex={waveIndex} waveType={waveType + 1} chunk={recursiveChunkIndex} u={u:F4} " +
-            $"Fside={fSide} Fdist={fDistance01:F4} Fsigned={signedFLimit:F4} " +
-            $"amp={currentAmplitude:F4} base={baseOffset:F4} residual={residualOffset:F4} " +
-            $"terminal={terminalOffset:F4} visual={visualOffset:F4} " +
-            $"lower={lowerNormal:F4} upper={upperNormal:F4} " +
-            $"forwardSpeed={forwardSpeed:F3} localWaveLength={localWaveLength:F3} " +
-            $"slopeDeg={lastProbeSlopeDegrees:F3} rough={filteredRoughness:F5} " +
-            $"waveRough={waveRough:F5} curvature={filteredSignedCurvature:F5} " +
-            $"pos={p:F4} vel={v:F4} " +
-            $"T={tangent:F4} N={normal:F4} B={binormal:F4}",
-            this);
-    }
-
-    void DebugProbeTransition() {
-        if (!enableDebugLog || !debugProbeTransitions)
-            return;
-
-        if (probeValid == lastDebugProbeValid)
-            return;
-
-        lastDebugProbeValid = probeValid;
-
-        DebugEvent(
-            "PROBE",
-            $"valid={probeValid} " +
-            $"slopeDeg={lastProbeSlopeDegrees:F3} " +
-            $"heights=[{sampledHeights[0]:F3},{sampledHeights[1]:F3},{sampledHeights[2]:F3},{sampledHeights[3]:F3}] " +
-            $"rough={filteredRoughness:F5}");
-    }
-
-    public void SetInitialStartPatternValue(int patternValue) {
-        int magnitude = patternValue == int.MinValue ? MaxPatternMultiplier : Mathf.Abs(patternValue);
-        initialStartPatternMultiplier = Mathf.Clamp(magnitude, 1, MaxPatternMultiplier);
-    }
-
-    public void SetInitialStartPatternMultiplier(int multiplier) {
+    void SetInitialStartPatternMultiplier(int multiplier) {
         initialStartPatternMultiplier = Mathf.Clamp(multiplier, 1, MaxPatternMultiplier);
-    }
-
-    public void Inject(Rigidbody primary, Transform secondaryRotation = null) {
-        ReleaseGeneratedDisplay();
-        inSubject = primary;
-        subjectRotation = secondaryRotation;
-        if (!visualTarget) visualTarget = transform;
-        ResolveCoordinateSource();
-        initialized = ValidateReferences();
-        if (initialized) InitializeFrame();
     }
 
     void Awake() {
@@ -472,38 +385,17 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         }
 
         actualDisplayTarget = display;
-        SyncDisplaySpikes();
+        CreateDisplaySpikes();
     }
 
-    // The spikes belong to the generated display, not the original Rigidbody,
-    // so disabling them cannot change physics, source renderers, or the trail.
-    void SyncDisplaySpikes() {
-        if (!enableDisplaySpikes || !generatedDisplay) {
-            if (generatedSpikes || generatedSpikesMesh) RemoveDisplaySpikes();
-            return;
-        }
+    // Optional fixed display mesh. Never changes the observed Rigidbody.
+    void CreateDisplaySpikes() {
+        if (!enableDisplaySpikes || !generatedDisplay) return;
 
         int count = Mathf.Clamp(displaySpikeCount, 1, 512);
         int sides = Mathf.Clamp(displaySpikeSides, 3, 16);
         float length = Mathf.Max(0.001f, displaySpikeLength);
         float width = Mathf.Max(0.001f, displaySpikeWidth);
-
-        bool settingsUnchanged =
-            generatedSpikes && generatedSpikesMesh && generatedSpikesRenderer &&
-            spikeSourceFilter && spikeSourceRenderer &&
-            spikeSourceFilter.sharedMesh == spikeSourceMesh &&
-            appliedSpikeCount == count && appliedSpikeSides == sides &&
-            appliedSpikeLength == length && appliedSpikeWidth == width;
-
-        if (settingsUnchanged) {
-            // Existing material changes on the original are mirrored to the proxy.
-            // Read the source proxy renderer after SyncPresentationFromOriginal().
-            Material material = displaySpikeMaterial
-                ? displaySpikeMaterial : spikeSourceRenderer.sharedMaterial;
-            if (generatedSpikesRenderer.sharedMaterial != material)
-                generatedSpikesRenderer.sharedMaterial = material;
-            return;
-        }
 
         RemoveDisplaySpikes();
 
@@ -527,14 +419,10 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         }
 
         if (!sphereFilter || !sphereRenderer) {
-            if (!spikeSourceWarningReported) {
-                Debug.LogWarning("[ExampleBVE][SPIKES] Generated display has no MeshFilter + MeshRenderer; cannot add spikes.", this);
-                spikeSourceWarningReported = true;
-            }
+            Debug.LogWarning("[ExampleBVE][SPIKES] Generated display has no MeshFilter + MeshRenderer; cannot add spikes.", this);
             return;
         }
 
-        spikeSourceWarningReported = false;
         Bounds bounds = sphereFilter.sharedMesh.bounds;
         float radius = (bounds.extents.x + bounds.extents.y + bounds.extents.z) / 3f;
         if (radius <= 0.0001f) return;
@@ -554,14 +442,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         generatedSpikesRenderer.shadowCastingMode = sphereRenderer.shadowCastingMode;
         generatedSpikesRenderer.receiveShadows = sphereRenderer.receiveShadows;
         generatedSpikes.layer = sphereFilter.gameObject.layer;
-
-        spikeSourceFilter = sphereFilter;
-        spikeSourceRenderer = sphereRenderer;
-        spikeSourceMesh = sphereFilter.sharedMesh;
-        appliedSpikeCount = count;
-        appliedSpikeSides = sides;
-        appliedSpikeLength = length;
-        appliedSpikeWidth = width;
     }
 
     static Mesh CreateDisplaySpikeMesh(
@@ -626,9 +506,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         generatedSpikes = null;
         generatedSpikesMesh = null;
         generatedSpikesRenderer = null;
-        spikeSourceRenderer = null;
-        spikeSourceFilter = null;
-        spikeSourceMesh = null;
     }
 
     int CopyPresentation(Transform source, Transform destination) {
@@ -818,7 +695,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
 
     void ReleaseGeneratedDisplay() {
         RemoveDisplaySpikes();
-        spikeSourceWarningReported = false;
         for (int i = 0; i < originalRenderers.Count; i++)
             if (originalRenderers[i]) originalRenderers[i].enabled = originalRendererStates[i];
 
@@ -843,25 +719,16 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         tangent = heading;
         normal = Vector3.up;
         binormal = Vector3.Cross(normal, tangent).normalized;
-        previousNormal = normal;
         visualOffset = 0f;
         currentWaveLocal01 = 1f;
         ResetVisualFilterState(0f);
         active = exiting = false;
+        lockedWavePeriod = 0f;
         // After a teleport/restart, require a new observed flat section before
         // accepting the next automatic stair entry. Do not reuse old arming.
         armed = false;
         flatElapsed = 0f;
 
-        lastDebugWaveIndex = int.MinValue;
-        lastDebugFSide = 0;
-        lastDebugProbeValid = probeValid;
-        nextDebugLogTime = Time.fixedTime;
-
-        DebugEvent(
-            "INIT",
-            $"pos={inSubject.position:F4} vel={inSubject.velocity:F4} " +
-            $"heading={heading:F4} T={tangent:F4} N={normal:F4} B={binormal:F4}");
     }
 
     // Called ONLY when a new flat-to-stair entry is accepted, never while
@@ -883,18 +750,12 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
             return false;
         entryN.Normalize();
 
-        Vector3 oldN = normal;
         tangent = entryT;
         normal = entryN; // Up-facing support normal, including downhill slopes.
         binormal = Vector3.Cross(normal, tangent).normalized;
-        previousNormal = normal;
 
-        DebugEvent("ENTRY_FRAME_RESET",
-            $"oldN={oldN:F4} T={tangent:F4} N={normal:F4} B={binormal:F4} " +
-            $"normalReversed={Vector3.Dot(oldN, normal) < 0f} gradient={gradient:F4}");
         return true;
     }
-
 
     bool ProbeHeight(Vector3 point, int sampleIndex, out float y) {
         Vector3 origin = point + Vector3.up * probeHeight;
@@ -1035,6 +896,13 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
 
         if (desiredT.sqrMagnitude < Eps) desiredT = tangent;
 
+        // Ground samples can jump abruptly at a stair lip. Keep the moving
+        // frame continuous by limiting its tangent's angular step. This also
+        // prevents one sharp gradient reversal from flipping display Stable-N.
+        if (active && !exiting)
+            desiredT = Vector3.RotateTowards(tangent, desiredT,
+                frameTurnLimitDegreesPerSecond * Mathf.Deg2Rad * Mathf.Max(0f, dt), 0f).normalized;
+
         Vector3 transportedN = Quaternion.FromToRotation(tangent, desiredT) * normal;
         Vector3 rawN = probeValid ? Vector3.up : transportedN;
         rawN = Vector3.ProjectOnPlane(rawN, desiredT).normalized;
@@ -1146,7 +1014,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     }
 
     float PatternApex(int type) {
-        if (type <= 0) return firstApexFraction;
+        // Scenes serialized before this revision may still hold 0.82.
+        // Keep the first descent at least 35% of the local wave length.
+        if (type <= 0) return Mathf.Clamp(firstApexFraction, .15f, .65f);
 
         float waveSign = type == 1 ? -1f : 1f;
         float shift = MotionPatternSign() * patternVariation * .45f * waveSign;
@@ -1181,9 +1051,151 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
                 t);
     }
 
-    [ContextMenu("ExampleBVE / Begin Stair (Play Mode)")]
+    // These methods only observe pre-existing solver state and output Debug.Log.
+    void LogVibrationBegin(Vector3 velocity, Vector3 entryNormal,
+        float measured, float ballisticRise) {
+        if (!debugVibration) return;
+        vibrationCycleId++;
+        vibrationSamples = vibrationClamps = 0;
+        vibrationMaxBaseJump = vibrationMaxVisualJump = vibrationMaxNormalTurn = 0f;
+        vibrationMaxBaseAbs = vibrationMaxResidualAbs = vibrationMaxVisualAbs = 0f;
+        vibrationMaxDisplayShift = 0f;
+        vibrationPreviousBase = vibrationPreviousResidual = vibrationPreviousVisual = 0f;
+        vibrationPreviousNormal = normal;
+        vibrationPreviousWaveIndex = -1;
+        vibrationPreviousU = 0f;
+        vibrationHasPhysicsSample = vibrationHasDisplaySample = false;
+        vibrationBurstEnd = Time.fixedTime + vibrationBurstSeconds;
+        vibrationNextPhysicsLog = vibrationNextDisplayLog = Time.fixedTime;
 
-    public void BeginStair() {
+        Debug.Log($"[EQV][BEGIN] cycle={vibrationCycleId} t={Time.fixedTime:F3} " +
+            $"fixedDt={Time.fixedDeltaTime:F4} vel={velocity} " +
+            $"normal={entryNormal} measuredVN={measured:F4} " +
+            $"fallbackVN={fallbackInitialNormalSpeed:F4} selectedVN={initialWaveSpeed:F4} " +
+            $"gravityN={gravityN:F4} ballisticRise={ballisticRise:F4} " +
+            $"initialHeight={initialHeight:F4} energyBlend={energyBlend:F3} " +
+            $"A1={recursiveA1:F4} A2={recursiveA2:F4} A3={recursiveA3:F4} " +
+            $"apex1={PatternApex(0):F3} apexLater={laterApexFraction:F3} " +
+            $"lowerRatio={lowerRatio:F3} heightRatioCap={maximumFirstWaveHeightRatio:F3} " +
+            $"residualLimit={maximumResidual:F3} " +
+            $"section={effectiveSectionLength:F3} waves={activeWaveCount} " +
+            $"probeSlope={lastProbeSlopeDegrees:F2} gradient={gradient:F4}", this);
+    }
+
+    void LogVibrationStep(float dt, Vector3 position, Vector3 velocity,
+        float ds, float u, float period, float riseSpeed, float impactSpeed,
+        float start, float end, float apex, float highPass,
+        float rawOffset, float entryFactor) {
+        if (!debugVibration) return;
+        float baseJump = vibrationHasPhysicsSample
+            ? baseOffset - vibrationPreviousBase : 0f;
+        float residualJump = vibrationHasPhysicsSample
+            ? residualOffset - vibrationPreviousResidual : 0f;
+        float visualJump = vibrationHasPhysicsSample
+            ? visualOffset - vibrationPreviousVisual : 0f;
+        float normalTurn = vibrationHasPhysicsSample
+            ? Vector3.Angle(vibrationPreviousNormal, normal) : 0f;
+        float envelopeProjection = Mathf.Clamp(rawOffset, lowerNormal, upperNormal);
+        float clampAmount = Mathf.Abs(rawOffset - envelopeProjection);
+        if (clampAmount > .0001f) vibrationClamps++;
+        vibrationSamples++;
+
+        vibrationMaxBaseJump = Mathf.Max(vibrationMaxBaseJump, Mathf.Abs(baseJump));
+        vibrationMaxVisualJump = Mathf.Max(vibrationMaxVisualJump, Mathf.Abs(visualJump));
+        vibrationMaxNormalTurn = Mathf.Max(vibrationMaxNormalTurn, normalTurn);
+        vibrationMaxBaseAbs = Mathf.Max(vibrationMaxBaseAbs, Mathf.Abs(baseOffset));
+        vibrationMaxResidualAbs = Mathf.Max(vibrationMaxResidualAbs, Mathf.Abs(residualOffset));
+        vibrationMaxVisualAbs = Mathf.Max(vibrationMaxVisualAbs, Mathf.Abs(visualOffset));
+
+        bool changedWave = waveIndex != vibrationPreviousWaveIndex;
+        bool skippedWaves = vibrationHasPhysicsSample &&
+            waveIndex > vibrationPreviousWaveIndex + 1;
+        bool crossedApex = vibrationHasPhysicsSample && !changedWave &&
+            vibrationPreviousU < apex && u >= apex;
+        bool highJump = vibrationHasPhysicsSample &&
+            (Mathf.Abs(baseJump) >= vibrationStepJumpWarning ||
+             Mathf.Abs(visualJump) >= vibrationStepJumpWarning);
+        bool highNormal = vibrationHasPhysicsSample &&
+            normalTurn >= vibrationNormalWarningDegrees;
+        bool burst = Time.fixedTime <= vibrationBurstEnd;
+        bool periodic = Time.fixedTime >= vibrationNextPhysicsLog;
+
+        if (burst || changedWave || crossedApex || highJump || highNormal || periodic) {
+            string reasons = (changedWave ? " WAVE" : "") +
+                (crossedApex ? " TRUE_APEX" : "") +
+                (skippedWaves ? " SKIPPED_WAVES" : "") +
+                (highJump ? " JUMP" : "") +
+                (highNormal ? " NORMAL" : "") +
+                (burst ? " BURST" : "");
+            Debug.Log($"[EQV][STEP] cycle={vibrationCycleId} t={Time.fixedTime:F3} " +
+                $"flag={reasons.Trim()} index={waveIndex} type={waveType + 1} " +
+                $"progress={progress01:F4} u={u:F4} ds={ds:F4} " +
+                $"dt={dt:F4} period={period:F4} apex={apex:F3} " +
+                $"amp={currentAmplitude:F4} start={start:F4} end={end:F4} " +
+                $"riseSpeed={riseSpeed:F3} impactSpeed={impactSpeed:F3} " +
+                $"base={baseOffset:F4} dBase={baseJump:F4} " +
+                $"residual={residualOffset:F4} dResidual={residualJump:F4} " +
+                $"residualSpeed={residualSpeed:F3} residualAcc={residualAcceleration:F3} " +
+                $"highPass={highPass:F3} curvature={filteredSignedCurvature:F4} " +
+                $"raw={rawOffset:F4} clamp={clampAmount:F4} " +
+                $"limits=({lowerNormal:F4},{upperNormal:F4}) " +
+                $"entryBlend={entryFactor:F3} visual={visualOffset:F4} " +
+                $"dVisual={visualJump:F4} normalTurn={normalTurn:F2} " +
+                $"normal={normal} pos={position} vel={velocity}", this);
+            vibrationNextPhysicsLog = Time.fixedTime +
+                Mathf.Max(.01f, vibrationPeriodicSeconds);
+        }
+
+        vibrationPreviousBase = baseOffset;
+        vibrationPreviousResidual = residualOffset;
+        vibrationPreviousVisual = visualOffset;
+        vibrationPreviousNormal = normal;
+        vibrationPreviousWaveIndex = waveIndex;
+        vibrationPreviousU = u;
+        vibrationHasPhysicsSample = true;
+    }
+
+    void LogVibrationDisplay(Vector3 mappedOrigin) {
+        if (!debugVibration || !active || !actualDisplayTarget) return;
+        Vector3 relative = actualDisplayTarget.position - mappedOrigin;
+        float relativeShift = vibrationHasDisplaySample
+            ? Vector3.Distance(relative, vibrationPreviousDisplayRelative) : 0f;
+        vibrationMaxDisplayShift = Mathf.Max(vibrationMaxDisplayShift, relativeShift);
+        bool highShift = vibrationHasDisplaySample &&
+            relativeShift >= vibrationDisplayShiftWarning;
+        bool burst = Time.time <= vibrationBurstEnd;
+        bool periodic = Time.time >= vibrationNextDisplayLog;
+        if (burst || highShift || periodic) {
+            Debug.Log($"[EQV][DISPLAY] cycle={vibrationCycleId} " +
+                $"frame={Time.frameCount} t={Time.time:F3} " +
+                $"flag={(highShift ? "SHIFT" : burst ? "BURST" : "PERIODIC")} " +
+                $"body={inSubject.transform.position} origin={mappedOrigin} " +
+                $"normal={normal} target={visualOffset:F4} " +
+                $"presented={presentedOffset:F4} " +
+                $"smooth={presentationSmoothSeconds:F4} " +
+                $"relative={relative} relativeShift={relativeShift:F4} " +
+                $"display={actualDisplayTarget.position}", this);
+            vibrationNextDisplayLog = Time.time +
+                Mathf.Max(.01f, vibrationPeriodicSeconds);
+        }
+        vibrationPreviousDisplayRelative = relative;
+        vibrationHasDisplaySample = true;
+    }
+
+    void LogVibrationEnd() {
+        if (!debugVibration) return;
+        Debug.Log($"[EQV][SUMMARY] cycle={vibrationCycleId} " +
+            $"samples={vibrationSamples} clamps={vibrationClamps} " +
+            $"maxAbsBase={vibrationMaxBaseAbs:F4} " +
+            $"maxAbsResidual={vibrationMaxResidualAbs:F4} " +
+            $"maxAbsVisual={vibrationMaxVisualAbs:F4} " +
+            $"maxStepBase={vibrationMaxBaseJump:F4} " +
+            $"maxStepVisual={vibrationMaxVisualJump:F4} " +
+            $"maxNormalTurnDeg={vibrationMaxNormalTurn:F2} " +
+            $"maxDisplayRelativeShift={vibrationMaxDisplayShift:F4}", this);
+    }
+
+    void BeginStair() {
         if (!Application.isPlaying || !initialized) return;
 
         // An active stair program is never interrupted mid-wave. A finished
@@ -1194,7 +1206,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
 
         if (!RebuildFrameAtStairEntry(v)) {
             armed = false; // wait for a fresh flat-to-stair transition
-            DebugEvent("ENTRY_FRAME_INVALID", "Could not rebuild an up-facing frame; stair wave not started.");
             return;
         }
 
@@ -1280,6 +1291,14 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
                 .05f,
                 .95f);
 
+        // Keep a visual-only rebound proportionate to its available distance.
+        // E->F has a longer first wave when the 2->3 suffix is repeated.
+        float firstWaveLength = repeat23ChunkCount > 0
+            ? effectiveSectionLength * effectiveFBoundary / BaseWaves
+            : effectiveSectionLength / BaseWaves;
+        initialWaveHeight = Mathf.Min(initialWaveHeight,
+            Mathf.Max(.02f, firstWaveLength * maximumFirstWaveHeightRatio));
+
         // -5 and above imitate the old -1 1->2->3 heights.
         float baseWaveLength =
             sectionLength / BaseWaves;
@@ -1301,38 +1320,28 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         previousCarrier = inSubject.position;
         previousVelocity = v;
         traveled = progress01 = elapsed = exitElapsed = flatElapsed = 0f;
+        lockedWavePeriod = 0f;
         baseOffset = residualOffset = residualSpeed = residualAcceleration = visualOffset = 0f;
         currentWaveLocal01 = 0f;
         ResetVisualFilterState(0f);
-        previousOffset = previousOffsetSpeed = lowPassedNormalAcceleration = 0f;
+        lowPassedNormalAcceleration = 0f;
         currentAmplitude = initialWaveHeight;
         waveIndex = waveType = -1;
         recursiveChunkIndex = -1;
-        efLocal01 = fgLocal01 = 0f;
         fSide = -1;
-        fDistance01 = 1f;
-        signedFLimit = 1f;
-        firstWavePeakReady = false;
-        firstWavePeakCY = firstWavePeakProgress01 = 0f;
-        previousNormal = normal;
         lastBegin = Time.fixedTime;
         active = true;
         exiting = armed = false;
+        nextWaveLogTime = Time.fixedTime;
 
-        lastDebugWaveIndex = int.MinValue;
-        lastDebugFSide = -1;
-        nextDebugLogTime = Time.fixedTime;
+        LogVibrationBegin(v, entryNormal, measured, ballisticRise);
 
-        DebugEvent(
-            "BEGIN",
-            $"multiplier={initialStartPatternMultiplier} repeats23={repeat23ChunkCount} waves={activeWaveCount} " +
-            $"sectionLength={effectiveSectionLength:F3} F={effectiveFBoundary:F4} " +
-            $"entryNormal={entryNormal:F4} gravityN={gravityN:F4} initialWaveSpeed={initialWaveSpeed:F4} " +
-            $"ballisticRise={ballisticRise:F4} initialWaveHeight={initialWaveHeight:F4} " +
-            $"motionCharacter={motionCharacter01:F4} pattern={motionPattern} " +
-            $"A1={recursiveA1:F4} A2={recursiveA2:F4} A3={recursiveA3:F4} " +
-            $"entryPlanarSpeed={entryPlanarSpeed:F3} alignment={entryAlignment01:F4} " +
-            $"pos={inSubject.position:F4} vel={v:F4}");
+        Debug.Log($"[ExampleBVE][BEGIN] multiplier={initialStartPatternMultiplier} " +
+            $"waves={activeWaveCount} repeats23={repeat23ChunkCount} " +
+            $"section={effectiveSectionLength:F2} F={effectiveFBoundary:F3} " +
+            $"speed={v.magnitude:F2} A1={recursiveA1:F3} " +
+            $"A2={recursiveA2:F3} A3={recursiveA3:F3} " +
+            $"displayReady={outputWritable}", this);
     }
     WaveAmplitudes BuildWaveAmplitudes(float a1, float oneStepRetention) {
         WaveAmplitudes a;
@@ -1346,9 +1355,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         return a;
     }
 
-    [ContextMenu("ExampleBVE / End Stair (Play Mode)")]
-
-    public void EndStair() {
+    void EndStair() {
         if (!active || exiting) return;
 
         exiting = true;
@@ -1366,11 +1373,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
 
         terminalOffset = 0f;
 
-        DebugEvent(
-            "END-BEGIN",
-            $"progress={progress01:F4} traveled={traveled:F3} " +
+        Debug.Log($"[ExampleBVE][END] progress={progress01:F3} " +
             $"waveIndex={waveIndex} waveType={waveType + 1} " +
-            $"currentAmplitude={currentAmplitude:F4} terminalAmplitude={terminalAmplitude:F4}");
+            $"offset={visualOffset:F4}", this);
     }
 
     void FixedUpdate() {
@@ -1380,15 +1385,14 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         Vector3 v = inSubject.velocity;
         Vector3 displacement = p - previousCarrier;
         if (displacement.magnitude > teleportThreshold) {
-            DebugEvent(
-                "TELEPORT",
-                $"distance={displacement.magnitude:F3} threshold={teleportThreshold:F3} " +
-                $"from={previousCarrier:F4} to={p:F4}");
+            if (debugVibration)
+                Debug.Log($"[EQV][TELEPORT] cycle={vibrationCycleId} " +
+                    $"t={Time.fixedTime:F3} delta={displacement.magnitude:F4} " +
+                    $"limit={teleportThreshold:F4} body={p} vel={v}", this);
             InitializeFrame();
             return;
         }
         ObserveGeometry(p, v, dt);
-        DebugProbeTransition();
 
         Vector3 planar = Vector3.ProjectOnPlane(v, Vector3.up);
         // Re-arm from an observed flat section, even while the previous wave
@@ -1434,28 +1438,29 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
 
         float u, localWaveLength;
         int priorWaveType;
+        int previousWaveIndex = waveIndex;
         ResolveWaveCycle(progress01, out u, out localWaveLength, out priorWaveType);
         currentWaveLocal01 = u;
 
-        if (enableDebugLog && debugWaveTransitions) {
-            if (waveIndex != lastDebugWaveIndex) {
-                DebugEvent(
-                    "WAVE",
-                    $"waveIndex={waveIndex} waveType={waveType + 1} priorType={priorWaveType + 1} " +
-                    $"chunk={recursiveChunkIndex} progress={progress01:F4} u={u:F4} " +
-                    $"localWaveLength={localWaveLength:F3} Fside={fSide} Fdist={fDistance01:F4}");
-                lastDebugWaveIndex = waveIndex;
-            }
-
-            if (fSide != lastDebugFSide) {
-                DebugEvent(
-                    "F-CROSS",
-                    $"side={fSide} progress={progress01:F4} F={effectiveFBoundary:F4} " +
-                    $"EF={efLocal01:F4} FG={fgLocal01:F4} chunk={recursiveChunkIndex}");
-                lastDebugFSide = fSide;
-            }
+        if (waveIndex != previousWaveIndex || lockedWavePeriod <= 0f) {
+            // Hermite endpoint tangents must not depend on a rapidly rotating
+            // T or a transient loss of positive dot(v,T). Capture a reference
+            // from the planar speed ONCE at each wave boundary; keep it fixed
+            // for every sample in the same wave. InSubject is read-only.
+            float referenceSpeed = Mathf.Max(minimumWavePeriodSpeed,
+                Mathf.Max(planar.magnitude, .5f * entryPlanarSpeed));
+            lockedWavePeriod = Mathf.Max(.001f, localWaveLength) / referenceSpeed;
         }
 
+        if (waveIndex != previousWaveIndex) {
+            Debug.Log($"[ExampleBVE][WAVE] index={waveIndex} " +
+                $"type={waveType + 1} chunk={recursiveChunkIndex} " +
+                $"progress={progress01:F3} u={u:F3} " +
+                $"Fside={fSide} waves={activeWaveCount}", this);
+        }
+
+        bool vibrationJustEnded = debugVibration && !exiting &&
+            autoEndAtSection && progress01 >= 1f;
         if (autoEndAtSection && progress01 >= 1f) EndStair();
 
         bool repeated23Mode =
@@ -1511,12 +1516,13 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         float baselineRough = waveType == 0 ? firstRoughness : waveType == 1 ? secondRoughness : thirdRoughness;
         float waveRough = baselineRough + measuredRoughnessGain * measured;
 
-
         float priorImpact = Mathf.Sqrt(2f * gravityN * priorAmplitude * (1f + lowerRatio));
         float impact = Mathf.Sqrt(2f * gravityN * currentAmplitude * (1f + lowerRatio));
         float riseSpeed = waveIndex == 0 ? initialWaveSpeed : restitution * priorImpact;
-        float forwardSpeed = Mathf.Max(.1f, Vector3.Dot(v, tangent));
-        float period = Mathf.Max(.001f, localWaveLength) / forwardSpeed;
+        // A fixed u and a fixed amplitude must produce the same Hermite
+        // height even when a contact abruptly changes velocity or the frame.
+        // Using dot(v,T) here used to create spurious 33-second periods.
+        float period = lockedWavePeriod;
         baseOffset = EvaluateWave(u, start, currentAmplitude, end, apex,
             riseSpeed, impact, period, waveRough);
         float normalAcceleration = Vector3.Dot((v - previousVelocity) / dt, normal);
@@ -1539,38 +1545,25 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         visualOffset = ProjectToEnvelope(rawOffset, lowerNormal, upperNormal);
         float entryFactor = Mathf.SmoothStep(0f, 1f, elapsed / Mathf.Max(.01f, entryBlendSeconds));
         visualOffset *= entryFactor;
-        float speedN = (visualOffset - previousOffset) / dt;
 
-        DebugPeriodic(
-            p,
-            v,
-            u,
-            localWaveLength,
-            forwardSpeed,
-            waveRough);
-
-        if (!firstWavePeakReady && waveIndex == 0 &&
-            u >= .15f && previousOffset >= .5f * currentAmplitude &&
-            previousOffsetSpeed > .02f && speedN <= 0f) {
-            firstWavePeakReady = true;
-            firstWavePeakRevision++;
-            firstWavePeakCY = initialCY + previousNormal.y * previousOffset;
-            firstWavePeakProgress01 = Mathf.Clamp01(
-                progress01 -
-                ds / Mathf.Max(.1f, effectiveSectionLength));
-            previousApexPosition = MapPoint(previousCarrier + Vector3.up * initialCY + previousNormal * previousOffset);
-
-            DebugEvent(
-                "APEX",
-                $"revision={firstWavePeakRevision} progress={firstWavePeakProgress01:F4} " +
-                $"CY={firstWavePeakCY:F4} previousOffset={previousOffset:F4} " +
-                $"world={previousApexPosition:F4} speedNBefore={previousOffsetSpeed:F4} speedNNow={speedN:F4}");
+        if (debugVibration) {
+            LogVibrationStep(dt, p, v, ds, u, period, riseSpeed, impact,
+                start, end, apex, highPass, rawOffset, entryFactor);
+            if (vibrationJustEnded) LogVibrationEnd();
         }
-        previousOffsetSpeed = speedN;
-        previousOffset = visualOffset;
-        previousNormal = normal;
+
         previousCarrier = p;
         previousVelocity = v;
+
+        // Two lines per second only while the wave is active.
+        if (Time.fixedTime >= nextWaveLogTime) {
+            nextWaveLogTime = Time.fixedTime + .5f;
+            Debug.Log($"[ExampleBVE][STATE] active={active} exiting={exiting} " +
+                $"index={waveIndex} type={waveType + 1} " +
+                $"progress={progress01:F3} u={currentWaveLocal01:F3} " +
+                $"offset={visualOffset:F4} displayReady={outputWritable}", this);
+        }
+
         if (addVisualRoll && ds > 0f) roll = Quaternion.AngleAxis(-ds / Mathf.Max(.01f, visualRadius) * Mathf.Rad2Deg, MapDirection(binormal)) * roll;
         bool terminalDone =
             !exiting ||
@@ -1582,15 +1575,11 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
             Mathf.Abs(residualOffset) < .005f &&
             Mathf.Abs(residualSpeed) < .05f) {
 
-            DebugEvent(
-                "END-COMPLETE",
-                $"progress={progress01:F4} traveled={traveled:F3} " +
-                $"residualOffset={residualOffset:F5} residualSpeed={residualSpeed:F5} " +
-                $"exitElapsed={exitElapsed:F3}");
-
             active = exiting = false;
             visualOffset = 0f;
             terminalOffset = 0f;
+            Debug.Log($"[ExampleBVE][FINISHED] waves={activeWaveCount} " +
+                $"distance={traveled:F2}", this);
         }
     }
 
@@ -1627,16 +1616,12 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     void ResolveWaveCycle(float progress, out float u, out float localWaveLength, out int priorWaveType) {
         float f = effectiveFBoundary;
 
-        FCoordinate fc = ResolveFCoordinate(progress, f);
-        fSide = fc.Side;
-        fDistance01 = fc.Distance01;
-        signedFLimit = fc.LegacySignedValue;
+        // F is part of F->G. This classification is used only internally.
+        fSide = progress < f ? -1 : 1;
 
         // Multiplier 1: P1 = 123.
         if (repeat23ChunkCount == 0) {
             recursiveChunkIndex = -1;
-            efLocal01 = progress;
-            fgLocal01 = 0f;
 
             ResolveUniformWaveSequence(
                 progress,
@@ -1654,10 +1639,9 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         }
 
         // E->F is the invariant prefix 123.
-        if (fc.Side < 0) {
+        if (fSide < 0) {
             recursiveChunkIndex = -1;
-            efLocal01 = Mathf.Clamp01(progress / f);
-            fgLocal01 = 0f;
+            float efLocal01 = Mathf.Clamp01(progress / f);
 
             ResolveUniformWaveSequence(
                 efLocal01,
@@ -1676,8 +1660,7 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
 
         // F->G is the recursive word R_n = 23 · R_(n-1), R_1 = 23.
         // F itself belongs to this right-hand side.
-        efLocal01 = 1f;
-        fgLocal01 = Mathf.Clamp01((progress - f) / (1f - f));
+        float fgLocal01 = Mathf.Clamp01((progress - f) / (1f - f));
 
         Resolve23Recursive(
             fgLocal01,
@@ -1820,20 +1803,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
                 : type - 1;
     }
 
-    static FCoordinate ResolveFCoordinate(float progress, float f) {
-        FCoordinate result;
-
-        if (progress < f) {
-            result.Side = -1;
-            result.Distance01 = Mathf.Clamp01((f - progress) / Mathf.Max(Eps, f));
-            return result;
-        }
-
-        result.Side = 1;
-        result.Distance01 = Mathf.Clamp01((progress - f) / Mathf.Max(Eps, 1f - f));
-        return result;
-    }
-
     static float EvaluateWave(float u, float start, float peak, float end, float apex,
         float riseSpeed, float impactSpeed, float period, float rough) {
         float risingTangent = Mathf.Min(Mathf.Max(0f, riseSpeed * period * apex), 3f * Mathf.Max(0f, peak - start));
@@ -1861,7 +1830,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         previousFilterNormal = normal;
         visualFilterReady = false;
         presentationFrameReady = true;
-        visualFilterResetCount++;
     }
 
     // One-Euro-inspired adaptation without adding another position filter.
@@ -1934,9 +1902,6 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
         // Material / renderer state remains source-authoritative even though the
         // source renderer itself is hidden while the proxy is visible.
         SyncPresentationFromOriginal();
-        // Detect Inspector toggles/parameter changes during Play mode.
-        SyncDisplaySpikes();
-
         float targetOffset = visualOffset;
 
         // T and -T represent the same tangent axis. Do not reset because of a
@@ -1996,6 +1961,10 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
                 Vector3.up * initialCY +
                 normal * presentedOffset);
 
+        if (debugVibration && active)
+            LogVibrationDisplay(MapPoint(
+                inSubject.transform.position + Vector3.up * initialCY));
+
         if (followSubjectRotation && subjectRotation) {
             Quaternion goal =
                 roll *
@@ -2021,4 +1990,3 @@ public sealed class ExampleBallVisualEqualizer : MonoBehaviour {
     }
 
 }
-

@@ -23,6 +23,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     [SerializeField]public float GroundAcceleration = 35f;
     const float MaxDeceleration = 80f;
     const float ResponseInverse = 8.333333f;
+    private Vector3 acceleration = Vector3.zero;
     const float AccelerationJerk = 600f;
 
     const float TargetMinDistance = .27f;
@@ -114,6 +115,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(0f)] [SerializeField] float maxStick = 1000f;
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
 
+
+    public bool AcceleFirstTurn = false;
     [Header("PlayerMotivation")] [SerializeField]
     public bool BeginCommandOnTouch = false;
     [Header("Debug")]
@@ -897,14 +900,26 @@ public float AdvancePredictedSplineDriveReadOnly(
         MainGameManager.TopTitle.SetActive(false);
         MainGameManager.PreviewIconRoot.SetActive(false);
         MainGameManager.TopLiteral.SetActive(false);
-        MainGameManager.PlayButton.SetActive(false);
+         MainGameManager.PlayButton.SetActive(false);
         MainGameManager.Userbility.SetActive(true);
         
-        if(!BeginCommandOnTouch)
-            MainGameManager.HopingSwipeTurn.SetActive(true);
-        
-        Earliest=true;
+       
         BeginCommandOnTouch = true;
+
+        Earliest=true;
+        if (!AcceleFirstTurn)
+        {
+            StartCoroutine(delayTurn());
+        }
+    }
+
+    IEnumerator delayTurn()
+    {
+        yield return new WaitForSeconds(1f);
+        if(!AcceleFirstTurn)
+        MainGameManager.PlayButton.SetActive(true);
+
+
     }
 
     IEnumerator Recover()
@@ -1183,10 +1198,15 @@ public float AdvancePredictedSplineDriveReadOnly(
         // Slopeへの切替そのものもSpline判定。
         if (guide.isSlope && !wasSlope)
         {
+            AcceleFirstTurn = true;
+
             TrySwitchStageCollidersOnSlopeEntry(hit);
             driveState = 0f;
             TransportToSpline(guide);
         }
+        
+
+        
 
         // Collider法線は使わない。
         // tangent / normal は必ずSpline Guideから構築。
@@ -1309,7 +1329,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             stickState = Move(stickState, desiredStick, StickJerk);
 
 
-            Vector3 acceleration =
+            acceleration =
                 surface.tangent * driveState
                 - surface.side * surface.lateralSpeed * ResponseInverse
                 - surface.normal * stickState;
@@ -2176,11 +2196,16 @@ public float AdvancePredictedSplineDriveReadOnly(
             valid = true,
             position = rb.position,
             rotation = rb.rotation,
-            velocity = rb.velocity,
-            angularVelocity = rb.angularVelocity,
+          
             direction = direction,
             useGravity = rb.useGravity
         };
+        if (AcceleFirstTurn)
+        {
+            turnTransitionSnapshot.velocity = rb.velocity;
+            turnTransitionSnapshot.angularVelocity = rb.angularVelocity;
+        }
+
 
         activeTurnDegrees =
             Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
@@ -2209,8 +2234,9 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (elapsed + Eps < hardFreeze)
             return;
-
-        ReleaseTurnBodyToMotion("HardFreezeElapsed");
+        
+        if(BeginCommandOnTouch)
+          ReleaseTurnBodyToMotion("HardFreezeElapsed");
     }
 
     void OnVisualTurnProgress(float visualProgress01)
@@ -2285,7 +2311,9 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         // Visual TweenがFreeze時間より短い設定でも必ずDynamicへ戻す。
         if (turnBodyFrozen)
+        {
             ReleaseTurnBodyToMotion("VisualTurnCompleted");
+        }
 
         turnTransitionActive = false;
         turnBodyFrozen = false;

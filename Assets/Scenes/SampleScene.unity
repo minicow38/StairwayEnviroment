@@ -309,7 +309,6 @@ GameObject:
   - component: {fileID: 64372319}
   - component: {fileID: 64372318}
   - component: {fileID: 64372317}
-  - component: {fileID: 64372320}
   - component: {fileID: 64372324}
   - component: {fileID: 64372323}
   - component: {fileID: 64372325}
@@ -406,33 +405,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 64372314}
   m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
---- !u!54 &64372320
-Rigidbody:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 64372314}
-  serializedVersion: 4
-  m_Mass: 1
-  m_Drag: 0
-  m_AngularDrag: 0.05
-  m_CenterOfMass: {x: 0, y: 0, z: 0}
-  m_InertiaTensor: {x: 1, y: 1, z: 1}
-  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ImplicitCom: 1
-  m_ImplicitTensor: 0
-  m_UseGravity: 1
-  m_IsKinematic: 0
-  m_Interpolate: 0
-  m_Constraints: 0
-  m_CollisionDetection: 0
 --- !u!114 &64372323
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -445,10 +417,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5129f7960e33af34b9400ec071551a35, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  targetBody: {fileID: 64372320}
-  targetLength: 0.8
-  minTime: 0.03
-  maxTime: 0.2
+  targetBody: {fileID: 1083418863}
+  coordinateSource: {fileID: 572935013}
+  equalizer: {fileID: 64372325}
+  trail: {fileID: 64372324}
+  viewCamera: {fileID: 330585545}
+  targetLength: 5
+  sampleSpacing: 0.05
+  teleportThreshold: 2.5
+  maximumSamples: 128
+  diagnosticCyanMaterial: 1
 --- !u!96 &64372324
 TrailRenderer:
   serializedVersion: 3
@@ -531,7 +509,7 @@ TrailRenderer:
       m_RotationOrder: 4
     colorGradient:
       serializedVersion: 2
-      key0: {r: 1, g: 0.9647059, b: 0.69803923, a: 0}
+      key0: {r: 1, g: 0.72291917, b: 0.69803923, a: 0}
       key1: {r: 1, g: 1, b: 1, a: 0}
       key2: {r: 0, g: 0, b: 0, a: 0}
       key3: {r: 0, g: 0, b: 0, a: 0}
@@ -540,7 +518,7 @@ TrailRenderer:
       key6: {r: 0, g: 0, b: 0, a: 0}
       key7: {r: 0, g: 0, b: 0, a: 0}
       ctime0: 0
-      ctime1: 65535
+      ctime1: 64995
       ctime2: 0
       ctime3: 0
       ctime4: 0
@@ -584,11 +562,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   inSubject: {fileID: 1083418863}
-  visualTarget: {fileID: 0}
+  visualTarget: {fileID: 64372315}
   autoCreateDisplayForRigidbody: 1
   hideOriginalRendererWhileTesting: 1
   actualDisplayTarget: {fileID: 64372315}
-  enableDisplaySpikes: 0
+  enableDisplaySpikes: 1
   displaySpikeCount: 60
   displaySpikeLength: 0.25
   displaySpikeWidth: 0.06
@@ -597,7 +575,7 @@ MonoBehaviour:
   coordinateSource: {fileID: 572935013}
   physicsFrame: {fileID: 0}
   visualFrame: {fileID: 0}
-  subjectRotation: {fileID: 0}
+  subjectRotation: {fileID: 572935009}
   followSubjectRotation: 1
   addVisualRoll: 0
   visualRadius: 0.5
@@ -609,6 +587,7 @@ MonoBehaviour:
   probeHeight: 2
   probeDepth: 8
   frameFollowHz: 10
+  frameTurnLimitDegreesPerSecond: 900
   roughFollowHz: 12
   roughnessReference: 0.4
   autoBeginOnDownhill: 1
@@ -621,14 +600,16 @@ MonoBehaviour:
   targetSlopeProgressPerecent: 0.42857143
   initialCY: 0
   initialHeight: 0.45
+  maximumFirstWaveHeightRatio: 0.5
   fallbackInitialNormalSpeed: 3.1367
   energyBlend: 0.35
   restitution: 0.86
-  lowerRatio: 0.75
-  firstApexFraction: 0.82
+  lowerRatio: 0.3
+  firstApexFraction: 0.5
   laterApexFraction: 0.5
   dampingPerMeter: 0.02
   exitDamping: 9
+  minimumWavePeriodSpeed: 6
   referencePlanarSpeed: 18
   motionHeightInfluence: 0.06
   patternVariation: 0.08
@@ -657,71 +638,12 @@ MonoBehaviour:
   adaptiveMinimumSmoothSeconds: 0.008
   resetFilterOnSharpNormalChange: 1
   filterNormalResetDegrees: 65
-  enableDebugLog: 1
-  debugPeriodicState: 1
-  debugWaveTransitions: 1
-  debugProbeTransitions: 1
-  debugLogInterval: 0.25
-  active: 0
-  exiting: 0
-  probeValid: 0
-  firstWavePeakReady: 0
-  waveIndex: -1
-  waveType: -1
-  activeWaveCount: 3
-  repeat23ChunkCount: 0
-  recursiveChunkIndex: -1
-  firstWavePeakRevision: 0
-  traveled: 0
-  progress01: 0
-  currentAmplitude: 0
-  efLocal01: 0
-  fgLocal01: 0
-  signedFLimit: 0
-  fSide: 0
-  fDistance01: 0
-  slope0: 0
-  slope1: 0
-  slope2: 0
-  signedCurvature: 0
-  roughness: 0
-  filteredRoughness: 0
-  baseOffset: 0
-  residualOffset: 0
-  residualSpeed: 0
-  residualAcceleration: 0
-  visualOffset: 0
-  presentedOffset: 0
-  presentedSpeed: 0
-  presentationSmoothSeconds: 0
-  adaptiveVisualSpeed: 0
-  adaptiveCutoffHz: 0
-  currentWaveLocal01: 0
-  visualFilterResetCount: 0
-  upperNormal: 0
-  lowerNormal: 0
-  firstWavePeakCY: 0
-  firstWavePeakProgress01: 0
-  tangent: {x: 0, y: 0, z: 1}
-  normal: {x: 0, y: 1, z: 0}
-  binormal: {x: 1, y: 0, z: 0}
-  outputWritable: 0
-  sampledHeights:
-  - 0
-  - 0
-  - 0
-  - 0
-  effectiveSectionLength: 0
-  effectiveFBoundary: 0
-  recursiveA1: 0
-  recursiveA2: 0
-  recursiveA3: 0
-  motionPattern: 0
-  motionCharacter01: 0
-  entryPlanarSpeed: 0
-  entryAlignment01: 0
-  terminalAmplitude: 0
-  terminalOffset: 0
+  debugVibration: 0
+  vibrationBurstSeconds: 0.45
+  vibrationPeriodicSeconds: 0.2
+  vibrationStepJumpWarning: 0.25
+  vibrationNormalWarningDegrees: 12
+  vibrationDisplayShiftWarning: 0.2
 --- !u!1 &122906458
 GameObject:
   m_ObjectHideFlags: 0
@@ -4507,6 +4429,7 @@ MonoBehaviour:
   flatStick: 24.6
   maxStick: 1000
   stickSafety: 1.08
+  AcceleFirstTurn: 0
   BeginCommandOnTouch: 0
   logCore: 0
   logDropoutDistance: 1
@@ -4896,213 +4819,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 290972297}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1206713370
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1206713371}
-  - component: {fileID: 1206713372}
-  m_Layer: 0
-  m_Name: EnvelopeSystem
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 0
---- !u!4 &1206713371
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1206713370}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 1492337658}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1206713372
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1206713370}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3dacad82e384b465ca80dc757af55f78, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::BallVisualNegativeEnvelopeCollider
-  slopeCore: {fileID: 1083418876}
-  correspondSubject: {fileID: 572935013}
-  ballVisualEqualizer: {fileID: 64372320}
-  ballVisualEqualizerCollider: {fileID: 64372317}
-  inSubjectCollider: {fileID: 1083418864}
-  segmentCount: 32
-  envelopeWidth: 10
-  upperColliderBaselineNormalInsetMeters: 0.06364
-  upperColliderCenterYOffsetY: 0
-  useRuntimeUpperPhysicMaterial: 1
-  upperDynamicFriction: 0
-  upperStaticFriction: 0
-  upperBounciness: 0
-  preferredContactPeriodSeconds: 0.16
-  firstWavePresentationCeilingR: 3.25
-  presentationCeilingR:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 4
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 3.8
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 2
-      value: 3.3
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 3
-      value: 2.5
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 6
-      value: 0.8
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  minimumPresentationCeilingR: 0.05
-  waveTimeDecayInfluence: 0.35
-  useEqualizerProjectionContinuity: 1
-  equalizerProjectionContinuityWindowMultiplier: 2.5
-  minimumEqualizerProjectionContinuityWindow01: 0.02
-  usePhysicalLowerImpactEnergyLoss: 1
-  physicalLowerImpactEnergyInfluence: 1
-  minimumPhysicalLowerImpactRetention01: 0.05
-  hybridUpperCaptureDistanceR: 0.75
-  hybridLowerCandidateDistanceR: 0.3
-  hybridUpperApproachSpeedRatio: 0.03
-  maximumPresentationPhaseAcceleration: 350
-  maximumPresentationHalfCycleFixedSteps: 24
-  periodObservationBlend: 0.15
-  armed: 0
-  envelopeBuilt: 0
-  sourceEnergyJoule: 0
-  canonicalReferenceHeight: 0
-  sourceEnergyAxisVisual: {x: 0, y: 1, z: 0}
-  canonicalEnergyRatio: 1
-  physicalLowerImpactEnergySampleCount: 0
-  lastPhysicalLowerRawRetention01: 1
-  lastPhysicalLowerAppliedRetention01: 1
-  lastPhysicalLowerEnergyReason: None
-  canonicalNormalAcceleration: 0
-  equalizerLaunchSpeed: 0
-  equalizerVerticalLaunchSpeed: 0
-  entryApexHeight: 0
-  capturedReleaseProgress01: 0
-  decayRatePerSecond: 0
-  decayTimeCostSeconds: 0
-  latestEnvelopeTravelTimeSeconds: 0
-  latestSlopeBaseLength: 0
-  latestColliderCurveLength: 0
-  latestCurveLengthRatio: 0
-  gamma: 0
-  minimumFreeAmplitude: 0
-  capturedEntryPhysics: {x: 0, y: 0, z: 0}
-  capturedLimitPhysics: {x: 0, y: 0, z: 0}
-  capturedTargetProgress01: 0
-  capturedEqualizerLaunchVelocityVisual: {x: 0, y: 0, z: 0}
-  equalizerUnderProgress01: 0
-  equalizerUnderSurfaceVisual: {x: 0, y: 0, z: 0}
-  equalizerUnderCenterVisual: {x: 0, y: 0, z: 0}
-  equalizerUnderTangentVisual: {x: 0, y: 0, z: 1}
-  equalizerUnderNormalVisual: {x: 0, y: 1, z: 0}
-  equalizerUnderClearanceMeters: 0
-  equalizerUnderProjectionValid: 0
-  arrivalTerminalActive: 0
-  arrivalTerminalTimeToGo: 0
-  arrivalTerminalBlend01: 0
-  resolvedContactPeriodSeconds: 0.1
-  resolvedHalfPeriodSeconds: 0.05
-  resolvedEnvelopeRadiusClearanceScale: 2
-  resolvedReleaseCenterTravelDistance: 0
-  resolvedReleaseSurfaceClearance: 0
-  resolvedReleaseTargetNormalSpeed: 0
-  resolvedReleasePhaseAcceleration: 0
-  presentationTimingExpanded: 0
-  presentationResolvedHalfCycleFixedSteps: 0
-  presentationRequiredPhaseAcceleration: 0
-  presentationPhaseAccelerationBudget: 0
-  presentationWaveIndex: 0
-  spatialWaveAuthorityActive: 0
-  spatialWaveAuthorityCount: 3
-  spatialWaveAuthorityProgress01: 0
-  presentationReleaseFixedTime: 0
-  presentationCurrentCeilingR: 0
-  presentationCurrentLegacyTravelR: 0
-  presentationCurrentResolvedTravelR: 0
-  presentationCurrentLossHnR: 0
-  presentationCurrentLegacyEnergyRetention01: 1
-  presentationCurrentLegacyTimeRetention01: 1
-  presentationCurrentRawLegacyRetention01: 1
-  presentationCurrentAppliedRetention01: 1
-  appliedUpperColliderBaselineNormalInsetMeters: 0
-  appliedUpperColliderCenterYOffsetY: 0
-  resolvedUpperColliderNormalShiftMeters: 0
-  resolvedUpperColliderEffectiveSpanMeters: 0
-  resolvedUpperColliderTargetDirectionVisual: {x: 0, y: 1, z: 0}
-  maxGroundSpeedExperimentCycleIndex: 0
-  maxGroundSpeedReadAvailable: 0
-  sourceMaxGroundSpeedReadOnly: 0
-  plannedMaxGroundSpeedForCycle: 0
-  plannedMaxGroundSpeedRatio: 1
-  baseExperimentPeriodSeconds: 0
-  nominalExperimentPeriodSeconds: 0
-  observedGeometryPeriodSeconds: 0
-  observedGeometryPeriodCorrectionRatio: 1
-  observedGeometryPeriodValid: 0
-  upperEnvelopeSolidEnabled: 0
-  upperEnvelopeSensorEnabled: 0
-  upperEnvelopeSensorOccupied: 0
-  upperEnvelopeMeshSwapCount: 0
-  hybridWaveFeasibilityAmplitudeScale01: 1
-  hybridWaveFeasibilityHalfPeriodSeconds: 0
-  hybridWaveFeasibilityAmplitudeLimited: 0
 --- !u!1 &1238057549
 GameObject:
   m_ObjectHideFlags: 0
@@ -5789,7 +5505,6 @@ Transform:
   - {fileID: 423131470}
   - {fileID: 572935009}
   - {fileID: 64372315}
-  - {fileID: 1206713371}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &1501976662

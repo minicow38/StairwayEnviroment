@@ -137,10 +137,7 @@ public sealed class RegainBallComposer : MonoBehaviour
             transform.GetComponent<SphereCollider>(), 
             GameObject.Find("BallVisual").GetComponent<SphereCollider>(),
             true);
-        Physics.IgnoreCollision(
-            transform.GetComponent<SphereCollider>(), 
-            GameObject.Find("BallVisualEqualizer").GetComponent<SphereCollider>(),
-            true);
+        
         ResolveReferences();
         ComposeImmediately();
     }
