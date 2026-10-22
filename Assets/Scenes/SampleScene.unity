@@ -422,18 +422,11 @@ MonoBehaviour:
   equalizer: {fileID: 64372325}
   trail: {fileID: 64372324}
   viewCamera: {fileID: 330585545}
-  targetLength: 5
+  targetLength: 8
   sampleSpacing: 0.05
   teleportThreshold: 2.5
-  maximumSamples: 128
-  diagnosticCyanMaterial: 1
-  solidRibbon: 1
-  ribbonWidth: 1.5
-  ribbonMaterial: {fileID: 2100000, guid: 1a941b9c7cc1eab45ac54eb85d9b5318, type: 2}
-  tailTaper: 0.12
-  conePower: 1
-  cornerMiterLimit: 1.3
-  meshSegmentLength: 0.16
+  maximumSamples: 192
+  meshSegmentLength: 0.08
 --- !u!96 &64372324
 TrailRenderer:
   serializedVersion: 3
@@ -480,7 +473,7 @@ TrailRenderer:
   m_PreviewTimeScale: 1
   m_Parameters:
     serializedVersion: 3
-    widthMultiplier: 1
+    widthMultiplier: 1.5333266
     widthCurve:
       serializedVersion: 2
       m_Curve:
@@ -494,14 +487,32 @@ TrailRenderer:
         inWeight: 0.33333334
         outWeight: 0.33333334
       - serializedVersion: 3
-        time: 0.2480916
-        value: 1.0110453
-        inSlope: 0
-        outSlope: 0
+        time: 0.22407426
+        value: 0.6530248
+        inSlope: -1.7916063
+        outSlope: -1.7916063
         tangentMode: 0
         weightedMode: 0
-        inWeight: 0
-        outWeight: 0
+        inWeight: 0.7675688
+        outWeight: 0.57854915
+      - serializedVersion: 3
+        time: 0.41801405
+        value: 0.39423382
+        inSlope: -1.3931115
+        outSlope: -1.3931115
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.8344358
+        outWeight: 0.3875354
+      - serializedVersion: 3
+        time: 0.59190106
+        value: 0.15893412
+        inSlope: -0.5623359
+        outSlope: -0.5623359
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.3320083
+        outWeight: 0.35739565
       - serializedVersion: 3
         time: 0.88276994
         value: 0

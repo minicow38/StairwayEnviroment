@@ -621,9 +621,8 @@ public sealed class CorrespondSubject : MonoBehaviour
                     if(MainGameManager.HopingSwipeTurn.activeInHierarchy)
                         MainGameManager.HopingSwipeTurn.SetActive(false);
                     StickBeforeNextTurn = true;
-                    PointToPlane++;
                 }
-
+                PointToPlane++;
                 Apply(1f);
                 turnTween = null;
                 turnCompleted?.Invoke();
