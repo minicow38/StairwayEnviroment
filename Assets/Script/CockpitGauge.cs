@@ -51,21 +51,9 @@ public sealed class CockpitGauge : MonoBehaviour
     // At 40, another right tap enters DEAD; left from DEAD returns to 40.
     public void Step(int amount)
     {
-        if (amount > 0)
-        {
-            if (dead) return;
-            if (value >= 39.999f) dead = true;
-            else value = Mathf.Min(40f, value + amount);
-        }
-        else if (amount < 0)
-        {
-            if (dead)
-            {
-                dead = false;
-                value = 40f;
-            }
-            else value = Mathf.Max(4f, value + amount);
-        }
+        MainGameManager.core.MaxGroundSpeed = value + amount;
+        value = Mathf.Max(4f, value + amount);
+
         if (!Application.isPlaying) ApplyImmediately();
     }
 
@@ -170,5 +158,21 @@ public sealed class CockpitGauge : MonoBehaviour
             Transform child = transform.Find("Digital Reading");
             if (child) digitalText = child.GetComponent<Text>();
         }
+    }
+
+    public void RightTap()
+    {
+        if (value < 44)
+        {
+            Step(+8);
+        }
+    }
+    public void LeftTap()
+    {
+        if (value > 8)
+        {
+            Step(-8);
+        }
+
     }
 }

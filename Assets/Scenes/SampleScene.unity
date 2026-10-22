@@ -726,16 +726,18 @@ MonoBehaviour:
   m_GameObject: {fileID: 73219667}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 23c0298c2636bc44a94a73ae2c23999b, type: 3}
+  m_Script: {fileID: 11500000, guid: e28d883a07ce9c948be13d42174342b6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   value: 24
   dead: 0
+  angleAt4Z: 120
+  angleAt40Z: -96
+  angleAtDeadZ: -120
+  needleArtOffsetZ: 0
   smoothSpeed: 12
-  needle: {fileID: 0}
+  needle: {fileID: 980791499}
   digitalText: {fileID: 0}
-  currentAngle: -0.000005722046
-  initialized: 0
 --- !u!1 &122906458
 GameObject:
   m_ObjectHideFlags: 0
@@ -826,7 +828,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Button
+  m_text: 
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -1313,7 +1315,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Button
+  m_text: 
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -2139,8 +2141,8 @@ RectTransform:
   m_LocalScale: {x: 0, y: 0, z: 0}
   m_ConstrainProportionsScale: 0
   m_Children:
-  - {fileID: 530250597}
   - {fileID: 1702514362}
+  - {fileID: 530250597}
   - {fileID: 980791499}
   m_Father: {fileID: 1123622085}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -2856,8 +2858,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: -233.2}
-  m_SizeDelta: {x: 160, y: 30}
+  m_AnchoredPosition: {x: -195.3, y: -522.8}
+  m_SizeDelta: {x: 150, y: 300}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &530250598
 MonoBehaviour:
@@ -2902,7 +2904,19 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 530250599}
   m_OnClick:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 73219669}
+        m_TargetAssemblyTypeName: CockpitGauge, Assembly-CSharp
+        m_MethodName: LeftTap
+        m_Mode: 1
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
 --- !u!114 &530250599
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2916,14 +2930,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 0.21960786, g: 0.21960786, b: 0.21960786, a: 0}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 10905, guid: 0000000000000000f000000000000000, type: 0}
+  m_Sprite: {fileID: 0}
   m_Type: 1
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -4423,10 +4437,10 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 980791498}
-  m_LocalRotation: {x: 0.0026116113, y: 0.9975606, z: -0.06975623, w: 0.00018262162}
+  m_LocalRotation: {x: 0, y: 0, z: -0.000000049934272, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: -13.027745}
   m_LocalScale: {x: 0.24248715, y: 0.24248694, z: 0.24248706}
-  m_ConstrainProportionsScale: 1
+  m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 386783784}
   m_LocalEulerAnglesHint: {x: 8, y: 180, z: 0.3}
@@ -4449,8 +4463,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_RaycastTarget: 1
-  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_RaycastTarget: 0
+  m_RaycastPadding: {x: 273.12, y: 742.78, z: 265.79, w: 212.1}
   m_Maskable: 1
   m_OnCullStateChanged:
     m_PersistentCalls:
@@ -6767,8 +6781,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: -233.2}
-  m_SizeDelta: {x: 160, y: 30}
+  m_AnchoredPosition: {x: -45.8, y: -522.1}
+  m_SizeDelta: {x: 150, y: 300}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1702514363
 MonoBehaviour:
@@ -6813,7 +6827,19 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 1702514364}
   m_OnClick:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 73219669}
+        m_TargetAssemblyTypeName: CockpitGauge, Assembly-CSharp
+        m_MethodName: RightTap
+        m_Mode: 1
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
 --- !u!114 &1702514364
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6827,14 +6853,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 1, g: 1, b: 1, a: 0}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 10905, guid: 0000000000000000f000000000000000, type: 0}
+  m_Sprite: {fileID: 0}
   m_Type: 1
   m_PreserveAspect: 0
   m_FillCenter: 1

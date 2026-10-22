@@ -10,9 +10,12 @@ using Sirenix.OdinInspector;
 public sealed class SlopeStickCore : MonoBehaviour
 {
     
-    public float MaxGroundSpeedReadOnly =>
-        Mathf.Max(0f, maxGroundSpeed);
-
+    public float MaxGroundSpeed
+    {
+        get => maxGroundSpeed;
+        set => maxGroundSpeed = Mathf.Max(0f, value);
+    }
+    public float MaxGroundSpeedReadOnly => MaxGroundSpeed;
     public float TargetSlopeProgress01ReadOnly =>
         TargetProgress;
 
