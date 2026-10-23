@@ -468,19 +468,21 @@ public sealed class CorrespondSubject : MonoBehaviour
             );
         }
 
-        turnTween = DOTween.To(
-                () => 0f,
-                Apply,
-                playerAngle,
-                turnDuration
-            )
-            .SetEase(turnEase)
-            .SetUpdate(UpdateType.Fixed)
-            .OnComplete(() =>
-            {
-                Apply(playerAngle);
-                turnTween = null;
-            });
+        
+            turnTween = DOTween.To(
+                    () => 0f,
+                    Apply,
+                    playerAngle,
+                    turnDuration
+                )
+                .SetEase(turnEase)
+                .SetUpdate(UpdateType.Fixed)
+                .OnComplete(() =>
+                {
+                    Apply(playerAngle);
+                    turnTween = null;
+                });
+        
     }
 
     /// <summary>

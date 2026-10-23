@@ -2176,7 +2176,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         bool visualTurnStarted = false;
 
-        if (correspondSubject && visualPlayerRoot )
+        if (correspondSubject && visualPlayerRoot && MainGameManager.RightDragOnMeter.IsGlowMode)
         {
             Vector3 pivot =
                 visualRotationPivot
