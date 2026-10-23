@@ -1,0 +1,29 @@
+CockpitSegmentMeter for Unity 2022.3 / uGUI
+
+ファイル: CockpitGauge.cs, GaugeSegmentGraphic.cs
+
+[設置]
+1. 既存 CockpitGauge.cs を差し替える（同名クラスは重複させない）。
+2. Canvas > UI > Image を作り、名前を CockpitMeter にする。
+3. RectTransform の幅160 / 高さ430程度、Pivotの位置は任意。
+4. Image の色は透明でよい。親 Image はクリック受付用なので Raycast Target を有効にする。
+5. CockpitMeter に CockpitGauge を追加する。
+6. Segments 10本と非表示の __ValueSlider が自動生成される。各目盛りの左端は揃う。
+7. 数値表示が必要なら子オブジェクトに UI Text を用意し、Digital Text に割り当てる。
+8. シーンに EventSystem があることを確認する。スマートフォンでは標準のUI入力モジュールを使用する。
+
+[操作]
+通常表示 #15（デュアルカラー） -> 指で2秒長押し -> #10（3D/発光風） ->
+指を押したまま上スワイプ +4 / 下スワイプ -4（初期設定、1セグメント分） ->
+指を離すと #15 に戻る。
+
+[値の割り当て]
+10段 = 4,8,12,16,20,24,28,32,36,40。
+スワイプ1段分の変化幅は CockpitGauge の Value Per Swipe で設定可能（8に変更すれば2段ずつ）。
+変更時のみ元コード同様 MainGameManager.core.MaxGroundSpeed に反映する。
+元の RightTap / LeftTap / Step / Value / Dead も残してある。
+旧 Needle や旧スピードメーター表示は使用しない。旧 UI は取り外すか無効化する。
+
+[発光について]
+本コードは uGUI の描画で発光のハローとハイライトを擬似的に表現する。
+スクリーン全体への本物の Bloom や HDR 発光は標準 Canvas Image だけでは発生しない。

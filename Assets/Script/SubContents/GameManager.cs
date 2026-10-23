@@ -13,6 +13,10 @@ public class MainGameManager : MonoBehaviour
     public static CorrespondSubject reSubject;
     public TextMeshProUGUI displayScore;
     public TextMeshProUGUI displayCoin;
+    
+    public static CockpitGauge RightDragOnMeter;
+    public static CockpitGauge2 LeftOneTapMeter;
+
 
     public static GameObject Userbility;
     public static GameObject TopLiteral;
@@ -63,6 +67,9 @@ public class MainGameManager : MonoBehaviour
        // PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = Coin.ToString();
         TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.currentScore.ToString("");
         
+        RightDragOnMeter = GameObject.Find("SegmentLVInGauge").transform.GetComponent<CockpitGauge>();
+        LeftOneTapMeter = GameObject.Find("GameUI/StairwayUserbility/CockpitGauge ").transform.GetComponent<CockpitGauge2>();
+        
         QualitySettings.vSyncCount = 0;
         Application.targetFrameRate = 60;
         HopingSwipeTurn.SetActive(false);
@@ -72,6 +79,9 @@ public class MainGameManager : MonoBehaviour
         displayScore = GameObject.Find("StairwayUserbility/Score/").transform.GetComponent<TextMeshProUGUI>();
         displayCoin = GameObject.Find("StairwayUserbility/Coin/").transform.GetComponent<TextMeshProUGUI>();
         Userbility = GameObject.Find("GameUI/StairwayUserbility").transform.gameObject;
+        
+       
+
         Userbility.transform.gameObject.SetActive(false);
         displayScore.text = AndroidOneOnly.currentScore.ToString("");
         Material activeMaterial =

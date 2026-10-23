@@ -130,8 +130,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     static readonly int[] InitialStartPattern =
     {
-        -1, 0, -5, 0, -5, 0, -5, 0, -5,
-        0, -5, 0, -5, 0, -5, 0,-5
+        -1, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0,0
     };
 
     public int startDashDot = 0;
@@ -1222,7 +1222,16 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         bool slope, int scale, int plan, int segmentIndex)
     {
         if (PlaneTime)
+        {
+            Debug.LogWarning(
+                $"[BOARD SKIPPED] " +
+                $"start={worldStart:F3} " +
+                $"end={(worldStart + worldDirection):F3} " +
+                $"length={worldDirection.magnitude:F3} " +
+                $"slope={slope}"
+            );
             return;
+        }
 
         // ============================================================
         // World -> Local

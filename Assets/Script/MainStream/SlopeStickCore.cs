@@ -1140,6 +1140,17 @@ public float AdvancePredictedSplineDriveReadOnly(
         float lastHitOriginDistance = currentHit.transform != null
             ? Vector3.Distance(transform.position, currentHit.transform.position)
             : -1f;
+        
+        Debug.Log(
+            $"[DROPOUT CHECK] " +
+            $"grounded={grounded} " +
+            $"distance={lastHitOriginDistance:F3} " +
+            $"lastHit={currentHit.transform?.name} " +
+            $"newHit={hit.transform?.name} " +
+            $"pos={rb.position:F3} " +
+            $"velocity={rb.velocity:F3}"
+        );
+        
         bool justLostGround = previousGroundedForDropoutLog && !grounded;
         if (logDropoutDistance && !grounded &&
             (justLostGround || lastHitOriginDistance >= 9f) &&

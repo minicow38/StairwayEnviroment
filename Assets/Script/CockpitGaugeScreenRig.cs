@@ -10,7 +10,7 @@ using UnityEngine.UI;
 public sealed class CockpitGaugeScreenRig : MonoBehaviour
 {
     [Header("Scene References / シーン上の時計")]
-    [SerializeField] CockpitGauge gauge;
+    [SerializeField] CockpitGauge2 gauge;
     [SerializeField] RectTransform backgroundFace;
     [SerializeField] Camera projectionCameraOverride;
 
@@ -25,9 +25,9 @@ public sealed class CockpitGaugeScreenRig : MonoBehaviour
     [Tooltip("ON: 時計の表示角度も投影。針は時計の回転角+数値の回転角になります。")]
     [SerializeField] bool followDialRotation = true;
 
-    public CockpitGauge Gauge => gauge;
+    public CockpitGauge2 Gauge => gauge;
 
-    public void Setup(CockpitGauge owner, RectTransform source, Canvas canvas,
+    public void Setup(CockpitGauge2 owner, RectTransform source, Canvas canvas,
         RectTransform foreground, RectTransform hitSurface,
         RectTransform needle, Text reading)
     {

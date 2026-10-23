@@ -45,6 +45,17 @@ public class GettingTraffic_Corn : MonoBehaviour
         string hit1 = "";
         Match fit = Regex.Match(transform.parent.name, @"(.*)_Physics");
         
+        Debug.LogWarning(
+            $"[THORN TRIGGER] " +
+            $"hazard={gameObject.name} " +
+            $"other={other.name} " +
+            $"otherLayer={LayerMask.LayerToName(other.gameObject.layer)} " +
+            $"otherRoot={other.transform.root.name} " + $"rigidbody={(other.attachedRigidbody? other.attachedRigidbody.name : "NONE")} " +
+            $"hazardPos={transform.position:F3} " +
+            $"otherPos={other.transform.position:F3} " +
+            $"time={Time.fixedTime:F3}",
+            this
+        );
         if (fit.Success)
         {
             hit1 = fit.Groups[1].Value;

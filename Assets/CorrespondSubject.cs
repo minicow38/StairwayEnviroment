@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using DG.Tweening;
 using System.Text.RegularExpressions;
@@ -54,6 +55,9 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     // Scene初期状態のVisual/Stage座標系を保存します。
     // VisualPlayerRootはworld Pose、StageRootは親との関係を保つためlocal Poseで保持します。
+
+    public CockpitGauge LeftOneTapMeter;
+    public CockpitGauge2 RightDragOnMeter;
 
     public bool StickBeforeNextTurn;
     bool hasInitialVisualPlayerRootPose;
@@ -236,6 +240,12 @@ public sealed class CorrespondSubject : MonoBehaviour
         ValidateSetup();
     }
 
+    void Start()
+    {
+        Debug.Log("");
+        //RightDragOnMeter=
+    }
+    
     void FixedUpdate()
     {
         if (synchronizeInFixedUpdate)
@@ -603,7 +613,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             durationOverrideSeconds > 0f
                 ? Mathf.Max(0.01f, durationOverrideSeconds)
                 : turnDuration;
-        if(MainGameManager.core.AcceleFirstTurn &&( (MainGameManager.core.StickSlopePharse &&!StickBeforeNextTurn) ||(!MainGameManager.core.StickSlopePharse)))
+        if(MainGameManager.RightDragOnMeter.IsGlowMode && MainGameManager.core.AcceleFirstTurn &&( (MainGameManager.core.StickSlopePharse &&!StickBeforeNextTurn) ||(!MainGameManager.core.StickSlopePharse)))
         turnTween = DOTween.To(
                 () => 0f,
                 Apply,

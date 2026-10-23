@@ -6,12 +6,12 @@ using UnityEngine.EventSystems;
 public sealed class CockpitGaugeScreenTap : MonoBehaviour,
     IPointerClickHandler, ICanvasRaycastFilter
 {
-    [SerializeField] CockpitGauge gauge;
+    [SerializeField] CockpitGauge2 gauge;
     [SerializeField] RectTransform wholeTouchSurface;
     [SerializeField] bool increase;
     [SerializeField, Range(.5f, 1f)] float circleRadiusFraction = .98f;
 
-    public void Setup(CockpitGauge owner, RectTransform all, bool isIncrease)
+    public void Setup(CockpitGauge2 owner, RectTransform all, bool isIncrease)
     {
         gauge = owner;
         wholeTouchSurface = all;

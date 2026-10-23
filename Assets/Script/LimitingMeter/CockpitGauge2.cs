@@ -5,7 +5,7 @@ using UnityEngine.UI;
 // Compatible with the CockpitGauge v3 UI hierarchy and Inspector.
 [ExecuteAlways]
 [DisallowMultipleComponent]
-public sealed class CockpitGauge : MonoBehaviour
+public sealed class CockpitGauge2 : MonoBehaviour
 {
     [Header("Reading / 数値")]
     [SerializeField, Range(4f, 40f)] float value = 24f;
