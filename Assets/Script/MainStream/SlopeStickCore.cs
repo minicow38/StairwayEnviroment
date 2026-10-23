@@ -1150,7 +1150,6 @@ public float AdvancePredictedSplineDriveReadOnly(
             $"pos={rb.position:F3} " +
             $"velocity={rb.velocity:F3}"
         );
-        
         bool justLostGround = previousGroundedForDropoutLog && !grounded;
         if (logDropoutDistance && !grounded &&
             (justLostGround || lastHitOriginDistance >= 9f) &&
@@ -2176,7 +2175,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         bool visualTurnStarted = false;
 
-        if (correspondSubject && visualPlayerRoot && MainGameManager.RightDragOnMeter.IsGlowMode)
+        if (correspondSubject && visualPlayerRoot )
         {
             Vector3 pivot =
                 visualRotationPivot

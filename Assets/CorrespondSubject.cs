@@ -468,21 +468,19 @@ public sealed class CorrespondSubject : MonoBehaviour
             );
         }
 
-        
-            turnTween = DOTween.To(
-                    () => 0f,
-                    Apply,
-                    playerAngle,
-                    turnDuration
-                )
-                .SetEase(turnEase)
-                .SetUpdate(UpdateType.Fixed)
-                .OnComplete(() =>
-                {
-                    Apply(playerAngle);
-                    turnTween = null;
-                });
-        
+        turnTween = DOTween.To(
+                () => 0f,
+                Apply,
+                playerAngle,
+                turnDuration
+            )
+            .SetEase(turnEase)
+            .SetUpdate(UpdateType.Fixed)
+            .OnComplete(() =>
+            {
+                Apply(playerAngle);
+                turnTween = null;
+            });
     }
 
     /// <summary>
@@ -615,7 +613,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             durationOverrideSeconds > 0f
                 ? Mathf.Max(0.01f, durationOverrideSeconds)
                 : turnDuration;
-        if(MainGameManager.RightDragOnMeter.IsGlowMode && MainGameManager.core.AcceleFirstTurn &&( (MainGameManager.core.StickSlopePharse &&!StickBeforeNextTurn) ||(!MainGameManager.core.StickSlopePharse)))
+        if(MainGameManager.core.AcceleFirstTurn &&( (MainGameManager.core.StickSlopePharse &&!StickBeforeNextTurn) ||(!MainGameManager.core.StickSlopePharse)))
         turnTween = DOTween.To(
                 () => 0f,
                 Apply,
