@@ -73,6 +73,10 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     [SerializeField] bool logInvalidSetup = true;
 
+    [Header("Extreme Point Effect / 極限ポイント")]
+    [Tooltip("0地点を通過してから階段を抜けるまで再生するParticle。未設定なら表示用Subjectの子に自動作成します。")]
+    [SerializeField] ParticleSystem extremePointParticle;
+
     // Root参照を使用できない場合だけ使う互換用の手動回転です。
     Quaternion fallbackCoordinateRotation = Quaternion.identity;
 
@@ -224,6 +228,9 @@ public sealed class CorrespondSubject : MonoBehaviour
     {
         if (!subjectBody)
             subjectBody = GetComponent<Rigidbody>();
+
+        EnsureExtremePointParticle();
+
         if (!ballVisualBody)
         {
             GameObject ball =
@@ -250,6 +257,55 @@ public sealed class CorrespondSubject : MonoBehaviour
     {
         if (synchronizeInFixedUpdate)
             SynchronizeNow();
+    }
+
+    // 表示側SubjectにParticleSystemを一度だけ配置して使い回す。
+    // InSubject（物理側）にはParticleSystemを追加しない。
+    void EnsureExtremePointParticle()
+    {
+        if (!extremePointParticle)
+        {
+            Transform host = subjectBody ? subjectBody.transform : transform;
+            Transform existing = host.Find("__ExtremePointParticle");
+            if (existing)
+                extremePointParticle = existing.GetComponent<ParticleSystem>();
+
+            if (!extremePointParticle)
+            {
+                GameObject effectObject = new GameObject("__ExtremePointParticle");
+                effectObject.transform.SetParent(host, false);
+                extremePointParticle = effectObject.AddComponent<ParticleSystem>();
+            }
+        }
+
+        var main = extremePointParticle.main;
+        main.playOnAwake = false;
+        main.loop = true;
+        StopExtremePointEffect();
+    }
+
+    // SlopeStickCoreが極限ポイント（進捗誤差 - -> 0以上）を通過したとき呼び出す。
+    public void PlayExtremePointEffect()
+    {
+        if (!extremePointParticle)
+            EnsureExtremePointParticle();
+
+        if (!extremePointParticle || !extremePointParticle.gameObject.activeInHierarchy)
+            return;
+
+        extremePointParticle.Stop(
+            true, ParticleSystemStopBehavior.StopEmittingAndClear);
+        extremePointParticle.Play(true);
+    }
+
+    // SlopeStickCoreが階段->平面、復帰、再構築を検出したとき呼び出す。
+    public void StopExtremePointEffect()
+    {
+        if (!extremePointParticle)
+            return;
+
+        extremePointParticle.Stop(
+            true, ParticleSystemStopBehavior.StopEmittingAndClear);
     }
 
     /// <summary>

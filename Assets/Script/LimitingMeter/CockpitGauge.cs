@@ -279,7 +279,7 @@ public sealed class CockpitGauge : MonoBehaviour,
     void ApplyToGame()
     {
         if (MainGameManager.core != null)
-            MainGameManager.core.MaxGroundSpeed = value;
+            MainGameManager.core.targetSlopeProgressPercent = value;
     }
 
     float EffectivePixelsPerStep()
@@ -531,6 +531,7 @@ public sealed class CockpitGauge : MonoBehaviour,
         }
         if (digitalText != null) digitalText.text = dead ? "DEAD" : value.ToString("0");
         observedValue = value;
+        
         observedDead = dead;
     }
 

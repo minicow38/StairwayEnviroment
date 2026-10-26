@@ -132,6 +132,14 @@ public sealed class SlopeStickCore : MonoBehaviour
     float nextDropoutLogFixedTime;
     bool previousGroundedForDropoutLog = true;
 
+    // 進捗誤差が負から0以上になった瞬間だけ、表示側へ通知する。
+    NearestKnotDetector.GuideFrame extremePointSection;
+    bool extremePointSectionValid;
+    bool extremePointHasPrevious;
+    bool extremePointFiredInSection;
+    float previousExtremePointError;
+    float previousExtremePointTarget;
+
     Rigidbody rb;
     Vector3 direction;
 
@@ -1082,6 +1090,79 @@ public float AdvancePredictedSplineDriveReadOnly(
             Debug.LogWarning(message, this);*/
     }
 
+    // 比較不能な間は直前サンプルを捨てる。発火済み区間は保持する。
+    void PauseExtremePointTracking()
+    {
+        extremePointHasPrevious = false;
+    }
+
+    // 平面に戻ったとき、またはゲーム再構築時だけ再武装する。
+    // 階段の中でKnot/Sectionが切り替わっても発火済みフラグを消さない。
+    void ResetExtremePointTracking()
+    {
+        extremePointSection = default;
+        extremePointSectionValid = false;
+        extremePointFiredInSection = false;
+        extremePointHasPrevious = false;
+        previousExtremePointError = 0f;
+        previousExtremePointTarget = 0f;
+    }
+
+    // 階段 -> 平面を観測した物理フレームでParticleを止める。
+    // 非接地やSplineの一時的な欠測ではStopしない。
+    void CompleteExtremePointAtFlat()
+    {
+        if (!extremePointSectionValid)
+            return;
+
+        correspondSubject?.StopExtremePointEffect();
+        ResetExtremePointTracking();
+    }
+
+    void ObserveExtremePoint(NearestKnotDetector.GuideFrame guide)
+    {
+        if (!guide.valid || !guide.isSlope || !knotDetector || MainGameManager.OnDead)
+        {
+            PauseExtremePointTracking();
+            return;
+        }
+
+        bool sameSection = extremePointSectionValid &&
+            knotDetector.IsSameSection(extremePointSection, guide);
+
+        if (!sameSection)
+        {
+            extremePointSection = guide;
+            extremePointSectionValid = true;
+            // 発火済みフラグは保持。解除するのはFlatへの移行時だけ。
+            extremePointHasPrevious = false;
+        }
+
+        float target = TargetProgress;
+        float error = guide.sectionProgress01 - target;
+
+        // Inspector/UIで設定値が変わっただけでは発火させない。
+        bool targetUnchanged = extremePointHasPrevious &&
+            Mathf.Abs(previousExtremePointTarget - target) <= Eps;
+
+        bool crossedZero = targetUnchanged &&
+            previousExtremePointError < 0f && error >= 0f;
+
+        // 目標が0%なら、斜面の最初の有効なサンプルを発火点とする。
+        bool enteredAtZero = !extremePointHasPrevious &&
+            target <= Eps && error >= 0f;
+
+        if (!extremePointFiredInSection && (crossedZero || enteredAtZero))
+        {
+            extremePointFiredInSection = true;
+            correspondSubject?.PlayExtremePointEffect();
+        }
+
+        previousExtremePointError = error;
+        previousExtremePointTarget = target;
+        extremePointHasPrevious = true;
+    }
+
     void FixedUpdate()
     {
         // Updateで予約した90度旋回を、物理/Spline観測より先に1回だけ適用する。
@@ -1097,6 +1178,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         // UTurnはHardFreeze解除時に90度方向転換済み。円弧追従は行わない。
         if (turnTransitionActive)
         {
+            PauseExtremePointTracking();
             AdvanceTurnTransition();
             if (turnBodyFrozen)
             {
@@ -1122,6 +1204,11 @@ public float AdvancePredictedSplineDriveReadOnly(
             LoseSupport();
             return;
         }
+
+        // 平面の最初の有効なGuideで、必ず停止・再武装。
+        // BeginCommandOnTouch / 接地状態より前に判定して取りこぼしを防ぐ。
+        if (!guide.isSlope)
+            CompleteExtremePointAtFlat();
 
         currentGuide = guide;
         currentGuideValid = true;
@@ -1214,6 +1301,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!surface.Valid)
         {
             currentSurfaceValid = false;
+            PauseExtremePointTracking();
             return;
         }
 
@@ -1244,6 +1332,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!surface.Valid)
         {
             currentSurfaceValid = false;
+            PauseExtremePointTracking();
             return;
         }
 
@@ -1278,6 +1367,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             // まだ旋回前Splineを見ている
             if (alignment < TurnGuideAlignmentMin)
             {
+                PauseExtremePointTracking();
                 // 旋回前Spline方向へのDriveを止める
                 driveState = 0f;
 
@@ -1320,6 +1410,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (fiveLineCorrectionActive)
         {
+            PauseExtremePointTracking();
             StepFiveLineCorrection(ref surface);
 
             stickState = Move(stickState, flatStick, StickJerk);
@@ -1345,6 +1436,9 @@ public float AdvancePredictedSplineDriveReadOnly(
             UpdateBallVisualSplinePlan(
                 guide,
                 surface);
+
+            // 最新の物理Spline進行度で -0 -> +0 の境界を検知する。
+            ObserveExtremePoint(guide);
 
             float release = guide.isSlope
                 ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd)
@@ -1372,6 +1466,10 @@ public float AdvancePredictedSplineDriveReadOnly(
             {
                 ;
             }
+        }
+        else
+        {
+            PauseExtremePointTracking();
         }
     }
 
@@ -1674,6 +1772,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void LoseSupport()
     {
+        PauseExtremePointTracking();
         wasSlope = false;
         driveState = 0f;
         stickState = 0f;
@@ -1806,6 +1905,8 @@ public float AdvancePredictedSplineDriveReadOnly(
     /// </summary>
     void ResetRestartTransientStateSoft()
     {
+        correspondSubject?.StopExtremePointEffect();
+        ResetExtremePointTracking();
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
         trackingFlick = false;
@@ -2425,6 +2526,8 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void ClearSmoothTurnStateForStageRebuild()
     {
+        correspondSubject?.StopExtremePointEffect();
+        ResetExtremePointTracking();
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
         trackingFlick = false;
