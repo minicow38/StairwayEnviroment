@@ -34,6 +34,8 @@ public class MainGameManager : MonoBehaviour
     public static int lastTouch = 0;
     public static int Coin = 0;
     public static GameObject HopingSwipeTurn;
+
+    public static bool OnInifnite = false;
     public static bool OnDead = false;
     public static bool OpenChunkStage = false;
     public static SlopeStickCore core;

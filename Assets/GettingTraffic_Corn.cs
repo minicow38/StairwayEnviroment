@@ -79,6 +79,8 @@ public class GettingTraffic_Corn : MonoBehaviour
             if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
                MainGameManager.core.BeginCommandOnTouch = false;
+              // if (!MainGameManager.OnDead && MainGameManager.OnInifnite)
+
                if (!MainGameManager.OnDead)
                {
                    MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;

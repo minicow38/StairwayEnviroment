@@ -1162,6 +1162,8 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         bool crossedZero = targetUnchanged &&
             previousExtremePointError < 0f && error >= 0f;
+        
+        MainGameManager.OnInifnite = crossedZero;
 
         // 目標が0%なら、斜面の最初の有効なサンプルを発火点とする。
         bool enteredAtZero = !extremePointHasPrevious &&
