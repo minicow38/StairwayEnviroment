@@ -159,6 +159,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector2 flickStart;
     bool trackingFlick;
     bool flickConsumed;
+    // Android/iPhone: the specific game-play touch that began outside the gauge.
+    int activeFlickFingerId = -1;
     float pendingTurnDegrees;
     float pendingTurnQueuedTime = -1f;
 
@@ -904,6 +906,19 @@ public float AdvancePredictedSplineDriveReadOnly(
     void Update()
     {
         ReadTurnFlick();
+    }
+
+    void OnDisable()
+    {
+        ResetFlickGesture();
+        correspondSubject?.ResetTurnGestureTracking();
+    }
+
+    void OnApplicationPause(bool paused)
+    {
+        if (!paused) return;
+        ResetFlickGesture();
+        correspondSubject?.ResetTurnGestureTracking();
     }
 
     public void PushStart()
@@ -1909,8 +1924,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         ResetExtremePointTracking();
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
-        trackingFlick = false;
-        flickConsumed = false;
+        ResetFlickGesture();
+        correspondSubject?.ResetTurnGestureTracking();
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
 
         turnTransitionActive = false;
@@ -2031,40 +2046,127 @@ public float AdvancePredictedSplineDriveReadOnly(
             visualPlayerRoot);
     }
 
+    // The gauge owns which touch started on its UI. The core consumes only
+    // game-originated gestures; the CorrespondSubject remains responsible for
+    // the visual-frame turn itself. No cooldown timer is introduced.
     void ReadTurnFlick()
     {
-        if (Input.GetMouseButtonDown(0))
+        // Input.GetTouch works on both Android and iOS. On mobile never also
+        // consume the simulated mouse events, which could double-trigger turns.
+        if (Application.isMobilePlatform || Input.touchCount > 0)
         {
-            flickStart = Input.mousePosition;
-            
-            trackingFlick = true;
-            flickConsumed = false;
+            ReadTouchTurnFlick();
+            return;
         }
 
-        if (!trackingFlick)
-            return;
+        ReadMouseTurnFlick();
+    }
 
-        // MouseUpを待たず、押下中に横移動が閾値を超えた最初の1回でIntentを確定する。
-        // MouseUpも評価に含めるので、短い高速フリックも拾える。
-        if (!flickConsumed &&
-            (Input.GetMouseButton(0) || Input.GetMouseButtonUp(0)))
+    void ReadTouchTurnFlick()
+    {
+        int currentTouchIndex = -1;
+        int newGameTouchIndex = -1;
+        bool currentTouchBlocked = false;
+
+        // Every touch must be forwarded to CockpitGauge (via CorrespondSubject),
+        // including UI touches and Ended/Canceled phases.
+        for (int i = 0; i < Input.touchCount; i++)
         {
-            Vector2 flick =
-                (Vector2)Input.mousePosition - flickStart;
+            Touch touch = Input.GetTouch(i);
+            bool blocked = correspondSubject &&
+                           correspondSubject.ShouldIgnoreTurnTouch(touch);
 
-            if (Mathf.Abs(flick.x) >= minimumFlickPixels &&
-                Mathf.Abs(flick.x) > Mathf.Abs(flick.y)&&Earliest)
+            if (trackingFlick && touch.fingerId == activeFlickFingerId)
             {
-                flickConsumed = true;
-                QueueQuarterTurn(flick.x);
+                currentTouchIndex = i;
+                currentTouchBlocked = blocked;
+            }
+
+            if (touch.phase == TouchPhase.Began && !blocked && newGameTouchIndex < 0)
+                newGameTouchIndex = i;
+        }
+
+        if (trackingFlick)
+        {
+            if (currentTouchIndex < 0 || currentTouchBlocked)
+            {
+                // Old touch vanished or became UI-owned. Discard without turn.
+                ResetFlickGesture();
+            }
+            else
+            {
+                Touch current = Input.GetTouch(currentTouchIndex);
+
+                if (current.phase != TouchPhase.Canceled)
+                    TryQueueFlickFromPosition(current.position);
+
+                if (current.phase == TouchPhase.Ended ||
+                    current.phase == TouchPhase.Canceled)
+                {
+                    ResetFlickGesture();
+                }
+                else
+                {
+                    return;
+                }
             }
         }
 
-        if (Input.GetMouseButtonUp(0))
+        // A newly started game touch is accepted immediately, including if
+        // an older touch ends during the same frame.
+        if (!trackingFlick && newGameTouchIndex >= 0)
         {
-            trackingFlick = false;
+            Touch next = Input.GetTouch(newGameTouchIndex);
+            flickStart = next.position;
+            trackingFlick = true;
             flickConsumed = false;
+            activeFlickFingerId = next.fingerId;
         }
+    }
+
+    void ReadMouseTurnFlick()
+    {
+        bool down = Input.GetMouseButtonDown(0);
+        bool up = Input.GetMouseButtonUp(0);
+        bool blocked = correspondSubject &&
+                       correspondSubject.ShouldIgnoreTurnMouse(Input.mousePosition, down, up);
+
+        if (down)
+        {
+            flickStart = Input.mousePosition;
+            trackingFlick = !blocked;
+            flickConsumed = false;
+            activeFlickFingerId = -1;
+        }
+
+        if (trackingFlick && !blocked && (Input.GetMouseButton(0) || up))
+            TryQueueFlickFromPosition(Input.mousePosition);
+
+        if (up || blocked)
+            ResetFlickGesture();
+    }
+
+    void TryQueueFlickFromPosition(Vector2 position)
+    {
+        if (!trackingFlick || flickConsumed)
+            return;
+
+        Vector2 flick = position - flickStart;
+        // Keep the original Earliest, horizontal dominance and sensitivity.
+        // Turning remains possible on the first frame past the threshold.
+        if (Mathf.Abs(flick.x) >= minimumFlickPixels &&
+            Mathf.Abs(flick.x) > Mathf.Abs(flick.y) && Earliest)
+        {
+            flickConsumed = true;
+            QueueQuarterTurn(flick.x);
+        }
+    }
+
+    void ResetFlickGesture()
+    {
+        trackingFlick = false;
+        flickConsumed = false;
+        activeFlickFingerId = -1;
     }
 
     public void TurnPlayerAndStageLeft()
@@ -2530,8 +2632,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         ResetExtremePointTracking();
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
-        trackingFlick = false;
-        flickConsumed = false;
+        ResetFlickGesture();
+        correspondSubject?.ResetTurnGestureTracking();
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
 
         correspondSubject?.CancelVisualFrameTurn(false);

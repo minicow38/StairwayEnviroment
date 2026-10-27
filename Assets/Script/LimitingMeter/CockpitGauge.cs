@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -48,6 +49,17 @@ public sealed class CockpitGauge : MonoBehaviour,
     [SerializeField, Min(0f)] float glowScanSpeed = 3f;
     [SerializeField] bool debugInput = false;
 
+    [Header("Skybox Soft Palette / 空になじむ色（Inspectorで調整可）")]
+    [SerializeField] Color lowerSegmentColor = new Color(.66f, .84f, .85f, 1f);
+    [SerializeField] Color middleSegmentColor = new Color(.52f, .74f, .79f, 1f);
+    [SerializeField] Color upperSegmentColor = new Color(.81f, .87f, .84f, 1f);
+    [SerializeField] Color lowerGlowColor = new Color(.79f, .92f, .93f, 1f);
+    [SerializeField] Color upperGlowColor = new Color(.89f, .97f, .94f, 1f);
+    [SerializeField] Color cursorColor = new Color(.87f, .98f, .96f, .87f);
+    [SerializeField] Color badgeNormalColor = new Color(.27f, .50f, .55f, .58f);
+    [SerializeField] Color badgeGlowColor = new Color(.40f, .64f, .66f, .74f);
+    [SerializeField] Color badgeLabelColor = new Color(.94f, .98f, .97f, 1f);
+
     [Header("References / 参照 (未設定なら自動生成)")]
     [SerializeField] Slider slider;
     [SerializeField] Text digitalText;
@@ -70,6 +82,13 @@ public sealed class CockpitGauge : MonoBehaviour,
     float observedValue = float.NaN;
     bool observedDead;
 
+    // The gauge owns touch-start attribution, independent of press/glow visuals.
+    // Once a gesture begins on this UI, its finger ID stays excluded from turns
+    // until Ended/Canceled. No post-release delay is necessary.
+    readonly HashSet<int> turnExcludedFingerIds = new HashSet<int>();
+    readonly List<RaycastResult> turnHitResults = new List<RaycastResult>(8);
+    bool turnExcludedMouseGesture;
+
     public float Value
     {
         get => value;
@@ -80,8 +99,93 @@ public sealed class CockpitGauge : MonoBehaviour,
         get => dead;
         set { dead = value; RefreshVisuals(); }
     }
-    public bool IsGlowMode => glowMode;
+    // Unlike an auto-property, this always reflects the existing glowMode field.
+    // Keep the setter for compatibility with callers using IsGlowMode = true/false.
+    public bool IsGlowMode
+    {
+        get => glowMode;
+        set => glowMode = value;
+    }
+    public bool IsPressed => pressed;
     public float ActiveSegmentPosition => floatingIndex;
+
+    /// <summary>
+    /// Called from SlopeStickCore through CorrespondSubject for EVERY touch.
+    /// Only the Began position determines whether that touch belongs to this UI.
+    /// The same finger remains excluded even after it leaves the gauge's bounds.
+    /// Ended/Canceled are excluded on their own frame, then the ID is forgotten.
+    /// </summary>
+    public bool ShouldIgnoreTurnTouch(Touch touch)
+    {
+        int id = touch.fingerId;
+        if (touch.phase == TouchPhase.Began)
+        {
+            if (IsGaugeHitAt(touch.position))
+                turnExcludedFingerIds.Add(id);
+            else
+                turnExcludedFingerIds.Remove(id);
+        }
+
+        bool excluded = turnExcludedFingerIds.Contains(id);
+        if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+            turnExcludedFingerIds.Remove(id);
+
+        return excluded;
+    }
+
+    /// <summary>
+    /// Unity Editor's mouse path uses the same start-position rule.
+    /// Does not use IsGlowMode/pressed because those end before input cleanup.
+    /// </summary>
+    public bool ShouldIgnoreTurnMouse(Vector2 screenPosition, bool mouseDown, bool mouseUp)
+    {
+        if (mouseDown)
+            turnExcludedMouseGesture = IsGaugeHitAt(screenPosition);
+
+        bool excluded = turnExcludedMouseGesture;
+        if (mouseUp)
+            turnExcludedMouseGesture = false;
+
+        return excluded;
+    }
+
+    public void ResetTurnGestureTracking()
+    {
+        turnExcludedFingerIds.Clear();
+        turnExcludedMouseGesture = false;
+    }
+
+    bool IsGaugeHitAt(Vector2 screenPosition)
+    {
+        if (!isActiveAndEnabled || !gameObject.activeInHierarchy)
+            return false;
+
+        EventSystem eventSystem = EventSystem.current;
+        if (eventSystem == null)
+            return false;
+
+        // Raycast on the Began frame itself. This works regardless of whether
+        // the EventSystem or SlopeStickCore Update happens first in that frame.
+        PointerEventData pointer = new PointerEventData(eventSystem)
+        {
+            position = screenPosition
+        };
+        turnHitResults.Clear();
+        eventSystem.RaycastAll(pointer, turnHitResults);
+
+        for (int i = 0; i < turnHitResults.Count; i++)
+        {
+            GameObject hitObject = turnHitResults[i].gameObject;
+            if (!hitObject)
+                continue;
+
+            Transform hit = hitObject.transform;
+            if (hit == transform || hit.IsChildOf(transform))
+                return true;
+        }
+
+        return false;
+    }
 
     void OnEnable()
     {
@@ -101,8 +205,19 @@ public sealed class CockpitGauge : MonoBehaviour,
         if (slider != null) slider.onValueChanged.RemoveListener(OnSliderValueChanged);
         pressed = false;
         glowMode = false;
+        ResetTurnGestureTracking();
         if (badgeRect != null) badgeRect.gameObject.SetActive(false);
         if (cursorRect != null) cursorRect.gameObject.SetActive(false);
+    }
+
+    void OnApplicationPause(bool paused)
+    {
+        if (paused) ResetTurnGestureTracking();
+    }
+
+    void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus) ResetTurnGestureTracking();
     }
 
     void OnValidate()
@@ -231,7 +346,10 @@ public sealed class CockpitGauge : MonoBehaviour,
         glowMode = false;
         floatingIndex = GetValueIndex();
         RefreshVisuals();
-        if (debugInput) Debug.Log("[GAUGE] UP value=" + value);
+        if (debugInput)
+        {
+            Debug.Log("[GAUGE] UP value=" + value);
+        }
     }
 
     public void Step(int amount) => SetMeterValue(value + amount, true);
@@ -384,7 +502,7 @@ public sealed class CockpitGauge : MonoBehaviour,
         badgeRect = root.GetComponent<RectTransform>();
         badgeBackground = root.GetComponent<Image>();
         if (badgeBackground == null) badgeBackground = root.gameObject.AddComponent<Image>();
-        badgeBackground.color = new Color(0.015f, 0.023f, 0.042f, 0.96f);
+        badgeBackground.color = badgeNormalColor;
         badgeBackground.raycastTarget = false;
         badgeRect.anchorMin = badgeRect.anchorMax = Vector2.zero;
         badgeRect.pivot = new Vector2(0f, 0.5f);
@@ -408,7 +526,7 @@ public sealed class CockpitGauge : MonoBehaviour,
         badgeText.alignment = TextAnchor.MiddleCenter;
         badgeText.fontStyle = FontStyle.Bold;
         badgeText.fontSize = 21;
-        badgeText.color = Color.white;
+        badgeText.color = badgeLabelColor;
         if (badgeText.font == null)
             badgeText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         badgeRect.gameObject.SetActive(false);
@@ -465,7 +583,9 @@ public sealed class CockpitGauge : MonoBehaviour,
             {
                 float phase = Time.unscaledTime * glowPulseSpeed * Mathf.PI * 2f;
                 float opacity = glowMode ? .92f + .08f * Mathf.Sin(phase) : .45f + .25f * HoldProgress();
-                cursorImage.color = new Color(.92f, 1f, .65f, opacity);
+                cursorImage.color = new Color(
+                    cursorColor.r, cursorColor.g, cursorColor.b,
+                    cursorColor.a * opacity);
             }
         }
 
@@ -483,9 +603,7 @@ public sealed class CockpitGauge : MonoBehaviour,
         float pulse = (Mathf.Sin(Time.unscaledTime * glowPulseSpeed * Mathf.PI * 2f) + 1f) * .5f;
         badgeRect.localScale = Vector3.one * labelScale * (1f + (glowMode ? .035f * pulse : 0f));
         if (badgeBackground != null)
-            badgeBackground.color = glowMode
-                ? new Color(.10f, .045f, .015f, .97f)
-                : new Color(.02f, .04f, .05f, .86f);
+            badgeBackground.color = glowMode ? badgeGlowColor : badgeNormalColor;
     }
 
     float GetScreenPixelsPerUiUnit()
@@ -535,14 +653,15 @@ public sealed class CockpitGauge : MonoBehaviour,
         observedDead = dead;
     }
 
-    static Color GetDualColor(int i)
+    Color GetDualColor(int i)
     {
-        float t = i / 9f;
-        if (t <= .53f)
-            return Color.Lerp(new Color(.02f,.92f,.65f), new Color(.91f,.95f,.15f), t/.53f);
-        return Color.Lerp(new Color(.91f,.95f,.15f), new Color(1f,.2f,.1f), (t-.53f)/.47f);
+        float t = Mathf.Clamp01(i / 9f);
+        // Slight three-stop sky gradient, without green/yellow/red traffic-light colours.
+        return t <= .5f
+            ? Color.Lerp(lowerSegmentColor, middleSegmentColor, t * 2f)
+            : Color.Lerp(middleSegmentColor, upperSegmentColor, (t - .5f) * 2f);
     }
 
-    static Color GetGlowColor(int i) =>
-        Color.Lerp(new Color(1f,.82f,.12f), new Color(1f,.27f,.03f), i/9f);
+    Color GetGlowColor(int i) =>
+        Color.Lerp(lowerGlowColor, upperGlowColor, Mathf.Clamp01(i / 9f));
 }

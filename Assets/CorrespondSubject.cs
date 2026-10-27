@@ -56,8 +56,28 @@ public sealed class CorrespondSubject : MonoBehaviour
     // Scene初期状態のVisual/Stage座標系を保存します。
     // VisualPlayerRootはworld Pose、StageRootは親との関係を保つためlocal Poseで保持します。
 
+    // Existing Inspector reference, now also the source of gesture attribution.
+    // No GaugeTurnGestureFilter component is necessary.
     public CockpitGauge LeftOneTapMeter;
     public CockpitGauge2 RightDragOnMeter;
+
+    public CockpitGauge TurnInputGauge => LeftOneTapMeter;
+
+    public bool ShouldIgnoreTurnTouch(Touch touch)
+    {
+        return LeftOneTapMeter && LeftOneTapMeter.ShouldIgnoreTurnTouch(touch);
+    }
+
+    public bool ShouldIgnoreTurnMouse(Vector2 position, bool down, bool up)
+    {
+        return LeftOneTapMeter && LeftOneTapMeter.ShouldIgnoreTurnMouse(position, down, up);
+    }
+
+    public void ResetTurnGestureTracking()
+    {
+        if (LeftOneTapMeter)
+            LeftOneTapMeter.ResetTurnGestureTracking();
+    }
 
     public bool StickBeforeNextTurn;
     bool hasInitialVisualPlayerRootPose;
@@ -226,6 +246,9 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     void Awake()
     {
+        if (!LeftOneTapMeter)
+            LeftOneTapMeter = FindObjectOfType<CockpitGauge>(true);
+
         if (!subjectBody)
             subjectBody = GetComponent<Rigidbody>();
 
@@ -249,6 +272,9 @@ public sealed class CorrespondSubject : MonoBehaviour
 
     void Start()
     {
+        // Handles UI created after this object's Awake.
+        if (!LeftOneTapMeter)
+            LeftOneTapMeter = FindObjectOfType<CockpitGauge>(true);
         Debug.Log("");
         //RightDragOnMeter=
     }
