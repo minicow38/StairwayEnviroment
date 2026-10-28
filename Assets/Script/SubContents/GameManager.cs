@@ -69,7 +69,7 @@ public class MainGameManager : MonoBehaviour
        // PreviewIconRoot.transform.Find("CurrentCoin").transform.GetComponent<TextMeshProUGUI>().text = Coin.ToString();
         TopLiteral.transform.Find("Score").transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = AndroidOneOnly.currentScore.ToString("");
         
-        RightDragOnMeter = GameObject.Find("SegmentLVInGauge").transform.GetComponent<CockpitGauge>();
+        //RightDragOnMeter = GameObject.Find("SegmentLVInGauge").transform.GetComponent<CockpitGauge>();
         LeftOneTapMeter = GameObject.Find("GameUI/StairwayUserbility/CockpitGauge ").transform.GetComponent<CockpitGauge2>();
         
         QualitySettings.vSyncCount = 0;

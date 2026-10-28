@@ -65,6 +65,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &539027708467733956
 GameObject:
   m_ObjectHideFlags: 0
@@ -130,6 +136,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &1000303729317995900
 GameObject:
   m_ObjectHideFlags: 0
@@ -282,6 +294,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &2024029864613869670
 GameObject:
   m_ObjectHideFlags: 0
@@ -422,6 +440,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &3644745145476940039
 GameObject:
   m_ObjectHideFlags: 0
@@ -487,6 +511,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &4004067261863234912
 GameObject:
   m_ObjectHideFlags: 0
@@ -545,7 +575,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 0.94, g: 0.98, b: 0.97, a: 1}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -631,6 +661,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &4920469617773077449
 GameObject:
   m_ObjectHideFlags: 0
@@ -696,6 +732,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &5072029738658540063
 GameObject:
   m_ObjectHideFlags: 0
@@ -761,6 +803,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &6012098490929538298
 GameObject:
   m_ObjectHideFlags: 0
@@ -820,7 +868,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.015, g: 0.023, b: 0.042, a: 0.96}
+  m_Color: {r: 0.27, g: 0.5, b: 0.55, a: 0.58}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -902,6 +950,12 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}
 --- !u!1 &7425872401353580146
 GameObject:
   m_ObjectHideFlags: 0
@@ -983,6 +1037,15 @@ MonoBehaviour:
   glowPulseSpeed: 2.5
   glowScanSpeed: 3
   debugInput: 0
+  lowerSegmentColor: {r: 0.66, g: 0.84, b: 0.85, a: 1}
+  middleSegmentColor: {r: 0.52, g: 0.74, b: 0.79, a: 1}
+  upperSegmentColor: {r: 0.81, g: 0.87, b: 0.84, a: 1}
+  lowerGlowColor: {r: 0.79, g: 0.92, b: 0.93, a: 1}
+  upperGlowColor: {r: 0.89, g: 0.97, b: 0.94, a: 1}
+  cursorColor: {r: 0.87, g: 0.98, b: 0.96, a: 0.87}
+  badgeNormalColor: {r: 0.27, g: 0.5, b: 0.55, a: 0.58}
+  badgeGlowColor: {r: 0.4, g: 0.64, b: 0.66, a: 0.74}
+  badgeLabelColor: {r: 0.94, g: 0.98, b: 0.97, a: 1}
   slider: {fileID: 588152528762526055}
   digitalText: {fileID: 0}
 --- !u!222 &1787165615492386857
@@ -1088,3 +1151,9 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
+  illuminatedOpacity: 0.7
+  inactiveOpacity: 0.26
+  outlineOpacity: 0.1
+  haloOpacity: 0.085
+  cornerRadius: 6
+  inactiveTint: {r: 0.54, g: 0.68, b: 0.7, a: 1}

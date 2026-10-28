@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using UnityEngine;
 using DG.Tweening;
 using System.Text.RegularExpressions;
+using UnityEngine.Rendering;
 
 /// <summary>
 /// PhysicsRoot上のInSubjectを、VisualPlayerRoot上の座標へ写してSubjectへ反映します。
@@ -107,7 +108,34 @@ public sealed class CorrespondSubject : MonoBehaviour
     public Vector3 mappedvelocity;
     public Vector3 mappedAngularVelocity;
     bool sameBodyErrorLogged;
-    
+
+    // ================================================================
+    // Pre-extreme Equalizer lateral tracking (previously its own script)
+    // ================================================================
+    // A display-only link. InSubject stays the only authority for lateral
+    // acceleration; Equalizer's independent vertical wave is untouched.
+    [Header("Pre-Extreme Equalizer Lateral Tracking")]
+    [Tooltip("自動検索のEqualizerと異なる表示オブジェクトを使う場合だけ指定します。")]
+    [SerializeField] Transform visibleEqualizerOverride;
+    [Tooltip("極限前の表示横方向追従ログを出力します。")]
+    [SerializeField] bool logPreExtremeEqualizerTracking = true;
+
+    SlopeStickCore preExtremeCore;
+    Transform preExtremeEqualizer;
+    Rigidbody preExtremeEqualizerBody;
+    Vector3 preExtremePreviousSide;
+    float preExtremeInitialGap;
+    bool preExtremeVisualTracking;
+    bool preExtremeMissingWarned;
+    bool preExtremeDynamicWarned;
+    bool preExtremeSessionLogged;
+    int preExtremeLastRenderFrame = -1;
+    Vector3 preExtremeMappedStart;
+    Vector3 preExtremeVisibleStart;
+    float preExtremeNextTelemetryTime;
+    float preExtremeNextTargetLookupTime;
+    string preExtremeTargetMode = "None";
+
     public bool IsVisualFrameTurning =>
         turnTween != null &&
         turnTween.IsActive() &&
@@ -279,10 +307,236 @@ public sealed class CorrespondSubject : MonoBehaviour
         //RightDragOnMeter=
     }
     
+    void OnEnable()
+    {
+        // URP: this callback happens after all LateUpdate calls, immediately
+        // before rendering. Keep this class's original FixedUpdate order 10000.
+        RenderPipelineManager.beginFrameRendering += OnPreExtremeBeginFrameRendering;
+    }
+
+    void OnDisable()
+    {
+        RenderPipelineManager.beginFrameRendering -= OnPreExtremeBeginFrameRendering;
+        ResetPreExtremeVisualTracking();
+    }
+
     void FixedUpdate()
     {
         if (synchronizeInFixedUpdate)
             SynchronizeNow();
+
+        ApplyPreExtremeDynamicEqualizerForce();
+    }
+
+    bool TryGetPreExtremeEqualizerFrame(out Vector3 side, out Vector3 mappedPosition)
+    {
+        side = Vector3.zero;
+        mappedPosition = Vector3.zero;
+
+        if (!preExtremeCore)
+            preExtremeCore = FindObjectOfType<SlopeStickCore>();
+
+        if (!preExtremeCore || !preExtremeCore.Body ||
+            !preExtremeCore.HasPreExtremeLateralSession)
+            return false;
+
+        // ExampleBallVisualEqualizerが別のレンダラーを自動生成する場合、
+        // 元のBallVisualEqualizerではなく、実際に描画されるProxyを追跡する。
+        // 既存のDisplayを隠す/再生成する操作はここでは行わない。
+        Transform candidate = visibleEqualizerOverride;
+        string candidateMode = "ManualOverride";
+        // Proxyは一度取得したらキャッシュ。毎Physics/Render tickのGameObject.Findを避ける。
+        if (!candidate && preExtremeEqualizer &&
+            (preExtremeTargetMode == "ExampleBVE_Display" ||
+             preExtremeTargetMode == "EQ_SPLINE_FRAME" ||
+             (preExtremeTargetMode == "OriginalFallback" &&
+              Time.unscaledTime < preExtremeNextTargetLookupTime)))
+        {
+            candidate = preExtremeEqualizer;
+            candidateMode = preExtremeTargetMode;
+        }
+        if (!candidate && Time.unscaledTime >= preExtremeNextTargetLookupTime)
+        {
+            preExtremeNextTargetLookupTime = Time.unscaledTime + .35f;
+            GameObject generated = GameObject.Find("ExampleBVE_Display_BallVisualEqualizer");
+            if (generated)
+            {
+                candidate = generated.transform;
+                candidateMode = "ExampleBVE_Display";
+            }
+        }
+        if (!candidate)
+        {
+            GameObject frameDisplay = GameObject.Find("__EQ_SPLINE_FRAME_VisualOnly");
+            if (frameDisplay)
+            {
+                candidate = frameDisplay.transform;
+                candidateMode = "EQ_SPLINE_FRAME";
+            }
+        }
+        if (!candidate)
+        {
+            GameObject source = GameObject.Find("BallVisualEqualizer");
+            if (source)
+            {
+                candidate = source.transform;
+                candidateMode = "OriginalFallback";
+            }
+        }
+
+        if (candidate != preExtremeEqualizer)
+        {
+            preExtremeEqualizer = candidate;
+            preExtremeEqualizerBody = candidate
+                ? candidate.GetComponent<Rigidbody>() : null;
+            preExtremeVisualTracking = false;
+            preExtremeSessionLogged = false;
+            preExtremeTargetMode = candidateMode;
+            if (candidate)
+                Debug.Log($"[EARLY VISUAL TARGET] mode={candidateMode} " +
+                          $"name={candidate.name} " +
+                          $"rigidbody={(preExtremeEqualizerBody ? "Yes" : "No")}", this);
+        }
+        if (!preExtremeEqualizer && !preExtremeMissingWarned)
+        {
+            preExtremeMissingWarned = true;
+            Debug.LogWarning("[EARLY VISUAL] 表示対象が見つかりません", this);
+        }
+
+        if (!preExtremeEqualizer)
+            return false;
+
+        side = MapDirection(preExtremeCore.PreExtremeSidePhysics);
+        if (side.sqrMagnitude < Epsilon)
+            return false;
+
+        side.Normalize();
+        mappedPosition = MapPoint(preExtremeCore.Body.position);
+        return true;
+    }
+
+    void BeginPreExtremeVisualFrame(Vector3 side, Vector3 mappedPosition)
+    {
+        // Preserve existing lateral gap. Never copy vertical spring/wave state.
+        preExtremeInitialGap = Vector3.Dot(
+            preExtremeEqualizer.position - mappedPosition, side);
+        preExtremePreviousSide = side;
+        preExtremeVisualTracking = true;
+        preExtremeMappedStart = mappedPosition;
+        preExtremeVisibleStart = preExtremeEqualizer.position;
+        preExtremeNextTelemetryTime = Time.unscaledTime + 0.12f;
+
+        if (logPreExtremeEqualizerTracking && !preExtremeSessionLogged)
+        {
+            preExtremeSessionLogged = true;
+            string mode = !preExtremeEqualizerBody ? "RendererOnly" :
+                preExtremeEqualizerBody.isKinematic ? "Kinematic" : "Dynamic";
+            Debug.Log(
+                $"[EARLY VISUAL START] mode={mode} target={preExtremeTargetMode} " +
+                $"initialGap={preExtremeInitialGap:F3}m", this);
+        }
+    }
+
+    void ResetPreExtremeVisualTracking()
+    {
+        preExtremeVisualTracking = false;
+        preExtremeSessionLogged = false;
+    }
+
+    void ApplyPreExtremeDynamicEqualizerForce()
+    {
+        if (!TryGetPreExtremeEqualizerFrame(
+            out Vector3 side, out Vector3 mappedPosition))
+        {
+            ResetPreExtremeVisualTracking();
+            return;
+        }
+
+        if (!preExtremeVisualTracking ||
+            Vector3.Dot(preExtremePreviousSide, side) < .90f)
+            BeginPreExtremeVisualFrame(side, mappedPosition);
+
+        preExtremePreviousSide = side;
+
+        if (!preExtremeEqualizerBody || preExtremeEqualizerBody.isKinematic)
+            return;
+
+        // Dynamic Equalizer: only additional side force, never write its Pose.
+        float error = preExtremeInitialGap - Vector3.Dot(
+            preExtremeEqualizer.position - mappedPosition, side);
+        float relativeSpeed = Vector3.Dot(
+            preExtremeEqualizerBody.velocity - MappedPhysicalVelocity, side);
+        float lateralAcceleration = Mathf.Clamp(
+            error * 36f - relativeSpeed * 9f, -28f, 28f);
+
+        if (Mathf.Abs(error) > .012f || Mathf.Abs(relativeSpeed) > .08f)
+            preExtremeEqualizerBody.AddForce(
+                side * lateralAcceleration, ForceMode.Acceleration);
+
+        if (!preExtremeDynamicWarned && logPreExtremeEqualizerTracking)
+        {
+            preExtremeDynamicWarned = true;
+            Debug.Log(
+                "[EARLY VISUAL] Dynamic Equalizer: side-only acceleration enabled", this);
+        }
+    }
+
+    void OnPreExtremeBeginFrameRendering(
+        ScriptableRenderContext context, Camera[] cameras)
+    {
+        if (!isActiveAndEnabled || !Application.isPlaying ||
+            preExtremeLastRenderFrame == Time.frameCount)
+            return;
+
+        preExtremeLastRenderFrame = Time.frameCount;
+        ApplyPreExtremeKinematicEqualizerCorrection();
+    }
+
+    void ApplyPreExtremeKinematicEqualizerCorrection()
+    {
+        if (!TryGetPreExtremeEqualizerFrame(
+            out Vector3 side, out Vector3 mappedPosition))
+        {
+            ResetPreExtremeVisualTracking();
+            return;
+        }
+
+        if (!preExtremeVisualTracking ||
+            Vector3.Dot(preExtremePreviousSide, side) < .90f)
+            BeginPreExtremeVisualFrame(side, mappedPosition);
+
+        preExtremePreviousSide = side;
+
+        // Dynamic Equalizer has already been handled in FixedUpdate.
+        if (preExtremeEqualizerBody && !preExtremeEqualizerBody.isKinematic)
+            return;
+
+        // Renderer-only / kinematic: only lateral gap, AFTER the Equalizer
+        // LateUpdate writes its original vertical/harmonic displacement.
+        float error = preExtremeInitialGap - Vector3.Dot(
+            preExtremeEqualizer.position - mappedPosition, side);
+        float correction = Mathf.Clamp(error, -.15f, .15f);
+
+        if (Mathf.Abs(correction) > .0005f)
+            preExtremeEqualizer.position += side * correction;
+
+        if (logPreExtremeEqualizerTracking &&
+            Time.unscaledTime >= preExtremeNextTelemetryTime)
+        {
+            preExtremeNextTelemetryTime = Time.unscaledTime + 0.18f;
+            float physicalSideMoved = Vector3.Dot(
+                mappedPosition - preExtremeMappedStart, side);
+            float renderedSideMoved = Vector3.Dot(
+                preExtremeEqualizer.position - preExtremeVisibleStart, side);
+            float remainingGap = preExtremeInitialGap - Vector3.Dot(
+                preExtremeEqualizer.position - mappedPosition, side);
+            Debug.Log(
+                $"[EARLY VISUAL TRACE] target={preExtremeTargetMode} " +
+                $"physicalSideMoved={physicalSideMoved:F3}m " +
+                $"renderedSideMoved={renderedSideMoved:F3}m " +
+                $"remainingGap={remainingGap:F3}m " +
+                $"appliedCorrection={correction:F3}m", this);
+        }
     }
 
     // 表示側SubjectにParticleSystemを一度だけ配置して使い回す。
@@ -600,9 +854,20 @@ public sealed class CorrespondSubject : MonoBehaviour
         bool synchronizeImmediately = true,
         System.Action<float> turnProgress = null,
         System.Action turnCompleted = null,
-        float durationOverrideSeconds = -1f)
+        float durationOverrideSeconds = -1f,
+        bool authorizedBySlopeStickCore = false)
     {
         if (!visualPlayerRoot)
+            return false;
+
+        // SlopeStickCoreからの旋回はすでに物理側で許可済み。
+        // 外部呼び出しには、平面の従来ルールと極限ポイント通過後を適用する。
+        bool allowed = authorizedBySlopeStickCore ||
+            (MainGameManager.core &&
+             (MainGameManager.core.extremePointFiredInSection ||
+              (MainGameManager.core.AcceleFirstTurn &&
+               (!MainGameManager.core.StickSlopePharse || !StickBeforeNextTurn))));
+        if (!allowed)
             return false;
 
         FindStageTurnReferences();
@@ -695,7 +960,6 @@ public sealed class CorrespondSubject : MonoBehaviour
             durationOverrideSeconds > 0f
                 ? Mathf.Max(0.01f, durationOverrideSeconds)
                 : turnDuration;
-        if(MainGameManager.core.AcceleFirstTurn &&( (MainGameManager.core.StickSlopePharse &&!StickBeforeNextTurn) ||(!MainGameManager.core.StickSlopePharse)))
         turnTween = DOTween.To(
                 () => 0f,
                 Apply,
@@ -706,13 +970,20 @@ public sealed class CorrespondSubject : MonoBehaviour
             .SetUpdate(UpdateType.Fixed)
             .OnComplete(() =>
             {
-                Match match = Regex.Match(MainGameManager.core.currentHit.transform.name, @"(ArcSlab).*(\d).*_(\d).*_([A-Za-z].*)");
-                if (match.Success && RestrickTurnObj!=MainGameManager.core.currentHit.transform)
+                // 階段上やPOP直後にはHitがないことがあるためNullを許容。
+                Transform hitTransform = MainGameManager.core
+                    ? MainGameManager.core.currentHit.transform
+                    : null;
+                if (hitTransform)
                 {
-                    RestrickTurnObj = MainGameManager.core.currentHit.transform;
-                    if(MainGameManager.HopingSwipeTurn.activeInHierarchy)
-                        MainGameManager.HopingSwipeTurn.SetActive(false);
-                    StickBeforeNextTurn = true;
+                    Match match = Regex.Match(hitTransform.name, @"(ArcSlab).*(\d).*_(\d).*_([A-Za-z].*)");
+                    if (match.Success && RestrickTurnObj != hitTransform)
+                    {
+                        RestrickTurnObj = hitTransform;
+                        if (MainGameManager.HopingSwipeTurn && MainGameManager.HopingSwipeTurn.activeInHierarchy)
+                            MainGameManager.HopingSwipeTurn.SetActive(false);
+                        StickBeforeNextTurn = true;
+                    }
                 }
                 PointToPlane++;
                 Apply(1f);
@@ -720,7 +991,7 @@ public sealed class CorrespondSubject : MonoBehaviour
                 turnCompleted?.Invoke();
             });
 
-        return true;
+        return turnTween != null && turnTween.IsActive();
     }
 
     /// <summary>
@@ -887,6 +1158,10 @@ public sealed class CorrespondSubject : MonoBehaviour
             previousSampleTime = sampleTime;
             hasVelocitySample = true;
             return;
+        }
+        else
+        {
+            Debug.Log("");
         }
 
         float dt = sampleTime - previousSampleTime;

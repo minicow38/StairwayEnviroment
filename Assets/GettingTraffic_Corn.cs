@@ -65,35 +65,37 @@ public class GettingTraffic_Corn : MonoBehaviour
         {
             return;
         }
-        
 
-        Match subReg = Regex.Match(transform.name, @"(.*)_Physics");
-        string subChr=subReg.Groups[1].Value;
-
-        var pat = hit1 + "_Render";
-        var subline=GameObject.Find("" + pat);
-        Debug.Log("");
-        //string pattern = $@"^{Regex.Escape(hit1)}_Render$";
-        foreach (Transform PhysicsMul in subline.transform)
+        if (!MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic)
         {
-            if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
+            Match subReg = Regex.Match(transform.name, @"(.*)_Physics");
+            string subChr = subReg.Groups[1].Value;
+
+            var pat = hit1 + "_Render";
+            var subline = GameObject.Find("" + pat);
+            Debug.Log("");
+            //string pattern = $@"^{Regex.Escape(hit1)}_Render$";
+            foreach (Transform PhysicsMul in subline.transform)
             {
-               MainGameManager.core.BeginCommandOnTouch = false;
-              // if (!MainGameManager.OnDead && MainGameManager.OnInifnite)
+                if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
+                {
+                    MainGameManager.core.BeginCommandOnTouch = false;
+                    // if (!MainGameManager.OnDead && MainGameManager.OnInifnite)
 
-               if (!MainGameManager.OnDead)
-               {
-                   MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
-                   MainGameManager.PointToPlane = 0;
-                   StartCoroutine(delayResume());
-               }
+                    if (!MainGameManager.OnDead)
+                    {
+                        MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
+                        MainGameManager.PointToPlane = 0;
+                        StartCoroutine(delayResume());
+                    }
 
-              
+
+                }
+                /*if (Regex.Match(PhysicsMul.name,pattern).Success)
+                {
+                    Debug.Log("");
+                }*/
             }
-            /*if (Regex.Match(PhysicsMul.name,pattern).Success)
-            {
-                Debug.Log("");
-            }*/
         }
     }
 
