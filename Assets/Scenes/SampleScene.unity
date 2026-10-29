@@ -422,6 +422,11 @@ MonoBehaviour:
   equalizer: {fileID: 64372325}
   trail: {fileID: 64372324}
   viewCamera: {fileID: 330585545}
+  core: {fileID: 0}
+  minTrailLength: 2
+  maxTrailLength: 8
+  referenceSpeed: 20
+  speedExponent: 2
   targetLength: 8
   sampleSpacing: 0.05
   teleportThreshold: 2.5
@@ -2128,7 +2133,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &386783784
 RectTransform:
   m_ObjectHideFlags: 0
@@ -3139,7 +3144,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 572935008}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -3216,8 +3221,6 @@ MonoBehaviour:
   extremePointParticle: {fileID: 2117762421}
   mappedvelocity: {x: 0, y: 0, z: 0}
   mappedAngularVelocity: {x: 0, y: 0, z: 0}
-  visibleEqualizerOverride: {fileID: 0}
-  logPreExtremeEqualizerTracking: 1
 --- !u!54 &572935014
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -3414,7 +3417,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 120}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &659223725
@@ -3526,7 +3529,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -164.74, y: 525}
+  m_AnchoredPosition: {x: -164.74, y: 645}
   m_SizeDelta: {x: 200, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &716737078
@@ -4429,7 +4432,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 10, y: 148.56}
+  m_AnchoredPosition: {x: 10, y: 248.56}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &979821848
@@ -4961,7 +4964,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1083418861}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -5298,12 +5301,11 @@ MonoBehaviour:
   fiveLineCorrectionDurationSeconds: 0.1
   fiveLineMaximumCorrectionMeters: 0.75
   logTurnPolicy: 1
-  earlyFlickStepMeters: 0.42
-  earlyFlickTotalMeters: 10
-  earlyFlickMaxSideSpeed: 2.8
-  earlyFlickMaxSideAcceleration: 28
-  earlyFlickResponse: 16
-  earlyFlickEndBrakeSeconds: 0.1
+  emergencyFlickStepMeters: 1.2
+  emergencyFlickTotalMeters: 3.6
+  emergencyFlickMaxSideSpeed: 7
+  emergencyFlickMaxSideAcceleration: 140
+  emergencyFlickResponse: 50
   logEarlyFlick: 1
   probeDistance: 28
   maxSlopeAngle: 75
@@ -5319,6 +5321,7 @@ MonoBehaviour:
   logCore: 0
   logDropoutDistance: 1
   dropoutLogIntervalSeconds: 0.25
+  logDropoutInvestigation: 1
   extremePointFiredInSection: 0
   Earliest: 0
 --- !u!114 &1083418877

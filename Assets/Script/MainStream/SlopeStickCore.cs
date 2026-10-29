@@ -113,12 +113,12 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     [Header("Pre-Extreme Steering / 極限前の物理的な進路微調整")]
     [Tooltip("1回の横フリックで目標とする横方向の距離。通常の90度旋回とは独立しています。")]
-    const float earlyFlickStepMeters = 0.60f;
+    [Min(0.1f)] [SerializeField] float emergencyFlickStepMeters = 1.2f;
     [Tooltip("同じ階段上で蓄積する目標オフセットの最大距離。")]
-    const float earlyFlickTotalMeters = 1.20f;
-    const float earlyFlickMaxSideSpeed = 7f;
-    const float earlyFlickMaxSideAcceleration = 140f;
-    const float earlyFlickResponse = 50f;
+    [Min(0.2f)] [SerializeField] float emergencyFlickTotalMeters = 3f;
+    [Min(0.2f)] [SerializeField] float emergencyFlickMaxSideSpeed = 7f;
+    [Min(1f)] [SerializeField] float emergencyFlickMaxSideAcceleration = 140f;
+    [Min(1f)] [SerializeField] float emergencyFlickResponse = 50f;
     const float earlyFlickEndBrakeSeconds = 0.04f;
     [SerializeField] bool logEarlyFlick = true;
 
@@ -148,6 +148,33 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(0.05f)] [SerializeField] float dropoutLogIntervalSeconds = 0.25f;
     float nextDropoutLogFixedTime;
     bool previousGroundedForDropoutLog = true;
+
+    [Header("DropOut Cause Audit / 原因調査専用")]
+    [Tooltip("旋回時と接地喪失時だけ履歴を出力します。Rigidbodyやステージの動作は変更しません。")]
+    [SerializeField] bool logDropoutInvestigation = true;
+    public bool LogDropoutInvestigation => logDropoutInvestigation;
+
+    // 直近64物理ステップは数値だけ保持し、接地を失ったときだけログをまとめて出す。
+    const int DropAuditCapacity = 64;
+    const int DropAuditHistorySteps = 28;
+    const int DropAuditPostSteps = 12;
+    struct DropAuditSample
+    {
+        public float time;
+        public int frame;
+        public Vector3 position, velocity, heading, guidePoint;
+        public float guideDistance, crossTrack, normalOffset, lateralSpeed, tangentAlignment;
+        public float stickState, stickAppliedLastTick, graceTimer;
+        public bool kinematic, turning, waitingGuide, guideValid, slope;
+        public bool supportKnown, grounded;
+        public string lastHitName, newHitName;
+        public TurnResolutionMode turnMode;
+    }
+    readonly DropAuditSample[] dropAuditHistory = new DropAuditSample[DropAuditCapacity];
+    readonly Collider[] dropAuditNearby = new Collider[16];
+    int dropAuditNext, dropAuditCount, dropAuditPostRemaining;
+    float dropAuditStickAppliedLastTick;
+
 
     // 進捗誤差が負から0以上になった瞬間だけ、表示側へ通知する。
     NearestKnotDetector.GuideFrame extremePointSection;
@@ -1085,6 +1112,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         // 位置を飛ばすのと同じ瞬間に物理速度を0へ戻す。
         rb.velocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
+        if (logDropoutInvestigation)
+            Debug.Log($"[DROP AUDIT RESTART] t={Time.fixedTime:F3} " +
+                $"restartPrepared={restartPrepared} pos={rb.position:F3} " +
+                $"velocity={rb.velocity:F3} direction={direction:F3}", this);
 
         if (restartPrepared)
         {
@@ -1114,17 +1145,21 @@ public float AdvancePredictedSplineDriveReadOnly(
         Transform previousTransform = currentHit.transform;
         Collider previousCollider = currentHit.collider;
         bool hasPreviousCollider = previousCollider != null;
-        Vector3 closestPoint = hasPreviousCollider
+        // 非Convex MeshColliderでClosestPoint()を呼ぶとUnityが警告する。
+        bool closestSupported = previousCollider is BoxCollider ||
+            previousCollider is SphereCollider || previousCollider is CapsuleCollider ||
+            (previousCollider is MeshCollider mesh && mesh.convex);
+        Vector3 closestPoint = closestSupported
             ? previousCollider.ClosestPoint(transform.position)
             : Vector3.zero;
-        float surfaceDistance = hasPreviousCollider
+        float surfaceDistance = closestSupported
             ? Vector3.Distance(transform.position, closestPoint)
             : -1f;
 
         string message =
             $"[CORE DROPOUT {phase}] fixedTime={Time.fixedTime:F3} frame={Time.frameCount} " +
             $"grounded={grounded} onDeadBefore={MainGameManager.OnDead} " +
-            $"originDistance={originDistance:F4} threshold=12.0000 " +
+            $"originDistance={originDistance:F4} threshold=15.0000 " +
             $"lastHit={(previousTransform != null ? previousTransform.name : "<null>")} " +
             $"lastHitOrigin={(previousTransform != null ? previousTransform.position.ToString("F4") : "<null>")} " +
             $"lastHitPoint={currentHit.point.ToString("F4")} " +
@@ -1139,10 +1174,9 @@ public float AdvancePredictedSplineDriveReadOnly(
             $"guideDistance={currentGuide.distanceToGuide:F4} guideIsSlope={currentGuide.isSlope} " +
             $"kinematic={rb.isKinematic}";
 
-        /*if (phase == "TRIGGER")
-            Debug.LogError(message, this);
-        else
-            Debug.LogWarning(message, this);*/
+        // WATCHは別の[DROP AUDIT]履歴が担う。死亡判定時だけ要約を残す。
+        if (logDropoutInvestigation && phase == "TRIGGER")
+            Debug.LogWarning(message, this);
     }
 
     // 比較不能な間は直前サンプルを捨てる。発火済み区間は保持する。
@@ -1221,17 +1255,212 @@ public float AdvancePredictedSplineDriveReadOnly(
         extremePointHasPrevious = true;
     }
 
+    // ================================================================
+    // DropOut Cause Audit: observation only (no force, velocity or transform writes)
+    // ================================================================
+    void CaptureDropAuditBeforeStep()
+    {
+        if (!logDropoutInvestigation || !rb)
+            return;
+
+        Vector3 heading = (turnTransitionActive || waitingForTurnGuide)
+            ? turnTargetDirection : direction;
+        heading = Vector3.ProjectOnPlane(heading, Vector3.up);
+        if (heading.sqrMagnitude > Eps)
+            heading.Normalize();
+
+        Vector3 side = heading.sqrMagnitude > Eps
+            ? Vector3.Cross(Vector3.up, heading) : Vector3.zero;
+
+        dropAuditHistory[dropAuditNext] = new DropAuditSample
+        {
+            time = Time.fixedTime,
+            frame = Time.frameCount,
+            position = rb.position,
+            velocity = rb.velocity,
+            heading = heading,
+            lateralSpeed = Vector3.Dot(rb.velocity, side),
+            kinematic = rb.isKinematic,
+            turning = turnTransitionActive,
+            waitingGuide = waitingForTurnGuide,
+            turnMode = activeTurnMode,
+            stickState = stickState,
+            stickAppliedLastTick = dropAuditStickAppliedLastTick,
+            graceTimer = graceTimer,
+            lastHitName = currentHit.collider ? currentHit.collider.name : "-",
+            newHitName = "-"
+        };
+        dropAuditNext = (dropAuditNext + 1) % DropAuditCapacity;
+        dropAuditCount = Mathf.Min(dropAuditCount + 1, DropAuditCapacity);
+        // このFixedUpdateが実際にAddForceしたときだけ、次のサンプルへ記録する。
+        dropAuditStickAppliedLastTick = 0f;
+    }
+
+    void CaptureDropAuditSupport(NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit hit)
+    {
+        if (!logDropoutInvestigation || dropAuditCount == 0)
+            return;
+
+        int index = (dropAuditNext + DropAuditCapacity - 1) % DropAuditCapacity;
+        DropAuditSample record = dropAuditHistory[index];
+        record.supportKnown = true;
+        record.grounded = grounded;
+        record.guideValid = guide.valid;
+        record.slope = guide.isSlope;
+        record.graceTimer = graceTimer;
+        record.guideDistance = guide.distanceToGuide;
+        record.newHitName = hit.collider ? hit.collider.name : "-";
+
+        if (guide.valid)
+        {
+            record.guidePoint = guide.point;
+            Vector3 normal = guide.normal.sqrMagnitude > Eps ? guide.normal.normalized : Vector3.up;
+            Vector3 tangent = Vector3.ProjectOnPlane(guide.tangent, normal);
+            if (tangent.sqrMagnitude > Eps)
+            {
+                tangent.Normalize();
+                Vector3 side = Vector3.Cross(normal, tangent).normalized;
+                record.tangentAlignment = Mathf.Abs(Vector3.Dot(tangent, record.heading));
+                record.crossTrack = Vector3.Dot(rb.position - guide.point, side);
+                record.normalOffset = Vector3.Dot(rb.position - guide.point, normal);
+            }
+        }
+        dropAuditHistory[index] = record;
+    }
+
+    void WriteDropAuditSample(DropAuditSample record, string phase)
+    {
+        Debug.Log(
+            $"[DROP AUDIT {phase}] t={record.time:F3} frame={record.frame} " +
+            $"pos={record.position:F3} vel={record.velocity:F3} " +
+            $"heading={record.heading:F3} lateralSpeed={record.lateralSpeed:F3} " +
+            $"guideValid={record.guideValid} slope={record.slope} " +
+            $"guidePoint={record.guidePoint:F3} crossTrack={record.crossTrack:F3} " +
+            $"normalOffset={record.normalOffset:F3} guideDist={record.guideDistance:F3} " +
+            $"guideHeadingAlignment={record.tangentAlignment:F3} " +
+            $"groundKnown={record.supportKnown} grounded={record.grounded} " +
+            $"hit={record.lastHitName}->{record.newHitName} " +
+            $"stickState={record.stickState:F2} stickAppliedLastTick={record.stickAppliedLastTick:F2} " +
+            $"grace={record.graceTimer:F3} kinematic={record.kinematic} " +
+            $"turning={record.turning} waitingGuide={record.waitingGuide} mode={record.turnMode}", this);
+    }
+
+    void LogDropAuditTurn(string phase, Vector3 extraVelocity, float intendedDegrees = float.NaN)
+    {
+        if (!logDropoutInvestigation || !rb)
+            return;
+
+        Vector3 target = Vector3.ProjectOnPlane(turnTargetDirection, Vector3.up);
+        if (target.sqrMagnitude > Eps)
+            target.Normalize();
+        float lateral = Vector3.Dot(rb.velocity, Vector3.Cross(Vector3.up, target));
+        float loggedDegrees = float.IsNaN(intendedDegrees) ? activeTurnDegrees : intendedDegrees;
+        Debug.Log(
+            $"[DROP TURN {phase}] t={Time.fixedTime:F3} " +
+            $"mode={activeTurnMode} degrees={loggedDegrees:F1} " +
+            $"pos={rb.position:F3} velocity={rb.velocity:F3} " +
+            $"snapshotVelocity={extraVelocity:F3} direction={direction:F3} " +
+            $"target={turnTargetDirection:F3} lateralToTarget={lateral:F3} " +
+            $"frozen={turnBodyFrozen} waitingGuide={waitingForTurnGuide} " +
+            $"kinematic={rb.isKinematic}", this);
+    }
+
+    // SphereCastが外れた物理ステップで、Rayと球の重なりを追加診断する。
+    // Ray側の5点は「床の端」そのものの計測ではなく、近傍床の存在確認。
+    void LogDropAuditGeometry(RaycastHit sphereHit)
+    {
+        if (!logDropoutInvestigation || !rb)
+            return;
+
+        Vector3 origin = rb.worldCenterOfMass + Vector3.up * .05f;
+        Vector3 forward = Vector3.ProjectOnPlane(turnTargetDirection, Vector3.up);
+        if (forward.sqrMagnitude <= Eps)
+            forward = Vector3.ProjectOnPlane(direction, Vector3.up);
+        forward = forward.sqrMagnitude > Eps ? forward.normalized : Vector3.forward;
+        Vector3 side = Vector3.Cross(Vector3.up, forward).normalized;
+        float delta = ProbeRadius * .8f;
+        float maxDistance = probeDistance + ProbeRadius + .25f;
+        Vector3[] offsets = { Vector3.zero, side * delta, -side * delta, forward * delta, -forward * delta };
+        string[] names = { "center", "right", "left", "forward", "back" };
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            bool hit = Physics.Raycast(origin + offsets[i], Vector3.down,
+                out RaycastHit ray, maxDistance, groundMask, QueryTriggerInteraction.Ignore);
+            Debug.Log(
+                $"[DROP GEOMETRY ray-{names[i]}] t={Time.fixedTime:F3} " +
+                $"found={hit} collider={(hit ? ray.collider.name : "-")} " +
+                $"distance={(hit ? ray.distance : -1f):F3} " +
+                $"normal={(hit ? ray.normal : Vector3.zero):F3} " +
+                $"origin={(origin + offsets[i]):F3}", this);
+        }
+
+        int total = Physics.OverlapSphereNonAlloc(rb.worldCenterOfMass, ProbeRadius + .05f,
+            dropAuditNearby, groundMask, QueryTriggerInteraction.Ignore);
+        // OverlapSphereは近傍Colliderの診断であり、実際の接触数は表しません。
+        Debug.Log(
+            $"[DROP GEOMETRY overlap] t={Time.fixedTime:F3} " +
+            $"overlapCount={total} capacity={dropAuditNearby.Length} " +
+            $"sphereCastHit={(sphereHit.collider ? sphereHit.collider.name : "-")} " +
+            $"sphereNormal={sphereHit.normal:F3} sphereHitDistance={sphereHit.distance:F3} " +
+            $"maxSlopeAngle={maxSlopeAngle:F2} " +
+            $"lastCollider={(currentHit.collider ? currentHit.collider.name : "-")} " +
+            $"lastColliderEnabled={(currentHit.collider && currentHit.collider.enabled)} " +
+            $"lastColliderType={(currentHit.collider ? currentHit.collider.GetType().Name : "-")}", this);
+        for (int i = 0; i < total; i++)
+            Debug.Log($"[DROP GEOMETRY nearby] {dropAuditNearby[i].name} layer={dropAuditNearby[i].gameObject.layer}", this);
+    }
+
+    void LogDropAuditGuideLost()
+    {
+        if (!logDropoutInvestigation || !currentGuideValid)
+            return;
+        Debug.LogWarning($"[DROP AUDIT GUIDE-INVALID] t={Time.fixedTime:F3} " +
+            $"pos={rb.position:F3} vel={rb.velocity:F3} " +
+            $"lastGuidePoint={currentGuide.point:F3} " +
+            $"lastHit={(currentHit.collider ? currentHit.collider.name : "-")}", this);
+        int n = Mathf.Min(DropAuditHistorySteps, dropAuditCount);
+        int first = (dropAuditNext - n + DropAuditCapacity) % DropAuditCapacity;
+        for (int j = 0; j < n; j++)
+            WriteDropAuditSample(dropAuditHistory[(first + j) % DropAuditCapacity], "GUIDE-LOST-HISTORY");
+        LogDropAuditGeometry(default);
+    }
+
+    void FlushDropAuditOnSupportChange(bool justLostGround, RaycastHit hit)
+    {
+        if (!logDropoutInvestigation || dropAuditCount == 0)
+            return;
+
+        int lastIndex = (dropAuditNext + DropAuditCapacity - 1) % DropAuditCapacity;
+        if (justLostGround)
+        {
+            Debug.LogWarning(
+                $"[DROP AUDIT LOST] t={Time.fixedTime:F3} " +
+                $"mode={activeTurnMode} latestHit={(hit.collider ? hit.collider.name : "-")} " +
+                $"lastHit={(currentHit.collider ? currentHit.collider.name : "-")} " +
+                $"pos={rb.position:F3} vel={rb.velocity:F3}", this);
+            int n = Mathf.Min(DropAuditHistorySteps, dropAuditCount);
+            int first = (dropAuditNext - n + DropAuditCapacity) % DropAuditCapacity;
+            for (int j = 0; j < n; j++)
+                WriteDropAuditSample(dropAuditHistory[(first + j) % DropAuditCapacity], "BEFORE");
+            LogDropAuditGeometry(hit);
+            dropAuditPostRemaining = DropAuditPostSteps;
+        }
+        else if (dropAuditPostRemaining > 0)
+        {
+            WriteDropAuditSample(dropAuditHistory[lastIndex], "AFTER");
+            dropAuditPostRemaining--;
+        }
+    }
+
     void FixedUpdate()
     {
-        
+        CaptureDropAuditBeforeStep();
         sumTime += Time.deltaTime;
         // Updateで予約した90度旋回を、物理/Spline観測より先に1回だけ適用する。
-        Debug.Log(
-            $"[TOP CHECK] " +
-            $"pos={rb.position:F3} " +
-            $"velocity={rb.velocity:F3} " +
-            $"isKinematic={rb.isKinematic}"
-        );
+        if (logCore)
+            Debug.Log(
+                $"[TOP CHECK] pos={rb.position:F3} " +
+                $"velocity={rb.velocity:F3} isKinematic={rb.isKinematic}", this);
         ApplyPendingQuarterTurn();
 
         // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。
@@ -1262,6 +1491,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         // Splineが存在しなければCoreは制御しない。
         if (!guide.valid)
         {
+            LogDropAuditGuideLost();
             LoseSupport();
             return;
         }
@@ -1289,15 +1519,12 @@ public float AdvancePredictedSplineDriveReadOnly(
             ? Vector3.Distance(transform.position, currentHit.transform.position)
             : -1f;
         
-        Debug.Log(
-            $"[DROPOUT CHECK] " +
-            $"grounded={grounded} " +
-            $"distance={lastHitOriginDistance:F3} " +
-            $"lastHit={currentHit.transform?.name} " +
-            $"newHit={hit.transform?.name} " +
-            $"pos={rb.position:F3} " +
-            $"velocity={rb.velocity:F3}"
-        );
+        if (logCore)
+            Debug.Log(
+                $"[DROPOUT CHECK] grounded={grounded} " +
+                $"distance={lastHitOriginDistance:F3} " +
+                $"lastHit={currentHit.transform?.name} newHit={hit.transform?.name} " +
+                $"pos={rb.position:F3} velocity={rb.velocity:F3}", this);
         bool justLostGround = previousGroundedForDropoutLog && !grounded;
         if (logDropoutDistance && !grounded &&
             (justLostGround || lastHitOriginDistance >= 9f) &&
@@ -1308,6 +1535,8 @@ public float AdvancePredictedSplineDriveReadOnly(
             LogDropoutDistanceDiagnostic("WATCH", grounded, hit, lastHitOriginDistance);
             nextDropoutLogFixedTime = Time.fixedTime + Mathf.Max(0.05f, dropoutLogIntervalSeconds);
         }
+        CaptureDropAuditSupport(guide, grounded, hit);
+        FlushDropAuditOnSupportChange(justLostGround, hit);
         previousGroundedForDropoutLog = grounded;
 
         if (currentHit.transform != null)
@@ -1316,6 +1545,10 @@ public float AdvancePredictedSplineDriveReadOnly(
 
                 if (!MainGameManager.OnDead)
                 {
+                    if (logDropoutInvestigation)
+                        Debug.LogWarning($"[DROP AUDIT DEATH] t={Time.fixedTime:F3} originDistance={lastHitOriginDistance:F3} " +
+                            $"lastHit={(currentHit.collider ? currentHit.collider.name : "-")} " +
+                            $"pos={rb.position:F3} vel={rb.velocity:F3}", this);
                     // Recover/OnDead変更より前の状態を必ず残す。
                     LogDropoutDistanceDiagnostic("TRIGGER", grounded, hit, lastHitOriginDistance);
                     StartCoroutine(Recover());
@@ -1451,6 +1684,7 @@ public float AdvancePredictedSplineDriveReadOnly(
                rb.AddForce(
                     -surface.normal * stickState,
                     ForceMode.Acceleration);
+               dropAuditStickAppliedLastTick = stickState;
 
                 // InCorner開始後はtargetDirectionの水平速度を保持したまま、
                 // 新Splineが捕捉されるまで旧SplineのDriveだけを止める。
@@ -1459,6 +1693,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
             // 旋回後Splineを捕捉した。
             waitingForTurnGuide = false;
+            LogDropAuditTurn("NEW-GUIDE-CAPTURED", rb.velocity);
             driveState = 0f;
 
             if (activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
@@ -1485,6 +1720,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
             stickState = Move(stickState, flatStick, StickJerk);
             rb.AddForce(-surface.normal * stickState, ForceMode.Acceleration);
+            dropAuditStickAppliedLastTick = stickState;
             driveState = 0f;
             return;
         }
@@ -1533,6 +1769,7 @@ public float AdvancePredictedSplineDriveReadOnly(
                 - surface.normal * stickState;
 
             rb.AddForce(acceleration, ForceMode.Acceleration);
+            dropAuditStickAppliedLastTick = stickState;
 
             wasSlope = guide.isSlope;
 
@@ -2327,9 +2564,9 @@ public float AdvancePredictedSplineDriveReadOnly(
                 earlyFlickInitialOffset = sideOffset;
                 earlyFlickTargetOffset = sideOffset;
             }
-            float maxTotal = Mathf.Max(0.2f, earlyFlickTotalMeters);
+            float maxTotal = Mathf.Max(0.2f, emergencyFlickTotalMeters);
             earlyFlickTargetOffset = Mathf.Clamp(
-                earlyFlickTargetOffset + steps * Mathf.Max(0.1f, earlyFlickStepMeters),
+                earlyFlickTargetOffset + steps * Mathf.Max(0.1f, emergencyFlickStepMeters),
                 earlyFlickInitialOffset - maxTotal,
                 earlyFlickInitialOffset + maxTotal);
             earlyFlickMoving = true;
@@ -2345,9 +2582,9 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!earlyFlickMoving) return normalDamping;
 
         float difference = earlyFlickTargetOffset - sideOffset;
-        float gain = Mathf.Max(1f, earlyFlickResponse);
-        float maxSpeed = Mathf.Max(.2f, earlyFlickMaxSideSpeed);
-        float maxAccel = Mathf.Max(1f, earlyFlickMaxSideAcceleration);
+        float gain = Mathf.Max(1f, emergencyFlickResponse);
+        float maxSpeed = Mathf.Max(.2f, emergencyFlickMaxSideSpeed);
+        float maxAccel = Mathf.Max(1f, emergencyFlickMaxSideAcceleration);
 
         float desiredSpeed = Mathf.Clamp(difference * gain, -maxSpeed, maxSpeed);
         float timeLeft = (TargetProgress - guide.sectionProgress01) *
@@ -2572,6 +2809,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             ? TurnResolutionMode.FiveLineAfterPop
             : ResolveTurnResolutionMode(directionBefore);
         ClearPendingTurnSnapshot();
+        LogDropAuditTurn("ACCEPTED", velocityBefore, turnDegrees);
 
         if (pendingTurnFromPassedSlope && logTurnTransition)
             Debug.Log("[CORE TURN AFTER EXTREME] slope flick accepted, mode=FiveLineAfterPop", this);
@@ -2691,6 +2929,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnTransitionActive = true;
         turnBodyFrozen = true;
         turnTransitionStartTime = Time.fixedTime;
+        LogDropAuditTurn("FREEZE", turnTransitionSnapshot.velocity);
 
         ResetBallVisualSplineSession();
         return true;
@@ -2731,6 +2970,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
 
         TurnTransitionSnapshot snapshot = turnTransitionSnapshot;
+        LogDropAuditTurn("RELEASE-BEGIN", snapshot.velocity);
         Quaternion physicsTurn =
             Quaternion.AngleAxis(activeTurnDegrees, Vector3.up);
 
@@ -2764,6 +3004,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
         }
 
+        LogDropAuditTurn("RELEASE-END", snapshot.velocity);
         ResetBallVisualSplineSession();
         Physics.SyncTransforms();
         correspondSubject?.ResetDerivedVelocitySample();
@@ -2788,6 +3029,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             ReleaseTurnBodyToMotion("VisualTurnCompleted");
         }
 
+        LogDropAuditTurn("VISUAL-COMPLETE", turnTransitionSnapshot.velocity);
         turnTransitionActive = false;
         turnBodyFrozen = false;
         turnTransitionStartTime = -1f;
@@ -3196,6 +3438,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             planarVelocity = turn * planarVelocity;
         }
         rb.velocity = planarVelocity + Vector3.up * verticalSpeed;
+        LogDropAuditTurn("FIVELINE-VELOCITY-SET", rb.velocity);
         // 旋回開始前に許可済み。90度の速度変更とheadingは常に揃える。
         direction = turnTargetDirection;
         rb.WakeUp();
@@ -3209,6 +3452,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         float planarSpeed = Vector3.ProjectOnPlane(originalVelocity, Vector3.up).magnitude;
         direction = turnTargetDirection;
         rb.velocity = direction * planarSpeed + Vector3.up * verticalSpeed;
+        LogDropAuditTurn("INCORNER-VELOCITY-SET", originalVelocity);
         rb.WakeUp();
 
         if (logTurnTransition)

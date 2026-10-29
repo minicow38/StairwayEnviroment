@@ -38,19 +38,20 @@ public class GettingTraffic_Corn : MonoBehaviour
         mainGameManager = GameObject.Find("GameManager").GetComponent<MainGameManager>();
     }
 
-    
-    
+
+
     void OnTriggerEnter(Collider other)
     {
         string hit1 = "";
         Match fit = Regex.Match(transform.parent.name, @"(.*)_Physics");
-        
+
         Debug.LogWarning(
             $"[THORN TRIGGER] " +
             $"hazard={gameObject.name} " +
             $"other={other.name} " +
             $"otherLayer={LayerMask.LayerToName(other.gameObject.layer)} " +
-            $"otherRoot={other.transform.root.name} " + $"rigidbody={(other.attachedRigidbody? other.attachedRigidbody.name : "NONE")} " +
+            $"otherRoot={other.transform.root.name} " +
+            $"rigidbody={(other.attachedRigidbody ? other.attachedRigidbody.name : "NONE")} " +
             $"hazardPos={transform.position:F3} " +
             $"otherPos={other.transform.position:F3} " +
             $"time={Time.fixedTime:F3}",
@@ -59,44 +60,43 @@ public class GettingTraffic_Corn : MonoBehaviour
         if (fit.Success)
         {
             hit1 = fit.Groups[1].Value;
-           // Destroy(transform.gameObject);
+            // Destroy(transform.gameObject);
         }
         else
         {
             return;
         }
 
-        if (!MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic)
+
+        Match subReg = Regex.Match(transform.name, @"(.*)_Physics");
+        string subChr = subReg.Groups[1].Value;
+
+        var pat = hit1 + "_Render";
+        var subline = GameObject.Find("" + pat);
+        Debug.Log("");
+        //string pattern = $@"^{Regex.Escape(hit1)}_Render$";
+        foreach (Transform PhysicsMul in subline.transform)
         {
-            Match subReg = Regex.Match(transform.name, @"(.*)_Physics");
-            string subChr = subReg.Groups[1].Value;
-
-            var pat = hit1 + "_Render";
-            var subline = GameObject.Find("" + pat);
-            Debug.Log("");
-            //string pattern = $@"^{Regex.Escape(hit1)}_Render$";
-            foreach (Transform PhysicsMul in subline.transform)
+            if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
             {
-                if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
+                MainGameManager.core.BeginCommandOnTouch = false;
+                // if (!MainGameManager.OnDead && MainGameManager.OnInifnite)
+
+                if (!MainGameManager.OnDead)
                 {
-                    MainGameManager.core.BeginCommandOnTouch = false;
-                    // if (!MainGameManager.OnDead && MainGameManager.OnInifnite)
-
-                    if (!MainGameManager.OnDead)
-                    {
-                        MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
-                        MainGameManager.PointToPlane = 0;
-                        StartCoroutine(delayResume());
-                    }
-
-
+                   // MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
+                    MainGameManager.PointToPlane = 0;
+                    StartCoroutine(delayResume());
                 }
-                /*if (Regex.Match(PhysicsMul.name,pattern).Success)
-                {
-                    Debug.Log("");
-                }*/
+
+
             }
+            /*if (Regex.Match(PhysicsMul.name,pattern).Success)
+            {
+                Debug.Log("");
+            }*/
         }
+
     }
 
     IEnumerator delayResume()

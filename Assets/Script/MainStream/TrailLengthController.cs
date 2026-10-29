@@ -13,7 +13,15 @@ public sealed class TrailLengthController : MonoBehaviour
     [SerializeField] ExampleBallVisualEqualizer equalizer;
     [SerializeField] TrailRenderer trail;
     [SerializeField] Camera viewCamera;
+    
+    [SerializeField] SlopeStickCore core;
 
+    [SerializeField] float minTrailLength = .05f;
+    [SerializeField] float maxTrailLength = 5f;
+    [SerializeField] float referenceSpeed = 16f;
+    [SerializeField, Range(1f, 5f)]
+    float speedExponent = 3f;
+    
     [Header("Constant arc length (world units)")]
     [Min(.01f)] [SerializeField] float targetLength = .8f;
     [Min(.005f)] [SerializeField] float sampleSpacing = .05f;
@@ -85,7 +93,8 @@ public sealed class TrailLengthController : MonoBehaviour
         if (!equalizer) equalizer = GetComponent<ExampleBallVisualEqualizer>();
         if (!equalizer) equalizer = FindObjectOfType<ExampleBallVisualEqualizer>();
         if (!coordinateSource) coordinateSource = FindObjectOfType<CorrespondSubject>();
-        if (!targetBody) targetBody = equalizer ? equalizer.InSubject : GetComponent<Rigidbody>();
+        if (!core && targetBody)
+            core = targetBody.GetComponent<SlopeStickCore>();
         if (!trail) trail = GetComponent<TrailRenderer>();
         if (!trail && equalizer) trail = equalizer.DisplayTrail;
         if (!viewCamera) viewCamera = Camera.main;
@@ -219,7 +228,16 @@ public sealed class TrailLengthController : MonoBehaviour
         path.Clear();
         Vector3 previous = coordinateSource.MapPoint(physicsHead);
         path.Add(previous);
-        float remaining = Mathf.Max(.01f, targetLength);
+        
+
+        float speed = targetBody.velocity.magnitude;
+        float t = Mathf.Clamp01(speed / Mathf.Max(.01f, referenceSpeed));
+
+        float remaining = Mathf.Lerp(
+            minTrailLength,
+            maxTrailLength,
+            Mathf.Pow(t, speedExponent)
+        );
 
         int oldestNeeded = 0;
         for (int i = history.Count - 1; i >= 0; i--)

@@ -23,7 +23,7 @@ public class SwipeHand : MonoBehaviour
     {
         if (!isSwing&& !finish)
         {
-            transform.DOLocalMoveX(120f, 1f)
+            transform.DOLocalMoveX(-120f, 1f)
                 .SetRelative()
                 .SetEase(Ease.Linear)
                 .SetLoops(-1, LoopType.Restart).OnComplete(() =>
