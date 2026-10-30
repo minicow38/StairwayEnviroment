@@ -29,6 +29,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     private Vector3 acceleration = Vector3.zero;
     const float AccelerationJerk = 600f;
 
+    float nextFlatMotionLogTime;
     const float TargetMinDistance = .27f;
     [SerializeField]public float TargetAccelerationLimit = 120f;
     const float PostTargetBlendWidth = .05f;
@@ -113,12 +114,12 @@ public sealed class SlopeStickCore : MonoBehaviour
 
     [Header("Pre-Extreme Steering / 極限前の物理的な進路微調整")]
     [Tooltip("1回の横フリックで目標とする横方向の距離。通常の90度旋回とは独立しています。")]
-    [Min(0.1f)] [SerializeField] float emergencyFlickStepMeters = 1.2f;
+    const float earlyFlickStepMeters = 1.2f;
     [Tooltip("同じ階段上で蓄積する目標オフセットの最大距離。")]
-    [Min(0.2f)] [SerializeField] float emergencyFlickTotalMeters = 3f;
-    [Min(0.2f)] [SerializeField] float emergencyFlickMaxSideSpeed = 7f;
-    [Min(1f)] [SerializeField] float emergencyFlickMaxSideAcceleration = 140f;
-    [Min(1f)] [SerializeField] float emergencyFlickResponse = 50f;
+    const float earlyFlickTotalMeters = 3f;
+    const float earlyFlickMaxSideSpeed = 7f;
+    const float earlyFlickMaxSideAcceleration = 140f;
+    const float earlyFlickResponse = 50f;
     const float earlyFlickEndBrakeSeconds = 0.04f;
     [SerializeField] bool logEarlyFlick = true;
 
@@ -204,6 +205,11 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector2 flickStart;
     bool trackingFlick;
     bool flickConsumed;
+    // The press began before the slope's energy target; crossing it mid-drag
+    // must not upgrade this gesture to a 90-degree turn while still on the slope.
+    bool flickStartedBeforeExtreme;
+    // Remember a flat press across slope entry; never reinterpret it as EarlyFlick.
+    bool flickStartedOnFlat;
     // Android/iPhone: the specific game-play touch that began outside the gauge.
     int activeFlickFingerId = -1;
     float pendingTurnDegrees;
@@ -216,6 +222,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     int pendingEarlyFlickSteps;
     bool earlyFlickSession;
     bool earlyFlickMoving;
+    // Only a flick FIRST recognized after crossing may complete on the remaining slope.
+    bool earlyFlickStartedAfterTarget;
     NearestKnotDetector.GuideFrame earlyFlickGuide;
     float earlyFlickInitialOffset;
     float earlyFlickTargetOffset;
@@ -1145,21 +1153,17 @@ public float AdvancePredictedSplineDriveReadOnly(
         Transform previousTransform = currentHit.transform;
         Collider previousCollider = currentHit.collider;
         bool hasPreviousCollider = previousCollider != null;
-        // 非Convex MeshColliderでClosestPoint()を呼ぶとUnityが警告する。
-        bool closestSupported = previousCollider is BoxCollider ||
-            previousCollider is SphereCollider || previousCollider is CapsuleCollider ||
-            (previousCollider is MeshCollider mesh && mesh.convex);
-        Vector3 closestPoint = closestSupported
+        Vector3 closestPoint = hasPreviousCollider
             ? previousCollider.ClosestPoint(transform.position)
             : Vector3.zero;
-        float surfaceDistance = closestSupported
+        float surfaceDistance = hasPreviousCollider
             ? Vector3.Distance(transform.position, closestPoint)
             : -1f;
 
         string message =
             $"[CORE DROPOUT {phase}] fixedTime={Time.fixedTime:F3} frame={Time.frameCount} " +
             $"grounded={grounded} onDeadBefore={MainGameManager.OnDead} " +
-            $"originDistance={originDistance:F4} threshold=15.0000 " +
+            $"originDistance={originDistance:F4} threshold=12.0000 " +
             $"lastHit={(previousTransform != null ? previousTransform.name : "<null>")} " +
             $"lastHitOrigin={(previousTransform != null ? previousTransform.position.ToString("F4") : "<null>")} " +
             $"lastHitPoint={currentHit.point.ToString("F4")} " +
@@ -1174,9 +1178,10 @@ public float AdvancePredictedSplineDriveReadOnly(
             $"guideDistance={currentGuide.distanceToGuide:F4} guideIsSlope={currentGuide.isSlope} " +
             $"kinematic={rb.isKinematic}";
 
-        // WATCHは別の[DROP AUDIT]履歴が担う。死亡判定時だけ要約を残す。
-        if (logDropoutInvestigation && phase == "TRIGGER")
-            Debug.LogWarning(message, this);
+        /*if (phase == "TRIGGER")
+            Debug.LogError(message, this);
+        else
+            Debug.LogWarning(message, this);*/
     }
 
     // 比較不能な間は直前サンプルを捨てる。発火済み区間は保持する。
@@ -1455,12 +1460,15 @@ public float AdvancePredictedSplineDriveReadOnly(
     void FixedUpdate()
     {
         CaptureDropAuditBeforeStep();
+        
         sumTime += Time.deltaTime;
         // Updateで予約した90度旋回を、物理/Spline観測より先に1回だけ適用する。
-        if (logCore)
-            Debug.Log(
-                $"[TOP CHECK] pos={rb.position:F3} " +
-                $"velocity={rb.velocity:F3} isKinematic={rb.isKinematic}", this);
+        Debug.Log(
+            $"[TOP CHECK] " +
+            $"pos={rb.position:F3} " +
+            $"velocity={rb.velocity:F3} " +
+            $"isKinematic={rb.isKinematic}"
+        );
         ApplyPendingQuarterTurn();
 
         // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。
@@ -1519,12 +1527,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             ? Vector3.Distance(transform.position, currentHit.transform.position)
             : -1f;
         
-        if (logCore)
-            Debug.Log(
-                $"[DROPOUT CHECK] grounded={grounded} " +
-                $"distance={lastHitOriginDistance:F3} " +
-                $"lastHit={currentHit.transform?.name} newHit={hit.transform?.name} " +
-                $"pos={rb.position:F3} velocity={rb.velocity:F3}", this);
+        Debug.Log(
+            $"[DROPOUT CHECK] " +
+            $"grounded={grounded} " +
+            $"distance={lastHitOriginDistance:F3} " +
+            $"lastHit={currentHit.transform?.name} " +
+            $"newHit={hit.transform?.name} " +
+            $"pos={rb.position:F3} " +
+            $"velocity={rb.velocity:F3}"
+        );
         bool justLostGround = previousGroundedForDropoutLog && !grounded;
         if (logDropoutDistance && !grounded &&
             (justLostGround || lastHitOriginDistance >= 9f) &&
@@ -1601,6 +1612,29 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         currentSurface = surface;
         currentSurfaceValid = true;
+        // 平面上の前進速度・横速度を調べる
+        if (!guide.isSlope && Time.fixedTime >= nextFlatMotionLogTime)
+        {
+            nextFlatMotionLogTime = Time.fixedTime + 0.1f;
+
+            float forwardSpeed =
+                Vector3.Dot(rb.velocity, surface.tangent);
+
+            float lateralSpeed =
+                Vector3.Dot(rb.velocity, surface.side);
+
+            float lateralOffset =
+                Vector3.Dot(rb.position - guide.point, surface.side);
+
+            Debug.Log(
+                $"[FLAT MOTION] " +
+                $"forward={forwardSpeed:F2}m/s " +
+                $"lateral={lateralSpeed:F2}m/s " +
+                $"offset={lateralOffset:F2}m " +
+                $"pos={rb.position:F3} " +
+                $"velocity={rb.velocity:F3}"
+            );
+        }
         // Slopeへの切替そのものもSpline判定。
         if (guide.isSlope &&BallVisualIsOnSlope)
         {
@@ -1615,8 +1649,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             AcceleFirstTurn = true;
             StickSlopePharse = false;
-            correspondSubject.StickBeforeNextTurn = false;
-
             TrySwitchStageCollidersOnSlopeEntry(hit);
             driveState = 0f;
             TransportToSpline(guide);
@@ -2389,15 +2421,27 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             if (currentTouchIndex < 0 || currentTouchBlocked)
             {
-                // Old touch vanished or became UI-owned. Discard without turn.
+                // UIに移った操作・消失した操作は旋回に転用しない。
+                if (currentTouchIndex >= 0)
+                {
+                    Touch blockedTouch = Input.GetTouch(currentTouchIndex);
+                    if (blockedTouch.phase == TouchPhase.Ended)
+                        LogFlickRelease("touch", blockedTouch.position, flickConsumed, true);
+                }
                 ResetFlickGesture();
             }
             else
             {
                 Touch current = Input.GetTouch(currentTouchIndex);
+                bool consumedBeforeRelease = flickConsumed;
 
-                if (current.phase != TouchPhase.Canceled)
+                // 方法A: ドラッグ中は判定せず、指を離した瞬間だけ確定する。
+                // Canceled/ゲージ占有の操作は旋回へ転用しない。
+                if (current.phase == TouchPhase.Ended)
+                {
                     TryQueueFlickFromPosition(current.position);
+                    LogFlickRelease("touch", current.position, consumedBeforeRelease, false);
+                }
 
                 if (current.phase == TouchPhase.Ended ||
                     current.phase == TouchPhase.Canceled)
@@ -2416,10 +2460,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!trackingFlick && newGameTouchIndex >= 0)
         {
             Touch next = Input.GetTouch(newGameTouchIndex);
-            flickStart = next.position;
-            trackingFlick = true;
-            flickConsumed = false;
-            activeFlickFingerId = next.fingerId;
+            BeginFlickGesture(next.position, next.fingerId);
         }
     }
 
@@ -2432,17 +2473,61 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (down)
         {
-            flickStart = Input.mousePosition;
-            trackingFlick = !blocked;
-            flickConsumed = false;
-            activeFlickFingerId = -1;
+            if (blocked)
+                ResetFlickGesture();
+            else
+                BeginFlickGesture(Input.mousePosition, -1);
         }
 
-        if (trackingFlick && !blocked && (Input.GetMouseButton(0) || up))
+        bool consumedBeforeRelease = flickConsumed;
+        // 方法A: 押下中のマウス移動は観測だけ。MouseUpで一度だけ分類・実行する。
+        if (trackingFlick && !blocked && up)
             TryQueueFlickFromPosition(Input.mousePosition);
+
+        // 判定前の消費状態と、離した瞬間のGuide/Hitを同時に記録する。
+        if (up && trackingFlick)
+            LogFlickRelease("mouse", Input.mousePosition, consumedBeforeRelease, blocked);
 
         if (up || blocked)
             ResetFlickGesture();
+    }
+
+    void BeginFlickGesture(Vector2 position, int fingerId)
+    {
+        flickStart = position;
+        trackingFlick = true;
+        flickConsumed = false;
+        activeFlickFingerId = fingerId;
+        flickStartedOnFlat = BallVisualIsOnFlat;
+        flickStartedBeforeExtreme = currentGuideValid && currentGuide.isSlope &&
+            !extremePointFiredInSection && currentGuide.sectionProgress01 < TargetProgress;
+
+        if (logTurnTransition)
+            Debug.Log($"[FLICK PRESS] t={Time.time:F3} input={(fingerId < 0 ? "mouse" : "touch")} " +
+                      $"finger={fingerId} slope={currentGuideValid && currentGuide.isSlope} " +
+                      $"flat={BallVisualIsOnFlat} progress={(currentGuideValid ? currentGuide.sectionProgress01 : -1f):F3} " +
+                      $"pressOnFlat={flickStartedOnFlat} pressBeforeExtreme={flickStartedBeforeExtreme}", this);
+    }
+
+    // MouseUp/Touch Endedの入力分類・実行結果と、その瞬間の地形を同時に記録。
+    void LogFlickRelease(string input, Vector2 position, bool consumedBeforeRelease, bool blocked)
+    {
+        if (!logTurnTransition)
+            return;
+
+        Vector2 delta = position - flickStart;
+        bool horizontal = Mathf.Abs(delta.x) >= minimumFlickPixels &&
+                          Mathf.Abs(delta.x) > Mathf.Abs(delta.y);
+        string hitName = currentHit.collider ? currentHit.collider.name : "none";
+        Debug.Log($"[FLICK RELEASE] t={Time.time:F3} input={input} " +
+                  $"dx={delta.x:F1}px dy={delta.y:F1}px horizontal={horizontal} " +
+                  $"pressOnFlat={flickStartedOnFlat} pressBeforeExtreme={flickStartedBeforeExtreme} " +
+                  $"consumedBefore={consumedBeforeRelease} consumedAfter={flickConsumed} " +
+                  $"blocked={blocked} guideValid={currentGuideValid} " +
+                  $"slope={currentGuideValid && currentGuide.isSlope} flat={BallVisualIsOnFlat} " +
+                  $"progress={(currentGuideValid ? currentGuide.sectionProgress01 : -1f):F3} " +
+                  $"supported={currentSupported} extremePassed={extremePointFiredInSection} " +
+                  $"hit={hitName} pendingTurn={HasPendingTurnIntent}", this);
     }
 
     void TryQueueFlickFromPosition(Vector2 position)
@@ -2451,31 +2536,43 @@ public float AdvancePredictedSplineDriveReadOnly(
             return;
 
         Vector2 flick = position - flickStart;
-        // Keep the original Earliest, horizontal dominance and sensitivity.
-        // Turning remains possible on the first frame past the threshold.
-        if (Mathf.Abs(flick.x) >= minimumFlickPixels &&
-            Mathf.Abs(flick.x) > Mathf.Abs(flick.y) && Earliest)
+        if (Mathf.Abs(flick.x) < minimumFlickPixels ||
+            Mathf.Abs(flick.x) <= Mathf.Abs(flick.y) || !Earliest)
+            return;
+
+        // 方法A: 呼び出されるのはMouseUp/TouchPhase.Endedの瞬間だけ。
+        // リリースが平面なら、途中で階段の閾値を越えていても90度旋回を優先する。
+        if (BallVisualIsOnFlat)
         {
-            flickConsumed = true;
-            if (CanQueueEarlyFlick())
-                QueueEarlyFlick(flick.x);
-            else if (currentGuideValid && currentGuide.isSlope &&
-                     !extremePointFiredInSection &&
-                     currentGuide.sectionProgress01 < TargetProgress)
-            {
-                // 極限前の操作を通常の90度旋回へ誤送しない。
-                if (logEarlyFlick)
-                    Debug.Log("[EARLY FLICK] ignored: no physical support/transition", this);
-            }
-            else
-                QueueQuarterTurn(flick.x);
+            flickConsumed = QueueQuarterTurn(flick.x);
+            return;
         }
+
+        // 階段で離した場合は、極限ポイント前に押したジェスチャーを
+        // 微小進路変更として分類する（途中で60%を越えても継続）。
+        // 平面で押したジェスチャーを階段のEarlyFlickへ流さない。
+        if (currentGuideValid && currentGuide.isSlope &&
+            (flickStartedBeforeExtreme || currentGuide.sectionProgress01 < TargetProgress))
+        {
+            if (CanQueueEarlyFlick(flickStartedBeforeExtreme))
+            {
+                QueueEarlyFlick(flick.x);
+                flickConsumed = true;
+            }
+            return; // 階段でEarlyFlickが拒否されても90度旋回へ誤送しない。
+        }
+
+        // 極限ポイント通過後の階段で離した場合など、既存の90度許可条件に従う。
+        if (CanAcceptQuarterTurn(out _))
+            flickConsumed = QueueQuarterTurn(flick.x);
     }
 
     void ResetFlickGesture()
     {
         trackingFlick = false;
         flickConsumed = false;
+        flickStartedBeforeExtreme = false;
+        flickStartedOnFlat = false;
         activeFlickFingerId = -1;
     }
 
@@ -2498,21 +2595,25 @@ public float AdvancePredictedSplineDriveReadOnly(
     // ================================================================
     // Pre-extreme steering: lateral acceleration only, no position teleport
     // ================================================================
-    bool CanQueueEarlyFlick()
+    bool CanQueueEarlyFlick(bool pressStartedBeforeExtreme)
     {
-        return rb && !rb.isKinematic && BeginCommandOnTouch && Earliest &&
+        return !flickStartedOnFlat &&
+               rb && !rb.isKinematic && BeginCommandOnTouch && Earliest &&
                !MainGameManager.OnDead && currentSupported &&
                currentGuideValid && currentSurfaceValid && currentGuide.isSlope &&
-               currentGuide.sectionProgress01 < TargetProgress &&
-               !extremePointFiredInSection && !turnTransitionActive &&
-               !waitingForTurnGuide && !fiveLineCorrectionActive &&
-               !fiveLineCorrectionPending && !HasPendingTurnIntent &&
+               (pressStartedBeforeExtreme ||
+                (currentGuide.sectionProgress01 < TargetProgress && !extremePointFiredInSection)) &&
+               !turnTransitionActive && !waitingForTurnGuide &&
+               !fiveLineCorrectionActive && !fiveLineCorrectionPending &&
+               !HasPendingTurnIntent &&
                (!correspondSubject || !correspondSubject.IsVisualFrameTurning);
     }
 
     void QueueEarlyFlick(float x)
     {
         if (Mathf.Abs(x) <= Eps) return;
+        if (flickStartedBeforeExtreme && currentGuide.sectionProgress01 >= TargetProgress)
+            earlyFlickStartedAfterTarget = true;
         pendingEarlyFlickSteps = Mathf.Clamp(
             pendingEarlyFlickSteps + (x > 0f ? 1 : -1), -2, 2);
         if (logEarlyFlick)
@@ -2524,6 +2625,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         pendingEarlyFlickSteps = 0;
         earlyFlickSession = false;
         earlyFlickMoving = false;
+        earlyFlickStartedAfterTarget = false;
         earlyFlickGuide = default;
         earlyFlickInitialOffset = 0f;
         earlyFlickTargetOffset = 0f;
@@ -2533,14 +2635,16 @@ public float AdvancePredictedSplineDriveReadOnly(
     {
         float normalDamping = -surface.lateralSpeed * ResponseInverse;
 
-        if (!grounded || !guide.isSlope || guide.sectionProgress01 >= TargetProgress ||
-            extremePointFiredInSection || waitingForTurnGuide || turnTransitionActive)
+        if (!grounded || !guide.isSlope || waitingForTurnGuide || turnTransitionActive ||
+            (!earlyFlickStartedAfterTarget &&
+             (guide.sectionProgress01 >= TargetProgress || extremePointFiredInSection)))
         {
             if (earlyFlickMoving && logEarlyFlick)
                 Debug.Log($"[EARLY FLICK END] sideOffset=" +
                           $"{Vector3.Dot(rb.position - guide.point, surface.side):F3}m " +
                           $"target={earlyFlickTargetOffset:F3}m", this);
-            // 極限点を過ぎたら横方向の推力だけ終了。表示用の区間履歴は平面まで保持。
+            // Normal early steering stops at the target; late-started steering
+            // can run only until the slope ends. Keep visual history until flat.
             pendingEarlyFlickSteps = 0;
             earlyFlickMoving = false;
             return normalDamping;
@@ -2564,9 +2668,9 @@ public float AdvancePredictedSplineDriveReadOnly(
                 earlyFlickInitialOffset = sideOffset;
                 earlyFlickTargetOffset = sideOffset;
             }
-            float maxTotal = Mathf.Max(0.2f, emergencyFlickTotalMeters);
+            float maxTotal = Mathf.Max(0.2f, earlyFlickTotalMeters);
             earlyFlickTargetOffset = Mathf.Clamp(
-                earlyFlickTargetOffset + steps * Mathf.Max(0.1f, emergencyFlickStepMeters),
+                earlyFlickTargetOffset + steps * Mathf.Max(0.1f, earlyFlickStepMeters),
                 earlyFlickInitialOffset - maxTotal,
                 earlyFlickInitialOffset + maxTotal);
             earlyFlickMoving = true;
@@ -2582,12 +2686,13 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!earlyFlickMoving) return normalDamping;
 
         float difference = earlyFlickTargetOffset - sideOffset;
-        float gain = Mathf.Max(1f, emergencyFlickResponse);
-        float maxSpeed = Mathf.Max(.2f, emergencyFlickMaxSideSpeed);
-        float maxAccel = Mathf.Max(1f, emergencyFlickMaxSideAcceleration);
+        float gain = Mathf.Max(1f, earlyFlickResponse);
+        float maxSpeed = Mathf.Max(.2f, earlyFlickMaxSideSpeed);
+        float maxAccel = Mathf.Max(1f, earlyFlickMaxSideAcceleration);
 
         float desiredSpeed = Mathf.Clamp(difference * gain, -maxSpeed, maxSpeed);
-        float timeLeft = (TargetProgress - guide.sectionProgress01) *
+        float endProgress = earlyFlickStartedAfterTarget ? 1f : TargetProgress;
+        float timeLeft = (endProgress - guide.sectionProgress01) *
                          Mathf.Max(0f, guide.sectionLength) /
                          Mathf.Max(0.1f, surface.tangentSpeed);
         desiredSpeed *= Mathf.Clamp01(timeLeft / Mathf.Max(.02f, earlyFlickEndBrakeSeconds));
@@ -2607,6 +2712,10 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     // 極限ポイント通過済みの階段か、従来の平面旋回かを先に確定する。
     // 通過瞬間のOnInifniteは使わず、区間内で保持されるフラグを使う。
+    // A single authorization policy for physics and external visual turns.
+    // Do not use the old flat-only StickBeforeNextTurn latch.
+    public bool CanAcceptVisualFrameTurn => CanAcceptQuarterTurn(out _);
+
     bool CanAcceptQuarterTurn(out bool passedSlopeTurn)
     {
         passedSlopeTurn = false;
@@ -2619,30 +2728,32 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         if (slopeSection)
         {
-            passedSlopeTurn = extremePointFiredInSection;
+            // A dropped -/+ target-crossing sample must not prevent a valid turn.
+            // Keep the extreme-point effect's crossing event independent.
+            passedSlopeTurn = extremePointFiredInSection ||
+                (currentSupported && currentGuideValid && currentGuide.isSlope &&
+                 currentGuide.sectionProgress01 >= TargetProgress);
             return passedSlopeTurn;
         }
 
-        return AcceleFirstTurn &&
-            (!StickSlopePharse ||
-             !correspondSubject ||
-             !correspondSubject.StickBeforeNextTurn);
+        return BallVisualIsOnFlat && AcceleFirstTurn;
     }
 
-    void QueueQuarterTurn(float directionSign)
+    bool QueueQuarterTurn(float directionSign)
     {
         if (!Earliest)
-            return;
+            return false;
         if (Mathf.Abs(directionSign) <= Eps)
-            return;
+            return false;
 
         if (!CanAcceptQuarterTurn(out bool passedSlopeTurn))
         {
             if (logTurnTransition)
                 Debug.Log($"[CORE TURN DENIED] slope={currentGuideValid && currentGuide.isSlope} " +
                           $"extremePassed={extremePointFiredInSection} " +
-                          $"acceleFirst={AcceleFirstTurn} stickSlopePhase={StickSlopePharse}", this);
-            return;
+                          $"acceleFirst={AcceleFirstTurn} stickSlopePhase={StickSlopePharse} " +
+                          $"flat={BallVisualIsOnFlat} progress={(currentGuideValid ? currentGuide.sectionProgress01 : -1f):F3}", this);
+            return false;
         }
 
         pendingTurnFromPassedSlope = passedSlopeTurn;
@@ -2659,10 +2770,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         // BallVisualが独立Pose Authority中なら、通常Recoveryを待たず短いTurn Handoffへ入れる。
         RequestTurnHandoffForPendingIntent();
 
-        if (logCore || logTurnTransition)
-        {
-            ;
-        }
+        return true;
     }
 
     bool HasPendingTurnIntent =>
@@ -2746,11 +2854,9 @@ public float AdvancePredictedSplineDriveReadOnly(
             return;
         }
 
-        // 予約後にゲームが中断・死亡しても旋回を実行しない。
-        // 階段上で受けた入力は通過済み履歴を予約時に固定しているため、
-        // Handoff待ちで一時的にAir/Flatに変わっても有効とする。
-        if (MainGameManager.OnDead ||
-            (!pendingTurnFromPassedSlope && !CanAcceptQuarterTurn(out _)))
+        // Authorization was checked when the flick was queued. Changing from
+        // slope to flat during Handoff must not invalidate that accepted input.
+        if (MainGameManager.OnDead)
         {
             ExpirePendingTurnIntent();
             return;
@@ -3003,8 +3109,8 @@ public float AdvancePredictedSplineDriveReadOnly(
             ApplyDirectFiveLineTurn(activeTurnDegrees);
             rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
         }
-
         LogDropAuditTurn("RELEASE-END", snapshot.velocity);
+
         ResetBallVisualSplineSession();
         Physics.SyncTransforms();
         correspondSubject?.ResetDerivedVelocitySample();

@@ -2386,7 +2386,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 ActiveStairway2,
                 localPylonPosition,
                 Quaternion.Euler(-135f, 0f, 0f),
-                Vector3.one * 1.5f,
+                Vector3.one * 2f,
                 "Thorn",
                 false);
 

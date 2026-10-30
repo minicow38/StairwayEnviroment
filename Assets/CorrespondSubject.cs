@@ -79,6 +79,7 @@ public sealed class CorrespondSubject : MonoBehaviour
             LeftOneTapMeter.ResetTurnGestureTracking();
     }
 
+    // Legacy public field kept for other scene scripts; no longer blocks turns.
     public bool StickBeforeNextTurn;
     bool hasInitialVisualPlayerRootPose;
     Vector3 initialVisualPlayerRootPosition;
@@ -275,6 +276,7 @@ public sealed class CorrespondSubject : MonoBehaviour
         // Handles UI created after this object's Awake.
         if (!LeftOneTapMeter)
             LeftOneTapMeter = FindObjectOfType<CockpitGauge>(true);
+        Debug.Log("");
         //RightDragOnMeter=
     }
     
@@ -605,13 +607,11 @@ public sealed class CorrespondSubject : MonoBehaviour
         if (!visualPlayerRoot)
             return false;
 
-        // SlopeStickCoreからの旋回はすでに物理側で許可済み。
-        // 外部呼び出しには、平面の従来ルールと極限ポイント通過後を適用する。
+        // SlopeStickCore is the sole authority for turn permission.
+        // Its authorized turns are already checked; external calls use the
+        // exact same current-slope/current-flat policy instead of a second gate.
         bool allowed = authorizedBySlopeStickCore ||
-            (MainGameManager.core &&
-             (MainGameManager.core.extremePointFiredInSection ||
-              (MainGameManager.core.AcceleFirstTurn &&
-               (!MainGameManager.core.StickSlopePharse || !StickBeforeNextTurn))));
+            (MainGameManager.core && MainGameManager.core.CanAcceptVisualFrameTurn);
         if (!allowed)
             return false;
 
@@ -619,7 +619,7 @@ public sealed class CorrespondSubject : MonoBehaviour
         CaptureInitialFramePose();
         CancelVisualFrameTurn(false);
 
-        // Physics本体の速度は変更しない。物理->表示写像だけを旋回開始時に記録。
+        // DropOut診断だけを追加。既存の旋回許可条件・動作には触れない。
         bool auditFrameTurn = authorizedBySlopeStickCore &&
             MainGameManager.core && MainGameManager.core.LogDropoutInvestigation;
         if (auditFrameTurn)
@@ -739,7 +739,6 @@ public sealed class CorrespondSubject : MonoBehaviour
                         RestrickTurnObj = hitTransform;
                         if (MainGameManager.HopingSwipeTurn && MainGameManager.HopingSwipeTurn.activeInHierarchy)
                             MainGameManager.HopingSwipeTurn.SetActive(false);
-                        StickBeforeNextTurn = true;
                     }
                 }
                 PointToPlane++;
@@ -753,7 +752,7 @@ public sealed class CorrespondSubject : MonoBehaviour
         return turnTween != null && turnTween.IsActive();
     }
 
-    // DropOut診断専用。InSubjectの速度と表示側写像の違いだけを記録する。
+    // DropOut診断専用。InSubjectの速度と表示側写像の差異を記録する。
     // ログ用であり、Rigidbody・Transformへの書き込みは行わない。
     void LogDropAuditMappedFrame(string phase, float turnProgress)
     {
@@ -934,6 +933,10 @@ public sealed class CorrespondSubject : MonoBehaviour
             hasVelocitySample = true;
             return;
         }
+        else
+        {
+            Debug.Log("");
+        }
 
         float dt = sampleTime - previousSampleTime;
 
@@ -1066,3 +1069,4 @@ public sealed class CorrespondSubject : MonoBehaviour
         );
     }
 }
+
