@@ -5301,11 +5301,6 @@ MonoBehaviour:
   fiveLineCorrectionDurationSeconds: 0.1
   fiveLineMaximumCorrectionMeters: 0.75
   logTurnPolicy: 1
-  emergencyFlickStepMeters: 1.2
-  emergencyFlickTotalMeters: 3.6
-  emergencyFlickMaxSideSpeed: 7
-  emergencyFlickMaxSideAcceleration: 140
-  emergencyFlickResponse: 50
   logEarlyFlick: 1
   probeDistance: 28
   maxSlopeAngle: 75
@@ -5323,6 +5318,13 @@ MonoBehaviour:
   dropoutLogIntervalSeconds: 0.25
   logDropoutInvestigation: 1
   extremePointFiredInSection: 0
+  autoInCornerHoldEnabled: 1
+  autoHoldHorizontalTolerancePixels: 10
+  autoHoldLeftHalfMarginMeters: 0.08
+  autoHoldMaxSideSpeed: 3
+  autoHoldMaxSideAcceleration: 55
+  autoHoldExitWidthTolerance: 3.5
+  autoHoldFallbackTurnRight: 0
   Earliest: 0
 --- !u!114 &1083418877
 MonoBehaviour:

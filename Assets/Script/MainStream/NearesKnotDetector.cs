@@ -554,6 +554,114 @@ public sealed class NearestKnotDetector : MonoBehaviour
         return true;
     }
 
+    // Same Splineの階段セクションの「直後」にある平面の実在位置を読む。
+    // Evaluateの追跡状態を変更しない。空中でも参照できる。
+    public bool TryGetFollowingFlatStart(GuideFrame slope,
+        out Vector3 flatStart, out Vector3 flatTangent)
+    {
+        flatStart = default;
+        flatTangent = default;
+        if (!slope.valid || !slope.isSlope || slope.sectionIndex < 0 ||
+            !splineContainer) return false;
+
+        if (segments.Count == 0 || cachedSplineCount != splineContainer.Splines.Count)
+            RebuildCache();
+
+        int slopeEnd = -1;
+        for (int i = 0; i < segments.Count; ++i)
+        {
+            SegmentInfo s = segments[i];
+            if (s.splineIndex == slope.splineIndex &&
+                s.sectionIndex == slope.sectionIndex && s.isSlope)
+                slopeEnd = i;
+        }
+        if (slopeEnd < 0 || slopeEnd + 1 >= segments.Count)
+            return false;
+
+        SegmentInfo next = segments[slopeEnd + 1];
+        if (next.splineIndex != slope.splineIndex || next.isSlope)
+            return false;
+        flatStart = next.start;
+        flatTangent = next.tangent;
+        return true;
+    }
+
+    /// <summary>
+    /// The actual three lane points on the flat immediately AFTER the specified slope.
+    /// Flat's left spline is chosen in travel space, never from a world-X/Z sign.
+    /// Does not call Evaluate() or change its tracking state.
+    /// </summary>
+    public bool TryGetFollowingFlatFiveLineFrame(
+        GuideFrame slope, Vector3 travelForward, float alongFlat,
+        out FiveLineFrame frame)
+    {
+        frame = default;
+        if (!slope.valid || !slope.isSlope || !splineContainer)
+            return false;
+        if (segments.Count == 0 || cachedSplineCount != splineContainer.Splines.Count)
+            RebuildCache();
+
+        int lastSlope = -1;
+        for (int i = 0; i < segments.Count; ++i)
+        {
+            SegmentInfo entry = segments[i];
+            if (entry.splineIndex == slope.splineIndex &&
+                entry.sectionIndex == slope.sectionIndex && entry.isSlope)
+                lastSlope = i;
+        }
+        if (lastSlope < 0 || lastSlope + 1 >= segments.Count)
+            return false;
+
+        SegmentInfo flat = segments[lastSlope + 1];
+        if (flat.splineIndex != slope.splineIndex || flat.isSlope ||
+            flat.length <= Eps)
+            return false;
+        Vector3 forward = Vector3.ProjectOnPlane(travelForward, Vector3.up);
+        Vector3 flatTangent = Vector3.ProjectOnPlane(flat.tangent, Vector3.up);
+        if (forward.sqrMagnitude <= Eps || flatTangent.sqrMagnitude <= Eps)
+            return false;
+        forward.Normalize();
+        flatTangent.Normalize();
+        if (Vector3.Dot(flatTangent, forward) < .9f)
+            return false;
+
+        float localT = Mathf.Clamp01(Mathf.Max(0f, alongFlat) / flat.length);
+        GuideFrame flatGuide = new GuideFrame
+        {
+            valid = true,
+            isSlope = false,
+            splineIndex = flat.splineIndex,
+            segmentIndex = flat.segmentIndex,
+            segmentT = localT,
+            point = Vector3.Lerp(flat.start, flat.end, localT),
+            tangent = flat.tangent,
+            normal = flat.normal
+        };
+        // TryGetFiveLineFrame sorts small-to-large along the supplied RIGHT axis.
+        // Thus frame.left is the actual leftmost spline looking along travelForward.
+        Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
+        if (!TryGetFiveLineFrame(flatGuide, right, out frame) || !frame.valid)
+            return false;
+        // Never use a reversed/OutCorner branch with the same knot index.
+        // TryGetFiveLineFrame normally allows |alignment| for generic turns;
+        // this specific NEXT-flat read must require forward-pointing lanes.
+        int matching = 0;
+        for (int i = 0; i < segments.Count; i++)
+        {
+            SegmentInfo candidate = segments[i];
+            if (candidate.segmentIndex != flat.segmentIndex || candidate.isSlope)
+                continue;
+            if (candidate.splineIndex != frame.leftSplineIndex &&
+                candidate.splineIndex != frame.centerSplineIndex &&
+                candidate.splineIndex != frame.rightSplineIndex)
+                continue;
+            if (Vector3.Dot(candidate.tangent.normalized, flat.tangent) < .9f)
+                return false;
+            matching++;
+        }
+        return matching == 3;
+    }
+
     public bool IsSameSection(GuideFrame a, GuideFrame b)
     {
         return
