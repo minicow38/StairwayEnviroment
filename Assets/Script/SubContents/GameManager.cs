@@ -17,7 +17,7 @@ public class MainGameManager : MonoBehaviour
     public static CockpitGauge RightDragOnMeter;
     public static CockpitGauge2 LeftOneTapMeter;
 
-
+    public static GameObject ClashBurst;
     public static GameObject Userbility;
     public static GameObject TopLiteral;
     public static GameObject PlayButton;
@@ -50,6 +50,9 @@ public class MainGameManager : MonoBehaviour
         Coin = AndroidOneOnly.pharseCoin;
         var width = Screen.width;
         LimitTouchingphase = 0;
+
+        ClashBurst=GameObject.Find("BallVisualEqualizer/Eff_Burst_Fix");
+        ClashBurst.gameObject.SetActive(false);
         var fat = GameObject.FindObjectsOfType<SphereSpikes>();
         PointToPlane = CurrentPointToPlane;
         core = GameObject.Find("InSubject").transform.GetComponent<SlopeStickCore>();

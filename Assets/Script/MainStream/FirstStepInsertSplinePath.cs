@@ -2303,8 +2303,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         instance.name = $"{namePrefix}_{instance.GetInstanceID()}";
 
-        if (namePrefix.IndexOf("FunChr", StringComparison.Ordinal) < 0 &&
-            disableColliders)
+        if (disableColliders)
         {
             colliderBuffer.Clear();
             instance.GetComponentsInChildren(true, colliderBuffer);
@@ -2380,7 +2379,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         if (onPylon && PylonPrefab && ActiveStairway1 && ActiveStairway2)
         {
             Vector3 localPylonPosition = new Vector3(localX, 0.5f, 0f);
-            var pair = SpawnPair(
+            SpawnPair(
                 PylonPrefab,
                 ActiveStairway1,
                 ActiveStairway2,
@@ -2388,15 +2387,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
                 Quaternion.Euler(-135f, 0f, 0f),
                 Vector3.one * 2f,
                 "Thorn",
-                false);
-
-
-            // Physics側のRendererだけ無効化
-            rendererBuffer.Clear();
-            pair.physics.GetComponentsInChildren(true, rendererBuffer);
-
-            for (int i = 0; i < rendererBuffer.Count; i++)
-                rendererBuffer[i].enabled = false;
+                true);
 
             generated = true;
         }

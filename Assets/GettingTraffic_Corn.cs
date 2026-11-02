@@ -6,6 +6,7 @@ using TMPro;
 
 public class GettingTraffic_Corn : MonoBehaviour
 {
+    
     public GameObject PhysicsMul;
     public GameObject RendererMul;
     public GameObject ReSubject;
@@ -19,6 +20,7 @@ public class GettingTraffic_Corn : MonoBehaviour
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
+        
         StartCoroutine(delayStart());
         // GameObject.Find("StairwayUserbility/Bounus").transform.GetComponent<TextMeshUGUI>();
         //StartCoroutine(delayStart());
@@ -85,6 +87,10 @@ public class GettingTraffic_Corn : MonoBehaviour
                 if (!MainGameManager.OnDead)
                 {
                    // MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
+                   MainGameManager.core.enabled = false;
+                   MainGameManager.ClashBurst.gameObject.SetActive(true);
+
+
                     MainGameManager.PointToPlane = 0;
                     StartCoroutine(delayResume());
                 }
@@ -119,6 +125,7 @@ public class GettingTraffic_Corn : MonoBehaviour
         yield return new WaitForSeconds(1f);
         
         MainGameManager.DropOut.SetActive(false);
+        MainGameManager.core.enabled = true;
 
         MainGameManager.OnDead = true;
         MainGameManager.reSubject.PointToPlane = 0;
