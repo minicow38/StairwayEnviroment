@@ -44,63 +44,66 @@ public class GettingTraffic_Corn : MonoBehaviour
 
     void OnTriggerEnter(Collider other)
     {
-        string hit1 = "";
-        Match fit = Regex.Match(transform.parent.name, @"(.*)_Physics");
-
-        Debug.LogWarning(
-            $"[THORN TRIGGER] " +
-            $"hazard={gameObject.name} " +
-            $"other={other.name} " +
-            $"otherLayer={LayerMask.LayerToName(other.gameObject.layer)} " +
-            $"otherRoot={other.transform.root.name} " +
-            $"rigidbody={(other.attachedRigidbody ? other.attachedRigidbody.name : "NONE")} " +
-            $"hazardPos={transform.position:F3} " +
-            $"otherPos={other.transform.position:F3} " +
-            $"time={Time.fixedTime:F3}",
-            this
-        );
-        if (fit.Success)
+        if (other.CompareTag("Player"))
         {
-            hit1 = fit.Groups[1].Value;
-            // Destroy(transform.gameObject);
-        }
-        else
-        {
-            return;
-        }
+            string hit1 = "";
+            Match fit = Regex.Match(transform.parent.name, @"(.*)_Physics");
 
-
-        Match subReg = Regex.Match(transform.name, @"(.*)_Physics");
-        string subChr = subReg.Groups[1].Value;
-
-        var pat = hit1 + "_Render";
-        var subline = GameObject.Find("" + pat);
-        Debug.Log("");
-        //string pattern = $@"^{Regex.Escape(hit1)}_Render$";
-        foreach (Transform PhysicsMul in subline.transform)
-        {
-            if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
+            Debug.LogWarning(
+                $"[THORN TRIGGER] " +
+                $"hazard={gameObject.name} " +
+                $"other={other.name} " +
+                $"otherLayer={LayerMask.LayerToName(other.gameObject.layer)} " +
+                $"otherRoot={other.transform.root.name} " +
+                $"rigidbody={(other.attachedRigidbody ? other.attachedRigidbody.name : "NONE")} " +
+                $"hazardPos={transform.position:F3} " +
+                $"otherPos={other.transform.position:F3} " +
+                $"time={Time.fixedTime:F3}",
+                this
+            );
+            if (fit.Success)
             {
-                MainGameManager.core.BeginCommandOnTouch = false;
-                // if (!MainGameManager.OnDead && MainGameManager.OnInifnite)
-
-                if (!MainGameManager.OnDead)
-                {
-                   // MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
-                   MainGameManager.core.enabled = false;
-                   MainGameManager.ClashBurst.gameObject.SetActive(true);
-
-
-                    MainGameManager.PointToPlane = 0;
-                    StartCoroutine(delayResume());
-                }
-
-
+                hit1 = fit.Groups[1].Value;
+                // Destroy(transform.gameObject);
             }
-            /*if (Regex.Match(PhysicsMul.name,pattern).Success)
+            else
             {
-                Debug.Log("");
-            }*/
+                return;
+            }
+
+
+            Match subReg = Regex.Match(transform.name, @"(.*)_Physics");
+            string subChr = subReg.Groups[1].Value;
+
+            var pat = hit1 + "_Render";
+            var subline = GameObject.Find("" + pat);
+            Debug.Log("");
+            //string pattern = $@"^{Regex.Escape(hit1)}_Render$";
+            foreach (Transform PhysicsMul in subline.transform)
+            {
+                if (Regex.Match(PhysicsMul.name, @".*" + subChr).Success)
+                {
+                    MainGameManager.core.BeginCommandOnTouch = false;
+                    // if (!MainGameManager.OnDead && MainGameManager.OnInifnite)
+
+                    if (!MainGameManager.OnDead)
+                    {
+                        // MainGameManager.core.transform.GetComponent<Rigidbody>().isKinematic = true;
+                        MainGameManager.core.enabled = false;
+                        MainGameManager.ClashBurst.gameObject.SetActive(true);
+
+
+                        MainGameManager.PointToPlane = 0;
+                        StartCoroutine(delayResume());
+                    }
+
+
+                }
+                /*if (Regex.Match(PhysicsMul.name,pattern).Success)
+                {
+                    Debug.Log("");
+                }*/
+            }
         }
 
     }

@@ -2335,6 +2335,24 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             prefab, visualParent, localPosition, localRotation, localScale,
             namePrefix + "_Visual", separateVisualPhysics);
 
+        // Thorn is a fixed stage obstacle: both its hidden trigger and visible
+        // counterpart must stay in their respective parent coordinate frames.
+        // Removing the visual Collider otherwise lets a prefab Rigidbody fall.
+        if (namePrefix == "Thorn")
+        {
+            FreezeDecorationBodies(physics);
+            FreezeDecorationBodies(visual);
+
+            Renderer[] visible = visual.GetComponentsInChildren<Renderer>(true);
+            bool hasVisibleRenderer = false;
+            for (int i = 0; i < visible.Length; i++)
+                hasVisibleRenderer |= visible[i].enabled && visible[i].gameObject.activeInHierarchy;
+            if (!hasVisibleRenderer)
+                Debug.LogWarning($"[THORN VISUAL MISSING] {visual.name}: no enabled Renderer in active hierarchy", visual);
+            else
+                Debug.Log($"[THORN SPAWN] physics={physics.name} visual={visual.name} pos={visual.transform.position:F3}", visual);
+        }
+
         if (separateVisualPhysics)
         {
             rendererBuffer.Clear();
@@ -2347,18 +2365,28 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         return (physics, visual);
     }
 
-    // FunCharacter専用: Render側だけに生成し、Colliderを無効にする。
-    GameObject SpawnVisual(
-        GameObject prefab,
-        GameObject visualParent,
-        Vector3 localPosition,
-        Quaternion localRotation,
-        Vector3? localScale,
-        string namePrefix)
+    // Static stage decorations must not fall when their colliders are disabled.
+    // Kinematic bodies still support Trigger checks against the player's dynamic Rigidbody.
+    static void FreezeDecorationBodies(GameObject decoration)
     {
-        return SpawnOne(
-            prefab, visualParent, localPosition, localRotation, localScale,
-            namePrefix + "_Visual", true);
+        Rigidbody[] bodies = decoration.GetComponentsInChildren<Rigidbody>(true);
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            bodies[i].useGravity = false;
+            bodies[i].isKinematic = true;
+        }
+    }
+
+    // FunCharacterはPylon/Coinとは別経路で生成する。
+    // 正常だった従来仕様に合わせ、PrefabのCollider/Rigidbodyと動作スクリプトは変更しない。
+    GameObject SpawnFunCharacter(GameObject prefab, GameObject visualArc, Vector3 localPosition)
+    {
+        GameObject character = Instantiate(prefab, visualArc.transform);
+        character.transform.localPosition = localPosition;
+        character.transform.localRotation = Quaternion.Euler(-135f, 0f, 0f);
+        character.transform.localScale = Vector3.one * 1.5f;
+        character.name = $"FunChr_Visual_{character.GetInstanceID()}";
+        return character;
     }
 
     bool GeneratePylon(
@@ -2368,11 +2396,11 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         bool FirstCorner)
     {
         // Pylon 10%。従来の抽選順序・戻り値を維持する。
-        int value = UnityEngine.Random.Range(0, 10);
+        int value = UnityEngine.Random.Range(0, 1);
         int widthObj = FirstCorner
             ? UnityEngine.Random.Range(0, ShiftObj.Length)
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
-        float localX = ShiftObj[widthObj].x;
+        float localX = ShiftObj[1].x;
         bool onPylon = value < 1;
         bool generated = false;
 
@@ -2488,14 +2516,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
         Vector3 localPosition = new Vector3(ShiftObj[widthObj].x, 0.125f, 0f);
 
-        GameObject visualCharacter = SpawnVisual(
-            EnemyPrefab,
-            visualArc,
-            localPosition,
-            // 正常に表示されていた従来姿勢へ戻す。
-            Quaternion.Euler(-135f, 0f, 0f),
-            Vector3.one * 1.5f,
-            "FunChr");
+        SpawnFunCharacter(EnemyPrefab, visualArc, localPosition);
 
         return true;
     }
