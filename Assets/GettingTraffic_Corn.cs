@@ -10,6 +10,7 @@ public class GettingTraffic_Corn : MonoBehaviour
     public GameObject PhysicsMul;
     public GameObject RendererMul;
     public GameObject ReSubject;
+    public bool OneOnly = false;
     public static readonly string CallForBestScore = "CallForBestScore";
 
 
@@ -44,7 +45,7 @@ public class GettingTraffic_Corn : MonoBehaviour
 
     void OnTriggerEnter(Collider other)
     {
-        if (other.CompareTag("Player"))
+        if (other.CompareTag("Player") && OneOnly==false)
         {
             string hit1 = "";
             Match fit = Regex.Match(transform.parent.name, @"(.*)_Physics");

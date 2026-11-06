@@ -162,13 +162,19 @@ public class ActionDall : MonoBehaviour
     }
     void OnCollisionEnter(Collision col)
     {
-        if (col.transform.CompareTag("plane")&&!NonComeBackPhysicX)
+        if (col.transform.CompareTag("plane")&&!NonComeBackPhysicX&&AroundStairwayPhysics.Count>0)
         {
 
             Match match;
             int currrentArcHit = 0;
-
-            match = Regex.Match(AroundStairwayPhysics[0].transform.name, @"^([a-zA-Z]+)(\d*)_(\d*)_(Physics)");
+            try
+            {
+                match = Regex.Match(AroundStairwayPhysics[0].transform.name, @"^([a-zA-Z]+)(\d*)_(\d*)_(Physics)");
+            }
+            catch (Exception e)
+            {
+                Debug.Log("");
+            }
             
 
             for (int arcHit = 0; arcHit < AroundStairwayPhysics.Count; arcHit++)

@@ -22,7 +22,7 @@ public class GameScreenshot : MonoBehaviour
 
         Directory.CreateDirectory(folder);
 
-        string filename = "GuiltyStairway_" +
+        string filename = "PGuiltyStairway_" +
                           DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") +
                           ".png";
 

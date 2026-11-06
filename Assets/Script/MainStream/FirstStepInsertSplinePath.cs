@@ -2396,7 +2396,7 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         bool FirstCorner)
     {
         // Pylon 10%。従来の抽選順序・戻り値を維持する。
-        int value = UnityEngine.Random.Range(0, 1);
+        int value = UnityEngine.Random.Range(0, 6);
         int widthObj = FirstCorner
             ? UnityEngine.Random.Range(0, ShiftObj.Length)
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);

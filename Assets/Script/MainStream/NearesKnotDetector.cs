@@ -316,6 +316,121 @@ public sealed class NearestKnotDetector : MonoBehaviour
 
     // The anchor identifies the logical slope section. This method never
     // changes CurrentGuide/currentSegment; it is a pure read-only look-ahead.
+
+    // Turn-specific read-only search. Evaluate() can remain pinned to a
+    // perpendicular pre-turn branch; do not mutate its tracking state here.
+    // The caller still must verify close physical floor and the full corridor.
+    public bool TryFindGuideAlongHeading(
+        Vector3 position, Vector3 desiredForward, float maxDistance,
+        out GuideFrame guide)
+    {
+        guide = default;
+        if (!splineContainer || maxDistance <= 0f)
+            return false;
+        if (segments.Count == 0 ||
+            cachedSplineCount != splineContainer.Splines.Count)
+            RebuildCache();
+        Vector3 target = Vector3.ProjectOnPlane(desiredForward, Vector3.up);
+        if (segments.Count == 0 || target.sqrMagnitude <= Eps)
+            return false;
+        target.Normalize();
+
+        int bestIndex = -1;
+        float bestT = 0f;
+        float bestScore = float.PositiveInfinity;
+        Vector3 bestPoint = default;
+        float bestDistSqr = float.PositiveInfinity;
+        float limitSqr = maxDistance * maxDistance;
+        for (int i = 0; i < segments.Count; ++i)
+        {
+            SegmentInfo s = segments[i];
+            Vector3 tangentFlat = Vector3.ProjectOnPlane(s.tangent, Vector3.up);
+            if (tangentFlat.sqrMagnitude <= Eps)
+                continue;
+            float alignment = Vector3.Dot(tangentFlat.normalized, target);
+            // Signed dot: opposite or perpendicular branches are forbidden.
+            if (alignment < .82f)
+                continue;
+            Project(position, s.start, s.end,
+                out float t, out Vector3 point, out float distanceSqr);
+            if (distanceSqr > limitSqr)
+                continue;
+            float score = distanceSqr + (1f - alignment) * .20f;
+            if (score >= bestScore)
+                continue;
+            bestIndex = i;
+            bestT = t;
+            bestScore = score;
+            bestPoint = point;
+            bestDistSqr = distanceSqr;
+        }
+        if (bestIndex < 0)
+            return false;
+
+        SegmentInfo seg = segments[bestIndex];
+        float sectionDistance = seg.distanceFromSectionStart + bestT * seg.length;
+        float progress = seg.isSlope && seg.sectionLength > Eps
+            ? Mathf.Clamp01(sectionDistance / seg.sectionLength) : 0f;
+        ReadNextSlope(bestIndex, bestT, out bool nextSlope,
+            out float nextDistance, out Vector3 nextTangent,
+            out Vector3 nextNormal, out float nextAngle,
+            out float nextCurvature);
+        guide = new GuideFrame
+        {
+            valid = true, splineIndex = seg.splineIndex,
+            segmentIndex = seg.segmentIndex, sectionIndex = seg.sectionIndex,
+            point = bestPoint, tangent = seg.tangent, normal = seg.normal,
+            distanceToGuide = Mathf.Sqrt(bestDistSqr), segmentT = bestT,
+            isSlope = seg.isSlope, slopeAngle = seg.slopeAngle,
+            curvature = seg.curvature,
+            entryCurvature = seg.entryCurvature,
+            exitCurvature = seg.exitCurvature,
+            sectionProgress01 = progress, sectionLength = seg.sectionLength,
+            distanceFromSectionStart = sectionDistance,
+            distanceToSectionEnd = seg.isSlope
+                ? Mathf.Max(0f, seg.sectionLength - sectionDistance) : 0f,
+            nextIsSlope = nextSlope, distanceToNextSlope = nextDistance,
+            nextTangent = nextTangent, nextNormal = nextNormal,
+            nextSlopeAngle = nextAngle, nextCurvature = nextCurvature
+        };
+        return true;
+    }
+
+    // Only after the physics controller has verified a real floor corridor
+    // and arrived close to a matching lane, allow normal Evaluate() to resume
+    // locally on that segment. This makes no position or velocity change.
+    public bool TryFocusGuideAfterSafeRecovery(
+        GuideFrame guide, Vector3 position, Vector3 desiredForward,
+        float maxDistance)
+    {
+        if (!guide.valid || !splineContainer || maxDistance <= 0f)
+            return false;
+        Vector3 target = Vector3.ProjectOnPlane(desiredForward, Vector3.up);
+        if (target.sqrMagnitude <= Eps)
+            return false;
+        target.Normalize();
+        for (int i = 0; i < segments.Count; ++i)
+        {
+            SegmentInfo s = segments[i];
+            if (s.splineIndex != guide.splineIndex ||
+                s.segmentIndex != guide.segmentIndex)
+                continue;
+            Vector3 tangentFlat = Vector3.ProjectOnPlane(s.tangent, Vector3.up);
+            if (tangentFlat.sqrMagnitude <= Eps ||
+                Vector3.Dot(tangentFlat.normalized, target) < .82f)
+                return false;
+            Project(position, s.start, s.end,
+                out float _, out Vector3 __, out float sqr);
+            if (sqr > maxDistance * maxDistance)
+                return false;
+            currentSegment = i;
+            lastPosition = position;
+            hasLastPosition = true;
+            return true;
+        }
+        return false;
+    }
+
     public bool TryEvaluateSameSection(GuideFrame anchor, float progress01, out GuideSample sample)
     {
         sample = default;
