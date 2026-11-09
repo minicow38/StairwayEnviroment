@@ -31,6 +31,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float AccelerationJerk = 600f;
 
     float nextFlatMotionLogTime;
+    bool straightFlatFallLogged;
     const float TargetMinDistance = .27f;
     [SerializeField]public float TargetAccelerationLimit = 120f;
     const float PostTargetBlendWidth = .05f;
@@ -1745,7 +1746,8 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
 
             direction = turnTargetDirection;
-            driveState = 0f;
+            if (currentGuideValid && currentGuide.isSlope)
+                driveState = 0f; // Never clear flat Drive just for a visual turn.
             ResetBallVisualSplineSession();
 
             // HardFreeze後はVisual回転中でもRigidbodyがDynamicになる。
@@ -1811,10 +1813,20 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!guide.isSlope)
             CompleteExtremePointAtFlat();
 
+        // Capture previous frame before replacing the spline frame.
+        // Its horizontal heading tells us whether this is a true straight
+        // flat-to-stair transition or a player-authorized 90-degree turn.
+        NearestKnotDetector.GuideFrame previousGuide = currentGuide;
         currentGuide = guide;
         currentGuideValid = true;
 
         (bool grounded,RaycastHit hit)= HasGroundSupport();
+        bool ordinaryStraightFlat = IsUncommandedStraightFlat(guide);
+        // A long downward SphereCast is not proof that the ball is still
+        // touching a straight slab. Require a real local floor witness.
+        if (ordinaryStraightFlat && grounded &&
+            !IsCloseGroundRay(hit, rb.worldCenterOfMass))
+            grounded = false;
         RememberAutoHoldRecentPhysicalFlat(guide, grounded, hit);
 
         if (grounded)
@@ -1896,10 +1908,22 @@ public float AdvancePredictedSplineDriveReadOnly(
         
         
         float load = grounded ? 0f : SupportLoad(guide);
-        bool grace = !grounded && graceTimer > 0f && load <= 1f && CanGrace(guide);
+        // A straight flat with no pending turn MUST NOT continue exerting
+        // Spline Stick/Drive while unsupported: preserve rb.velocity and
+        // let Unity gravity carry the ball naturally off its edge.
+        bool grace = !grounded && !ordinaryStraightFlat &&
+            graceTimer > 0f && load <= 1f && CanGrace(guide);
 
+        if (grounded || !ordinaryStraightFlat)
+            straightFlatFallLogged = false;
         if (!grounded && !grace)
         {
+            if (ordinaryStraightFlat && !straightFlatFallLogged)
+            {
+                straightFlatFallLogged = true;
+                Debug.Log($"[STRAIGHT FLAT FREEFALL] t={Time.fixedTime:F3} " +
+                    $"velocity preserved={rb.velocity:F3}; no Stick/Drive/Grace", this);
+            }
             ResetUncapturedTurnGuideStallWatch();
             // Safety must execute even if the normal spline controller returns.
             if (waitingForTurnGuide)
@@ -1919,6 +1943,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
+            // Keep the last frame's tangent / normal data intact for
+            // diagnostics and seam recovery. Only its VALID flag changes.
             currentSurfaceValid = false;
             PauseExtremePointTracking();
             return;
@@ -1964,8 +1990,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             AcceleFirstTurn = true;
             StickSlopePharse = false;
             TrySwitchStageCollidersOnSlopeEntry(hit);
-            driveState = 0f;
-            TransportToSpline(guide);
+            // Ordinary straight continuation needs no artificial Drive reset
+            // and no normal-velocity projection. Keep the incoming momentum.
+            // A real 90-degree turn or non-straight transition retains its
+            // existing controlled transport path.
+            if (!IsUncommandedStraightSlopeEntry(previousGuide, guide))
+            {
+                driveState = 0f;
+                TransportToSpline(guide);
+            }
         }
         if (wasSlope && !guide.isSlope)
         {
@@ -1982,6 +2015,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
+            // Keep the last frame's tangent / normal data intact for
+            // diagnostics and seam recovery. Only its VALID flag changes.
             currentSurfaceValid = false;
             PauseExtremePointTracking();
             return;
@@ -2015,8 +2050,20 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (!captured)
             {
                 PauseExtremePointTracking();
-                driveState = 0f;
-                GuardUncapturedTurnGuide(guide, grounded);
+                bool verifiedFlat = !guide.isSlope && grounded &&
+                    IsCloseGroundRay(hit, rb.worldCenterOfMass) &&
+                    Vector3.Angle(hit.normal, Vector3.up) <= 18f;
+                if (verifiedFlat)
+                {
+                    // No zeroing of Rigidbody or its flat spline frame.
+                    ContinueFlatMotionWhileGuidePending();
+                }
+                else
+                {
+                    if (guide.isSlope)
+                        driveState = 0f; // Existing slope/air control only.
+                    GuardUncapturedTurnGuide(guide, grounded);
+                }
 
                 // 空中で床法線に沿うStick力を発生させない。
                 // 接地確認済みの床のみ既存のStickを残す。
@@ -2040,7 +2087,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                 postAutoHoldNextProbeTime = 0f;
             }
             LogDropAuditTurn("NEW-GUIDE-CAPTURED", rb.velocity);
-            driveState = 0f;
+            if (guide.isSlope)
+                driveState = 0f;
 
             if (activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
             {
@@ -2303,6 +2351,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             rb.isKinematic || !BeginCommandOnTouch)
             return;
 
+        // Whether supported OR just leaving the flat slab, physics owns
+        // the momentum: never artificially brake X/Z on a flat, even while
+        // an old/perpendicular receiving spline is still being observed.
+        // Drive assistance is authorized elsewhere ONLY by a real close floor.
+        bool flatContext = guide.valid ? !guide.isSlope :
+            (currentGuide.valid && !currentGuide.isSlope);
+        if (flatContext)
+            return;
+
         float sinceRelease = turnGuideReleasedAt >= 0f
             ? Mathf.Max(0f, Time.fixedTime - turnGuideReleasedAt) : 0f;
         float axisAlignment = TurnGuideAxisAlignment(guide);
@@ -2408,6 +2465,34 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
     }
 
+    // This is not a turn command or a safety rescue: it simply keeps a real
+    // FLAT moving while NearestKnotDetector is still tracking the old spline.
+    // No zeroing of velocity, angularVelocity, acceleration, surface normal,
+    // driveState or stickState. No force if the destination has no floor.
+    void ContinueFlatMotionWhileGuidePending()
+    {
+        if (!rb || rb.isKinematic || !BeginCommandOnTouch)
+            return;
+        Vector3 forward = NormalizeFlat(turnTargetDirection, direction);
+        Vector3 probe = rb.worldCenterOfMass + forward *
+            Mathf.Clamp(ProbeRadius + .30f +
+                Mathf.Max(0f, Vector3.Dot(rb.velocity, forward)) * .06f,
+                ProbeRadius + .30f, 1.5f);
+        if (!TryAutoHoldGroundRay(probe, out RaycastHit receivingFloor) ||
+            !IsCloseGroundRay(receivingFloor, probe) ||
+            Vector3.Angle(receivingFloor.normal, Vector3.up) > 18f)
+            return; // Keep momentum; do not accelerate off a missing floor.
+
+        float forwardSpeed = Vector3.Dot(rb.velocity, forward);
+        float desired = Mathf.Clamp(
+            (maxGroundSpeed - forwardSpeed) * ResponseInverse,
+            0f, GroundAcceleration);
+        // Never turn the last active forward force into a forced brake.
+        driveState = Move(driveState, desired, AccelerationJerk);
+        rb.AddForce(forward * Mathf.Max(0f, driveState),
+            ForceMode.Acceleration);
+    }
+
     // On the ordinary route the player's confirmed heading is authoritative.
     // NearestKnotDetector may select a perpendicular branch at a junction even
     // when the player NEVER held/tapped/flicked for a turn. That geometric
@@ -2460,7 +2545,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         // for this tick, avoiding false lateral drive into the wrong lane.
         // Rigidbody velocity, angular velocity, and gravity are untouched.
         Vector3 planar = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
-        driveState = 0f;
+        // A perpendicular nearest spline is a geometric classification
+        // error, NOT a request to clear flat acceleration or speed.
         currentSupported = true;
         if (!uncommandedGuideGuardLogged)
         {
@@ -2484,8 +2570,18 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     Surface BuildSplineSurface(NearestKnotDetector.GuideFrame g)
     {
-        Vector3 normal = g.normal.sqrMagnitude > Eps ? g.normal.normalized : Vector3.up;
+        // A flat must always have a usable non-zero frame. If the detector
+        // momentarily reports a degenerate spline normal at a flat seam,
+        // rebuild it from world-up rather than forwarding Vector3.zero.
+        // Do not import the preceding slope normal into the new flat.
+        Vector3 normal = g.normal.sqrMagnitude > Eps
+            ? g.normal.normalized
+            : (!g.isSlope ? Vector3.up :
+               (currentSurfaceValid && currentSurface.normal.sqrMagnitude > Eps
+                   ? currentSurface.normal.normalized : Vector3.up));
         Vector3 tangent = Vector3.ProjectOnPlane(g.tangent, normal);
+        if (tangent.sqrMagnitude <= Eps && !g.isSlope && currentSurfaceValid)
+            tangent = Vector3.ProjectOnPlane(currentSurface.tangent, normal);
 
         if (tangent.sqrMagnitude <= Eps)
             tangent = Vector3.ProjectOnPlane(direction, normal);
@@ -2529,6 +2625,39 @@ public float AdvancePredictedSplineDriveReadOnly(
                       (1f - SmoothRange01(g.sectionProgress01, 0f, .25f));
 
         return Mathf.Max(0f, Mathf.Max(g.curvature, entry));
+    }
+
+    // ================================================================
+    // Ordinary straight flat: preserve freefall and normal momentum.
+    // This is based on XZ heading, so a vertical 45-degree slope transition
+    // is NOT misclassified as a horizontal 90-degree curve.
+    // ================================================================
+    bool IsUncommandedStraightFlat(NearestKnotDetector.GuideFrame flat)
+    {
+        if (!flat.valid || flat.isSlope || turnTransitionActive ||
+            waitingForTurnGuide || HasPendingTurnIntent ||
+            fiveLineCorrectionActive || autoHoldTurnPending ||
+            slopeReleaseHoldTurnPending)
+            return false;
+
+        Vector3 ahead = NormalizeFlat(flat.tangent, direction);
+        Vector3 commanded = NormalizeFlat(direction, ahead);
+        Vector3 after = flat.nextTangent.sqrMagnitude > Eps
+            ? NormalizeFlat(flat.nextTangent, ahead) : ahead;
+        return Vector3.Dot(ahead, commanded) > .985f &&
+               Vector3.Dot(ahead, after) > .985f;
+    }
+
+    bool IsUncommandedStraightSlopeEntry(
+        NearestKnotDetector.GuideFrame previousFlat,
+        NearestKnotDetector.GuideFrame nextSlope)
+    {
+        if (!IsUncommandedStraightFlat(previousFlat) ||
+            !nextSlope.valid || !nextSlope.isSlope)
+            return false;
+        return Vector3.Dot(
+            NormalizeFlat(previousFlat.tangent, direction),
+            NormalizeFlat(nextSlope.tangent, direction)) > .985f;
     }
 
     // ================================================================
@@ -2709,9 +2838,15 @@ public float AdvancePredictedSplineDriveReadOnly(
         edgeCruiseSampleValid = false;
         ClearEarlyFlick();
         PauseExtremePointTracking();
+        bool lastSurfaceWasFlat = currentGuideValid && !currentGuide.isSlope;
         wasSlope = false;
-        driveState = 0f;
-        stickState = 0f;
+        // No forces are applied after losing support; keep the remembered
+        // flat Drive/Stick for a brief seam without resetting to zero.
+        if (!lastSurfaceWasFlat)
+        {
+            driveState = 0f;
+            stickState = 0f;
+        }
 
         currentSupported = false;
         currentGuideValid = false;
@@ -3041,12 +3176,7 @@ public float AdvancePredictedSplineDriveReadOnly(
                 Touch current = Input.GetTouch(currentTouchIndex);
                 ObserveAdaptiveFlickPointer(current.position);
                 ObserveAutoHoldPointer(current.position);
-                // A same-flat TAP reservation may confirm an unambiguous flick
-                // while the finger is still down. Ordinary turns and slope
-                // EarlyFlicks keep their release-based classification.
-                if (current.phase == TouchPhase.Moved ||
-                    current.phase == TouchPhase.Stationary)
-                    TryCommitArmedTapTurnWhilePressed(current.position);
+                // While pressed, collect samples only; no 90-degree commit.
                 bool consumedBeforeRelease = flickConsumed;
 
                 // Normal turns still finalize on release; an already accepted
@@ -3097,7 +3227,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             ObserveAdaptiveFlickPointer(Input.mousePosition);
             ObserveAutoHoldPointer(Input.mousePosition);
-            TryCommitArmedTapTurnWhilePressed(Input.mousePosition);
+            // Commit only on MouseUp.
         }
 
         bool consumedBeforeRelease = flickConsumed;
@@ -3134,9 +3264,6 @@ public float AdvancePredictedSplineDriveReadOnly(
     float adaptiveTimeToSlope = float.PositiveInfinity;
     float adaptiveDistanceToSlope = float.PositiveInfinity;
     float adaptiveForwardSpeed;
-    bool adaptiveEarlyCommitted;
-    float adaptiveEarlyCommittedThresholdMm;
-    float adaptiveEarlyCommittedTimeToSlope;
 
     float GesturePixelsPerMm()
     {
@@ -3166,9 +3293,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         adaptiveTimeToSlope = float.PositiveInfinity;
         adaptiveDistanceToSlope = float.PositiveInfinity;
         adaptiveForwardSpeed = 0f;
-        adaptiveEarlyCommitted = false;
-        adaptiveEarlyCommittedThresholdMm = 0f;
-        adaptiveEarlyCommittedTimeToSlope = float.PositiveInfinity;
     }
 
     void ObserveAdaptiveFlickPointer(Vector2 position)
@@ -3339,52 +3463,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         return validSlide;
     }
 
-    // Recognize early ONLY for the Armed tap on the identical real flat slab.
-    // In particular, normal turns, Air, UI touches, and slope micro-steering
-    // retain the old Ended/MouseUp timing and control flow.
-    void TryCommitArmedTapTurnWhilePressed(Vector2 position)
-    {
-        if (!trackingFlick || flickConsumed || autoHoldNextFlatReady ||
-            tapEdgeState != TapEdgeState.Armed || !tapEdgeFlatCollider ||
-            !flickPressFlatCollider ||
-            tapEdgeFlatCollider != flickPressFlatCollider ||
-            !BeginCommandOnTouch || !Earliest || MainGameManager.OnDead ||
-            HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide ||
-            Time.unscaledTime - flickPressUnscaledTime < .025f)
-            return;
-
-        if (!TryGetAdaptiveFlick(position, out float signedTurnPixels) ||
-            adaptiveMovingSamples < 2 || adaptiveConsistentSamples < 2)
-            return;
-
-        var support = HasGroundSupport();
-        if (!support.Item1 || support.Item2.collider != tapEdgeFlatCollider ||
-            !IsTapEdgeSupportedFlat(support.Item1, support.Item2))
-            return;
-
-        // Snapshot the budget before QueueQuarterTurn advances TapEdgeState.
-        float budget = adaptiveTimeToSlope;
-        float threshold = adaptiveRequiredMm;
-        float forwardSpeed = adaptiveForwardSpeed;
-        float distance = adaptiveDistanceToSlope;
-        if (!QueueQuarterTurn(signedTurnPixels, true))
-            return;
-
-        flickConsumed = true;
-        adaptiveEarlyCommitted = true;
-        adaptiveEarlyCommittedThresholdMm = threshold;
-        adaptiveEarlyCommittedTimeToSlope = budget;
-        if (autoHoldEligible)
-            CancelAutoHold("same-flat adaptive flick confirmed while pressed");
-        TapEdgeLog("ADAPTIVE EARLY CONFIRMED",
-            $"dx={(position.x - flickStart.x):F1}px dy={(position.y - flickStart.y):F1}px " +
-            $"direction={Mathf.Sign(signedTurnPixels):+0;-0} " +
-            $"threshold={threshold:F2}mm remaining={distance:F2}m " +
-            $"timeToSlope={(float.IsInfinity(budget) ? -1f : budget):F3}s " +
-            $"forward={forwardSpeed:F2}m/s " +
-            $"peakFinger={adaptivePeakSlideMmPerSecond:F1}mm/s " +
-            $"coherentSamples={adaptiveConsistentSamples}");
-    }
+    // Same-flat tap flicks are queued only by their pointer release.
 
     void BeginFlickGesture(Vector2 position, int fingerId)
     {
@@ -3581,8 +3660,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             return;
 
         Vector2 delta = position - flickStart;
-        bool slide = TryGetAdaptiveFlick(position, out float signedTurnPixels) ||
-            adaptiveEarlyCommitted;
+        bool slide = TryGetAdaptiveFlick(position, out float signedTurnPixels);
         bool horizontal = Mathf.Abs(delta.x) > Mathf.Abs(delta.y) * 1.10f;
         string hitName = currentHit.collider ? currentHit.collider.name : "none";
         Debug.Log($"[FLICK RELEASE] t={Time.time:F3} input={input} " +
@@ -3591,9 +3669,9 @@ public float AdvancePredictedSplineDriveReadOnly(
                   $"adaptiveMm={delta.magnitude / Mathf.Max(1f, adaptivePixelsPerMm):F2} " +
                   $"peakSpeedMmS={adaptivePeakSlideMmPerSecond:F1} " +
                   $"samples={adaptiveMovingSamples} coherent={adaptiveConsistentSamples} " +
-                  $"requiredMm={(adaptiveEarlyCommitted ? adaptiveEarlyCommittedThresholdMm : adaptiveRequiredMm):F2} " +
-                  $"timeToSlope={(float.IsInfinity(adaptiveEarlyCommitted ? adaptiveEarlyCommittedTimeToSlope : adaptiveTimeToSlope) ? -1f : (adaptiveEarlyCommitted ? adaptiveEarlyCommittedTimeToSlope : adaptiveTimeToSlope)):F3}s " +
-                  $"early={adaptiveEarlyCommitted} tapEdge={tapEdgeState} " +
+                  $"requiredMm={adaptiveRequiredMm:F2} " +
+                  $"timeToSlope={(float.IsInfinity(adaptiveTimeToSlope) ? -1f : adaptiveTimeToSlope):F3}s " +
+                  $"commit=release tapEdge={tapEdgeState} " +
                   $"pressOnFlat={flickStartedOnFlat} pressBeforeExtreme={flickStartedBeforeExtreme} " +
                   $"consumedBefore={consumedBeforeRelease} consumedAfter={flickConsumed} " +
                   $"blocked={blocked} guideValid={currentGuideValid} " +
@@ -5560,7 +5638,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         // no global 90-degree turn. Keep waitingForTurnGuide until tracking
         // really acquires the receiving spline.
         stallLastMovingVelocity = planar;
-        stallLastMovingAcceleration = Vector3.zero;
+        // Preserve the last observed acceleration for direction scoring;
+        // lack of a new reading must not zero out useful history.
         stallRecoveryPoint = lanePoint;
         stallRecoveryLane = lane;
         stallRecoveryHeading = candidate.tangent;
@@ -5941,7 +6020,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         rb.AddForce(surface.tangent * forwardAccel +
             side * sideAccel - surface.normal *
             Mathf.Min(35f, Mathf.Max(0f, flatStick)), ForceMode.Acceleration);
-        driveState = 0f;
+        if (live.isSlope)
+            driveState = 0f;
         float duration = Time.fixedTime - stallRecoveryStartedAt;
         bool reachedLane = forward >= 2.2f && Mathf.Abs(error) < .30f &&
             Mathf.Abs(vSide) < 1.0f;
@@ -6211,7 +6291,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         rb.AddForce(heading * forwardAccel + side * sideAccel -
             Vector3.up * Mathf.Max(0f, flatStick), ForceMode.Acceleration);
         direction = heading;
-        driveState = 0f;
+        // Escape owns forces for this tick; do not erase the flat Drive state.
         // Resume regular spline drive once the supported recovery lane is
         // reached and the ball has recovered some forward speed.
         float elapsed = Time.fixedTime - slopeReleaseEscapeStartedFixedTime;
@@ -7261,7 +7341,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                     if (stoppedFor >= slopeReleaseStoppedSecondsToEscape &&
                         TryStartSlopeReleaseTimedEscape())
                         return;
-                    rb.velocity = Vector3.up * rb.velocity.y;
+                    // Hold the turn request, not the body's momentum.
+                    // A real flat must coast naturally while Handoff waits.
                     return;
                 }
             }
@@ -7275,7 +7356,7 @@ public float AdvancePredictedSplineDriveReadOnly(
                     if (!tapEdgeHandoffHeld)
                         TapEdgeLog("HANDOFF HOLD", $"position={rb.position:F3}");
                     tapEdgeHandoffHeld = true;
-                    rb.velocity = new Vector3(0f, rb.velocity.y, 0f);
+                    // Do not erase X/Z speed on this verified flat.
                     return;
                 }
             }
@@ -7498,7 +7579,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnGuideReleasedAt = -1f;
         turnGuideGuardBraking = false;
         turnGuideCrawlLogged = false;
-        driveState = 0f;
+        if (currentGuideValid && currentGuide.isSlope)
+            driveState = 0f;
         ResetBallVisualSplineSession();
 
         FindMapFrameReferences();
@@ -7571,9 +7653,9 @@ public float AdvancePredictedSplineDriveReadOnly(
         activeTurnDegrees =
             Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
 
-        // 旋回冒頭だけ完全停止。BallVisual/SubjectのAuthority切替境界を静かにする。
-        rb.velocity = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
+        // Explicit player-authorized 0.12s pose freeze. Snapshot already
+        // stores velocity and angularVelocity; do not overwrite either with
+        // Vector3.zero just because the turn happened on a flat.
         rb.isKinematic = true;
 
         turnTransitionActive = true;
@@ -7637,7 +7719,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnGuideReleasedAt = Time.fixedTime;
         turnGuideGuardBraking = false;
         turnGuideCrawlLogged = false;
-        driveState = 0f;
+        if (currentGuideValid && currentGuide.isSlope)
+            driveState = 0f;
 
         bool useUTurn =
             activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
@@ -7691,7 +7774,9 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         // waitingForTurnGuideはApplyQuarterTurn開始時からtrueのまま。
         // InCornerは既に新方向へ切り替え済み。Spline捕捉へ進む。
-        driveState = 0f;
+        // Flat Drive remains available while reacquiring a matching guide.
+        if (currentGuideValid && currentGuide.isSlope)
+            driveState = 0f;
         ResetBallVisualSplineSession();
 
         Physics.SyncTransforms();
@@ -7825,11 +7910,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (rb && rb.isKinematic)
             rb.isKinematic = false;
 
-        if (rb)
-        {
-            rb.velocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-        }
+        // Abort without a saved snapshot is not an instruction to erase the
+        // surviving flat body's linear or angular velocity.
     }
 
     // 同じFlat上の進行距離で「次の斜面入口へ安全に曲がり終われるか」を判定する。

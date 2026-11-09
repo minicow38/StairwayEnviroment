@@ -1,8 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-// Place this on the gauge's parent object, not on its Needle child.
-// Compatible with the CockpitGauge v3 UI hierarchy and Inspector.
+// Attach to the gauge parent, not to the Needle child.
+// Unity 2022.3 / CockpitGauge v3 compatible.
 [ExecuteAlways]
 [DisallowMultipleComponent]
 public sealed class CockpitGauge2 : MonoBehaviour
@@ -15,7 +15,7 @@ public sealed class CockpitGauge2 : MonoBehaviour
     [SerializeField] float angleAt4Z = 120f;
     [SerializeField] float angleAt40Z = -96f;
     [SerializeField] float angleAtDeadZ = -120f;
-    [SerializeField] float needleArtOffsetZ = 0f;
+    [SerializeField] float needleArtOffsetZ;
 
     [Header("Needle Movement / 追従")]
     [SerializeField, Min(0f)] float smoothSpeed = 12f;
@@ -24,17 +24,33 @@ public sealed class CockpitGauge2 : MonoBehaviour
     [SerializeField] RectTransform needle;
     [SerializeField] Text digitalText;
 
+    [Header("SlopeStickCore / 数値連動")]
+    [Tooltip("Value(4～40)をMaxGroundSpeedに、10～100%へ換算してTargetSlopeProgressPercentに渡します。")]
+    [SerializeField] bool syncTargetSlopeProgress = true;
+    [Tooltip("InSubject の SlopeStickCore。未設定なら MainGameManager.core を使用します。")]
+    [SerializeField] SlopeStickCore targetCore;
+    [Tooltip("左側の CockpitGauge。登録すると、左側ゲージのValueも同時更新してCoreとの競合を防ぎます。未設定ならCorrespondSubjectから自動取得します。")]
+    [SerializeField] CockpitGauge targetProgressGauge;
+    [SerializeField] bool debugSync;
+
     float displayedAngleZ;
     bool initialized;
+    bool syncedOnce;
+    float lastSyncedValue = float.NaN;
+    SlopeStickCore lastSyncedCore;
+    CockpitGauge lastSyncedGauge;
+    bool warnedMissingCore;
+    bool lastSyncEnabled;
+
+    // Speed=4..40 -> Progress=10..100% in the same ten steps as CockpitGauge.
+    // Example: speed=4 -> 10%; speed=24 -> 60%; speed=40 -> 100%.
+    public float TargetSlopeProgressPercent =>
+        Mathf.Clamp(Mathf.Round(value / 4f) * 10f, 10f, 100f);
 
     public float Value
     {
         get => value;
-        set
-        {
-            this.value = Mathf.Clamp(value, 4f, 40f);
-            if (!Application.isPlaying) ApplyImmediately();
-        }
+        set => SetValue(value);
     }
 
     public bool Dead
@@ -47,14 +63,17 @@ public sealed class CockpitGauge2 : MonoBehaviour
         }
     }
 
-    // Right tap: +8, left tap: -8.
-    // At 40, another right tap enters DEAD; left from DEAD returns to 40.
-    public void Step(int amount)
-    {
-        MainGameManager.core.MaxGroundSpeed = value + amount;
-        value = Mathf.Max(4f, value + amount);
+    public void Step(int amount) => SetValue(value + amount);
+    public void RightTap() => Step(+8);
+    public void LeftTap() => Step(-8);
 
-        if (!Application.isPlaying) ApplyImmediately();
+    void SetValue(float requested)
+    {
+        value = Mathf.Clamp(requested, 4f, 40f);
+        if (Application.isPlaying)
+            SynchronizeToCore();
+        else
+            ApplyImmediately();
     }
 
     public float TargetNeedleAngleZ => GetTargetAngleZ();
@@ -75,9 +94,23 @@ public sealed class CockpitGauge2 : MonoBehaviour
     {
         FindReferencesIfMissing();
         ApplyImmediately();
+        syncedOnce = false;
+        if (Application.isPlaying)
+            SynchronizeToCore();
     }
 
-    void OnDisable() => initialized = false;
+    // After every scene object has received OnEnable, reapply the initial
+    // value. This prevents Gauge1's own initialization from overwriting it.
+    void Start()
+    {
+        if (Application.isPlaying) SynchronizeToCore();
+    }
+
+    void OnDisable()
+    {
+        initialized = false;
+        syncedOnce = false;
+    }
 
     void OnValidate()
     {
@@ -105,6 +138,21 @@ public sealed class CockpitGauge2 : MonoBehaviour
     void Update()
     {
         if (!needle) FindReferencesIfMissing();
+        if (Application.isPlaying)
+        {
+            // Inspector edits and delayed GameManager/Core initialization.
+            // Only transmit on changes, not on every Update: CockpitGauge
+            // also drives the same progress field and must not be fought.
+            SlopeStickCore core = targetCore ? targetCore : MainGameManager.core;
+            if (!syncedOnce || !Mathf.Approximately(lastSyncedValue, value) ||
+                (core && core != lastSyncedCore) ||
+                syncTargetSlopeProgress != lastSyncEnabled ||
+                (targetProgressGauge && targetProgressGauge != lastSyncedGauge) ||
+                (syncTargetSlopeProgress && !targetProgressGauge &&
+                    Time.frameCount % 30 == 0))
+                SynchronizeToCore();
+        }
+
         if (!needle) return;
 
         float target = GetTargetAngleZ();
@@ -117,6 +165,66 @@ public sealed class CockpitGauge2 : MonoBehaviour
         needle.localRotation = Quaternion.Euler(0f, 0f, displayedAngleZ);
         UpdateDigitalReadout();
         initialized = true;
+    }
+
+    // Writes MaxGroundSpeed and the corresponding extreme-point position.
+    // Also updates the left-side progress meter so its Update() does not
+    // immediately overwrite the value we just sent to SlopeStickCore.
+    void SynchronizeToCore()
+    {
+        if (!Application.isPlaying) return;
+
+        SlopeStickCore core = targetCore ? targetCore : MainGameManager.core;
+        CockpitGauge gauge = ResolveProgressGauge();
+        if (!core)
+        {
+            if (debugSync && !warnedMissingCore)
+            {
+                Debug.LogWarning("[GAUGE2] SlopeStickCore is missing; assign Target Core.", this);
+                warnedMissingCore = true;
+            }
+            syncedOnce = false; // retry when game controller appears
+            return;
+        }
+
+        warnedMissingCore = false;
+        core.MaxGroundSpeed = value;
+        float progress = TargetSlopeProgressPercent;
+        if (syncTargetSlopeProgress)
+        {
+            // This setter invokes CockpitGauge.ApplyToGame() and updates its
+            // Inspector value; direct Core assignment is retained to guarantee
+            // the right target even when Gauge1 has no explicit Core reference.
+            if (gauge && !Mathf.Approximately(gauge.Value, progress))
+                gauge.Value = progress;
+            core.targetSlopeProgressPercent = progress;
+        }
+
+        lastSyncedValue = value;
+        lastSyncedCore = core;
+        lastSyncedGauge = gauge;
+        lastSyncEnabled = syncTargetSlopeProgress;
+        syncedOnce = true;
+
+        if (debugSync)
+            Debug.Log($"[GAUGE2] Value={value:F1} speed={core.MaxGroundSpeed:F1} " +
+                $"targetProgress={core.targetSlopeProgressPercent:F1}%", this);
+    }
+
+    CockpitGauge ResolveProgressGauge()
+    {
+        if (targetProgressGauge) return targetProgressGauge;
+
+        // Use the two gauge references already wired in CorrespondSubject.
+        // Do not pick an arbitrary gauge from another character/canvas.
+        foreach (CorrespondSubject mapping in FindObjectsOfType<CorrespondSubject>(true))
+        {
+            if (mapping.RightDragOnMeter != this || !mapping.LeftOneTapMeter)
+                continue;
+            targetProgressGauge = mapping.LeftOneTapMeter;
+            break;
+        }
+        return targetProgressGauge;
     }
 
     float GetTargetAngleZ() => dead
@@ -135,7 +243,6 @@ public sealed class CockpitGauge2 : MonoBehaviour
     void UpdateDigitalReadout()
     {
         if (!digitalText) return;
-        // Reflect needle's displayed position while it moves, not only its destination.
         float fraction = Mathf.InverseLerp(angleAt4Z, angleAt40Z,
             displayedAngleZ - needleArtOffsetZ);
         float shown = Mathf.Lerp(4f, 40f, fraction);
@@ -158,21 +265,5 @@ public sealed class CockpitGauge2 : MonoBehaviour
             Transform child = transform.Find("Digital Reading");
             if (child) digitalText = child.GetComponent<Text>();
         }
-    }
-
-    public void RightTap()
-    {
-        if (value < 44)
-        {
-            Step(+8);
-        }
-    }
-    public void LeftTap()
-    {
-        if (value > 8)
-        {
-            Step(-8);
-        }
-
     }
 }
