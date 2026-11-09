@@ -1747,7 +1747,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
             direction = turnTargetDirection;
             if (currentGuideValid && currentGuide.isSlope)
-                driveState = 0f; // Never clear flat Drive just for a visual turn.
+                driveState = 0f;
             ResetBallVisualSplineSession();
 
             // HardFreeze後はVisual回転中でもRigidbodyがDynamicになる。
@@ -1943,8 +1943,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
-            // Keep the last frame's tangent / normal data intact for
-            // diagnostics and seam recovery. Only its VALID flag changes.
             currentSurfaceValid = false;
             PauseExtremePointTracking();
             return;
@@ -2015,8 +2013,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
-            // Keep the last frame's tangent / normal data intact for
-            // diagnostics and seam recovery. Only its VALID flag changes.
             currentSurfaceValid = false;
             PauseExtremePointTracking();
             return;
@@ -3686,6 +3682,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!trackingFlick || flickConsumed)
             return;
 
+        bool flatStartEarlyFlickOnOriginalStair = false;
+
         // A held slope-start gesture is committed only by release on the NEXT
         // verified flat. It is not classified as an EarlyFlick or a flat tap.
         if (slopeReleaseHoldArmed)
@@ -3731,9 +3729,20 @@ public float AdvancePredictedSplineDriveReadOnly(
                 BeginAdaptiveFlick(position);
                 return;
             }
-            // We never reached the next physical flat (or already left it).
-            // End ONLY the AutoHold observation: keep flickStart and every
-            // adaptive motion sample so a slope release is evaluated normally.
+            // The same flat-start finger may be released on its ORIGINAL
+            // stair before the extreme point. Remember the proven section
+            // BEFORE CancelAutoHold clears its cached guide. This becomes
+            // lateral EarlyFlick, not a premature 90-degree turn.
+            var slopeSupport = HasGroundSupport();
+            flatStartEarlyFlickOnOriginalStair = flickStartedOnFlat &&
+                !autoHoldNextFlatReady && currentGuideValid &&
+                currentGuide.isSlope && autoHoldLastSlopeGuide.valid &&
+                knotDetector.IsSameSection(autoHoldLastSlopeGuide, currentGuide) &&
+                currentGuide.sectionProgress01 < TargetProgress &&
+                !extremePointFiredInSection && slopeSupport.Item1 &&
+                IsAutoHoldStageHit(slopeSupport.Item2, float.NaN);
+
+            // Original stair release: keep all the pointer-motion samples.
             CancelAutoHold("released on stair / outside next flat; retain pointer flick");
         }
 
@@ -3790,7 +3799,12 @@ public float AdvancePredictedSplineDriveReadOnly(
         // Use the existing supported flat guide as a bounded fallback; NEVER
         // accept missing support or a different collider.
         bool supportedTapFlat = stableTapFlatAtRelease;
-        if (BallVisualIsOnFlat || physicalFlat || supportedTapFlat)
+        bool verifiedEarlyStair = flatStartEarlyFlickOnOriginalStair &&
+            currentGuideValid && currentGuide.isSlope &&
+            currentGuide.sectionProgress01 < TargetProgress &&
+            !extremePointFiredInSection;
+        if (!verifiedEarlyStair &&
+            (BallVisualIsOnFlat || physicalFlat || supportedTapFlat))
         {
             // The tap is still ARMED only for the same live physical slab.
             // A transient slope guide sample must not veto a genuine same-slab
@@ -3819,16 +3833,27 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         // 階段で離した場合は、極限ポイント前に押したジェスチャーを
         // 微小進路変更として分類する（途中で60%を越えても継続）。
-        // 平面で押したジェスチャーを階段のEarlyFlickへ流さない。
+        // 例外: 平面で開始しても、同じ元の階段上で極限前に離した
+        // フリックだけを小さな横進路変更として受け付ける。
         if (currentGuideValid && currentGuide.isSlope &&
             (flickStartedBeforeExtreme || currentGuide.sectionProgress01 < TargetProgress))
         {
-            if (CanQueueEarlyFlick(flickStartedBeforeExtreme))
+            if (CanQueueEarlyFlick(flickStartedBeforeExtreme,
+                    flatStartEarlyFlickOnOriginalStair))
             {
                 QueueEarlyFlick(signedTurnPixels);
                 flickConsumed = true;
+                if (flatStartEarlyFlickOnOriginalStair)
+                    AutoHoldLog("FLAT-START EARLY FLICK ACCEPTED",
+                        $"progress={currentGuide.sectionProgress01:F3} " +
+                        $"target={TargetProgress:F3}; lateral only");
             }
-            return; // 階段でEarlyFlickが拒否されても90度旋回へ誤送しない。
+            else if (logTurnTransition)
+                AutoHoldLog("EARLY FLICK REJECTED",
+                    $"flatStart={flickStartedOnFlat} " +
+                    $"originalSlope={flatStartEarlyFlickOnOriginalStair} " +
+                    $"support={currentSupported} progress={currentGuide.sectionProgress01:F3}");
+            return; // 前半では90度旋回へ無条件転送しない。
         }
 
         // 極限ポイント通過後の階段で離した場合など、既存の90度許可条件に従う。
@@ -6800,6 +6825,47 @@ public float AdvancePredictedSplineDriveReadOnly(
         return state;
     }
 
+    // A SphereCast/Raycast may select a beveled stair face at the exact
+    // MouseUp/Touch.Ended frame even though the previously verified receiving
+    // flat is still under (part of) the sphere. Re-test the *same* known slab
+    // directly. A cached collider by itself NEVER authorizes the turn.
+    bool TryVerifyReceivingFlatAtReleaseSeam(out string reason)
+    {
+        reason = "no current physical receiving-flat evidence";
+        if (!autoHoldNextFlatReady || !autoHoldNextFlatCollider ||
+            !autoHoldNextFlatCollider.enabled || !rb ||
+            autoHoldNextFlatLastSupportTime < 0f ||
+            Time.time - autoHoldNextFlatLastSupportTime > .14f ||
+            !TryGetAutoHoldReceivingFlat(out Vector3 flatStart,
+                out Vector3 forward))
+            return false;
+
+        Vector3 center = rb.worldCenterOfMass;
+        if (Vector3.Dot(rb.position - flatStart, forward) < -ProbeRadius)
+            return false;
+        Vector3 side = Vector3.Cross(Vector3.up, forward).normalized;
+        Vector3[] offsets =
+        {
+            Vector3.zero, -forward * (ProbeRadius * .45f),
+            side * (ProbeRadius * .45f), -side * (ProbeRadius * .45f)
+        };
+        foreach (Vector3 offset in offsets)
+        {
+            Vector3 sample = center + offset;
+            Ray ray = new Ray(sample + Vector3.up * .45f, Vector3.down);
+            if (!autoHoldNextFlatCollider.Raycast(ray, out RaycastHit hit,
+                    ProbeRadius + 1.2f) ||
+                hit.collider != autoHoldNextFlatCollider ||
+                !IsCloseGroundRay(hit, sample) ||
+                Vector3.Angle(hit.normal, Vector3.up) > 18f ||
+                Mathf.Abs(hit.point.y - flatStart.y) > .32f)
+                continue;
+            reason = "release ray verified cached receiving-flat collider";
+            return true;
+        }
+        return false;
+    }
+
     // Reuse the EXISTING AutoHold turn. This runs only from the existing
     // Touch.Ended / MouseUp path, never from FixedUpdate on flat arrival.
     bool TryCommitFlatStartAutoHoldOnRelease()
@@ -6812,12 +6878,21 @@ public float AdvancePredictedSplineDriveReadOnly(
             HasPendingTurnIntent || generalStallRecovering)
             return false;
 
-        // Release can arrive before FixedUpdate. Use the SAME physical-floor
-        // classifier here, but never accept its Uncertain short grace.
+        // Release can arrive before FixedUpdate. Prefer the normal physical
+        // classifier. If it briefly misses the already VERIFIED receiving
+        // flat, re-probe that exact collider at the current body position.
         NearestKnotDetector.GuideFrame releaseGuide = knotDetector
             ? knotDetector.Evaluate(rb.position) : default;
         AutoHoldLandingFloor landing = ObserveFlatStartAutoHoldNextFlat(
             releaseGuide, out string floorReason);
+        if (landing == AutoHoldLandingFloor.Uncertain &&
+            autoHoldNextFlatReady &&
+            TryVerifyReceivingFlatAtReleaseSeam(out string seamReason))
+        {
+            landing = AutoHoldLandingFloor.VerifiedFlat;
+            floorReason = seamReason;
+            AutoHoldLog("RELEASE SEAM VERIFIED", floorReason);
+        }
         if (landing != AutoHoldLandingFloor.VerifiedFlat ||
             !autoHoldNextFlatReady)
         {
@@ -6978,9 +7053,13 @@ public float AdvancePredictedSplineDriveReadOnly(
     // ================================================================
     // Pre-extreme steering: lateral acceleration only, no position teleport
     // ================================================================
-    bool CanQueueEarlyFlick(bool pressStartedBeforeExtreme)
+    bool CanQueueEarlyFlick(bool pressStartedBeforeExtreme,
+        bool verifiedFlatStartOriginalStair = false)
     {
-        return !flickStartedOnFlat &&
+        // Normally a slope-start gesture owns EarlyFlick. The only allowed
+        // flat-start exception is the already held and physically confirmed
+        // ORIGINAL slope, captured before CancelAutoHold on release.
+        return (!flickStartedOnFlat || verifiedFlatStartOriginalStair) &&
                rb && !rb.isKinematic && BeginCommandOnTouch && Earliest &&
                !MainGameManager.OnDead && currentSupported &&
                currentGuideValid && currentSurfaceValid && currentGuide.isSlope &&
