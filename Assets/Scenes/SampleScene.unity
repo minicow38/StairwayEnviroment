@@ -744,6 +744,10 @@ MonoBehaviour:
   smoothSpeed: 12
   needle: {fileID: 980791499}
   digitalText: {fileID: 0}
+  syncTargetSlopeProgress: 1
+  targetCore: {fileID: 0}
+  targetProgressGauge: {fileID: 0}
+  debugSync: 0
 --- !u!1 &78247602
 GameObject:
   m_ObjectHideFlags: 0

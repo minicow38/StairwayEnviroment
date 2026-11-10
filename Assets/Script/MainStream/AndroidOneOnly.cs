@@ -59,11 +59,9 @@ public class AndroidOneOnly : MonoBehaviour
             {
                 LinenapItemList.Add(MiddleItemList[i] - '0');
             }
-
-            Debug.Log("");
+            
         }
 
-        Debug.Log("");
 
     }
 
