@@ -89,6 +89,11 @@ public sealed class CockpitGauge : MonoBehaviour,
     readonly List<RaycastResult> turnHitResults = new List<RaycastResult>(8);
     bool turnExcludedMouseGesture;
 
+    // Before a UI edit: Core -> indicator. Afterwards: indicator -> Core.
+    // This avoids feedback loops and prevents a Core restart from resetting UI choice.
+    bool gaugeValueHasPriority;
+    SlopeStickCore lastPriorityCore;
+
     public float Value
     {
         get => value;
@@ -257,6 +262,15 @@ public sealed class CockpitGauge : MonoBehaviour,
         if (!Application.isPlaying) return;
 
         float q = Quantize(value);
+        // Inspector/runtime direct changes to this serialized field count as UI edits.
+        if (!float.IsNaN(observedValue) && !Mathf.Approximately(observedValue, q))
+        {
+            gaugeValueHasPriority = true;
+            ApplyToGame();
+        }
+
+        SynchronizeWithCore();
+        q = Quantize(value);
         if (!Mathf.Approximately(observedValue, q) || observedDead != dead)
         {
             value = q;
@@ -358,12 +372,16 @@ public sealed class CockpitGauge : MonoBehaviour,
 
     void SetMeterValue(float requested, bool applyToGame)
     {
-        float previous = value;
         value = Quantize(requested);
         dead = false;
         if (!glowMode) floatingIndex = GetValueIndex();
         RefreshVisuals();
-        if (applyToGame && Application.isPlaying && !Mathf.Approximately(previous, value)) ApplyToGame();
+        if (applyToGame && Application.isPlaying)
+        {
+            // Even reselecting the same visible step must win over a stale Core.
+            gaugeValueHasPriority = true;
+            ApplyToGame();
+        }
     }
 
     void OnSliderValueChanged(float index) =>
@@ -396,8 +414,50 @@ public sealed class CockpitGauge : MonoBehaviour,
 
     void ApplyToGame()
     {
+        SlopeStickCore core = MainGameManager.core;
+        if (core == null) return;
+        core.SetTargetSlopeProgressPercentFromGauge(value);
+        lastPriorityCore = core;
+    }
+
+    void SynchronizeWithCore()
+    {
+        SlopeStickCore core = MainGameManager.core;
+        if (core == null) return;
+
+        if (gaugeValueHasPriority)
+        {
+            // Reinforce the selection if MainGameManager.core was replaced.
+            // SlopeStickCore also protects the value before its FixedUpdate.
+            if (lastPriorityCore != core ||
+                !Mathf.Approximately(core.targetSlopeProgressPercent, value))
+            {
+                core.SetTargetSlopeProgressPercentFromGauge(value);
+                lastPriorityCore = core;
+            }
+            return;
+        }
+
+        // Passive indicator, before any manual gauge operation.
+        // Do not shift the selected step under a finger that is already pressing.
+        if (pressed) return;
+        float fromCore = Quantize(core.targetSlopeProgressPercent);
+        if (!Mathf.Approximately(value, fromCore))
+        {
+            value = fromCore;
+            floatingIndex = GetValueIndex();
+            RefreshVisuals();
+        }
+    }
+
+    // Call if another game system should intentionally regain ownership.
+    public void ReturnTargetSlopeProgressControlToCore()
+    {
+        gaugeValueHasPriority = false;
+        lastPriorityCore = null;
         if (MainGameManager.core != null)
-            MainGameManager.core.targetSlopeProgressPercent = value;
+            MainGameManager.core.ReleaseTargetSlopeProgressGaugeControl();
+        if (Application.isPlaying) SynchronizeWithCore();
     }
 
     float EffectivePixelsPerStep()
@@ -665,3 +725,4 @@ public sealed class CockpitGauge : MonoBehaviour,
     Color GetGlowColor(int i) =>
         Color.Lerp(lowerGlowColor, upperGlowColor, Mathf.Clamp01(i / 9f));
 }
+

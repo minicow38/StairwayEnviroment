@@ -56,6 +56,31 @@ public sealed class SlopeStickCore : MonoBehaviour
     
     [Range(0f, 100f)] [SerializeField] public float targetSlopeProgressPercent = 60f;
 
+    // The gauge becomes the authoritative source only after an actual UI edit.
+    // Keep the original public serialized field for all existing scenes/callers.
+    bool gaugeOwnsTargetSlopeProgress;
+    float gaugeTargetSlopeProgressPercent;
+
+    public void SetTargetSlopeProgressPercentFromGauge(float requestedPercent)
+    {
+        gaugeTargetSlopeProgressPercent = Mathf.Clamp(requestedPercent, 10f, 100f);
+        gaugeOwnsTargetSlopeProgress = true;
+        targetSlopeProgressPercent = gaugeTargetSlopeProgressPercent;
+    }
+
+    // Explicitly return control to the Core/other game logic when desired.
+    public void ReleaseTargetSlopeProgressGaugeControl()
+    {
+        gaugeOwnsTargetSlopeProgress = false;
+    }
+
+    void KeepGaugeTargetSlopeProgress()
+    {
+        if (gaugeOwnsTargetSlopeProgress &&
+            !Mathf.Approximately(targetSlopeProgressPercent, gaugeTargetSlopeProgressPercent))
+            targetSlopeProgressPercent = gaugeTargetSlopeProgressPercent;
+    }
+
     [Header("Coordinate Mapping")]
     [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")]
     [SerializeField] CorrespondSubject correspondSubject;
@@ -1235,6 +1260,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void Update()
     {
+        KeepGaugeTargetSlopeProgress();
         ReadTurnFlick();
     }
 
@@ -1285,23 +1311,23 @@ public float AdvancePredictedSplineDriveReadOnly(
         MainGameManager.TopTitle.SetActive(false);
         MainGameManager.PreviewIconRoot.SetActive(false);
         MainGameManager.TopLiteral.SetActive(false);
-         MainGameManager.PlayButton.SetActive(false);
+        MainGameManager.PlayButton.SetActive(false);
         MainGameManager.Userbility.SetActive(true);
         MainGameManager.HopingSwipeTurn.SetActive(true);
-        
-       
-        BeginCommandOnTouch = true;
 
-        Earliest=true;
-        if (!AcceleFirstTurn)
-        {
-            StartCoroutine(delayTurn());
-        }
+        BeginCommandOnTouch = true;
+        Earliest = true;
     }
 
     IEnumerator delayTurn()
     {
         yield return new WaitForSeconds(1f);
+        Debug.Log(
+            $"[START UI] t={Time.time:F3} " +
+            $"AcceleFirstTurn={AcceleFirstTurn} " +
+            $"BeginCommandOnTouch={BeginCommandOnTouch} " +
+            $"PlayButtonActive={MainGameManager.PlayButton.activeSelf}"
+        );
         if (!AcceleFirstTurn)
         {
             MainGameManager.PlayButton.SetActive(true);
@@ -1746,6 +1772,8 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void FixedUpdate()
     {
+        // Before any Guide/Stick/turn physics reads TargetProgress, honour UI edits.
+        KeepGaugeTargetSlopeProgress();
         CaptureDropAuditBeforeStep();
         CaptureSlopeReleaseBeforeStopMotion();
         sumTime += Time.deltaTime;

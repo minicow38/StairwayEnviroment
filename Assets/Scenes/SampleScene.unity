@@ -735,7 +735,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e28d883a07ce9c948be13d42174342b6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  value: 24
+  value: 16
   dead: 0
   angleAt4Z: 120
   angleAt40Z: -96
@@ -4843,7 +4843,7 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 980791498}
-  m_LocalRotation: {x: 0, y: 0, z: -0.000000049934272, w: 1}
+  m_LocalRotation: {x: 0, y: 0, z: 0.4067366, w: 0.9135455}
   m_LocalPosition: {x: 0, y: 0, z: -13}
   m_LocalScale: {x: 0.24248715, y: 0.24248694, z: 0.24248706}
   m_ConstrainProportionsScale: 0
@@ -5555,7 +5555,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 264172cbfccfe4aad9703e8ceefb4592, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
-  maxGroundSpeed: 24
+  maxGroundSpeed: 16
   GroundAcceleration: 35
   TargetAccelerationLimit: 120
   knotDetector: {fileID: 156220176}
@@ -5563,7 +5563,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 1023
   travelDirection: {x: 0, y: 0, z: 1}
-  targetSlopeProgressPercent: 10
+  targetSlopeProgressPercent: 60
   correspondSubject: {fileID: 572935013}
   ballVisualSlopeDrive: {fileID: 423131475}
   physicsRoot: {fileID: 350604442}
@@ -8152,7 +8152,7 @@ PrefabInstance:
     - target: {fileID: 4458056703349474868, guid: a17cd67d6025c744b93f934f05bc2db2,
         type: 3}
       propertyPath: value
-      value: 40
+      value: 60
       objectReference: {fileID: 0}
     - target: {fileID: 4458056703349474868, guid: a17cd67d6025c744b93f934f05bc2db2,
         type: 3}
