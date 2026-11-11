@@ -702,7 +702,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &73219668
 RectTransform:
   m_ObjectHideFlags: 0
@@ -2273,7 +2273,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &386783784
 RectTransform:
   m_ObjectHideFlags: 0
@@ -5563,7 +5563,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 1023
   travelDirection: {x: 0, y: 0, z: 1}
-  targetSlopeProgressPercent: 30
+  targetSlopeProgressPercent: 60
   correspondSubject: {fileID: 572935013}
   ballVisualSlopeDrive: {fileID: 423131475}
   physicsRoot: {fileID: 350604442}

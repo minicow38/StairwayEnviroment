@@ -504,6 +504,12 @@ public sealed class SlopeStickCore : MonoBehaviour
     // Visual旋回全体と、先頭の短いKinematic停止区間を分ける。
     bool turnTransitionActive;
     bool turnBodyFrozen;
+    // Normal flicks keep Rigidbody dynamic throughout visual rotation.
+    // These two states are separate: visual rotation may finish before the
+    // new receiving spline is physically verified.
+    bool turnContinuousVisualMotion;
+    bool turnNaturalGuideHandoff;
+    float turnNaturalHandoffNextLogAt;
     float turnTransitionStartTime = -1f;
     float activeTurnDegrees;
     TurnTransitionSnapshot turnTransitionSnapshot;
@@ -1299,6 +1305,8 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void OnDisable()
     {
+        turnContinuousVisualMotion = false;
+        turnNaturalGuideHandoff = false;
         ClearUncommittedRouteGuard("component disabled");
         ClearVerifiedStairCorrection();
         ClearPostBDownhillGuard("lifecycle reset");
@@ -1324,6 +1332,11 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void OnApplicationPause(bool paused)
     {
+        if (paused)
+        {
+            turnContinuousVisualMotion = false;
+            turnNaturalGuideHandoff = false;
+        }
         if (paused) ClearUncommittedRouteGuard("application paused");
         ClearVerifiedStairCorrection();
         ClearPostBDownhillGuard("lifecycle reset");
@@ -1890,8 +1903,9 @@ public float AdvancePredictedSplineDriveReadOnly(
             slopeReleaseHoldHandoffHeld = false;
         }
 
-        // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。
-        // UTurnはHardFreeze解除時に90度方向転換済み。円弧追従は行わない。
+        // Only special edge/hold turns freeze. Ordinary flick turns rotate
+        // their physical velocity immediately and continue along the normal
+        // support / guide-handoff route WHILE the visual frame is tweening.
         if (turnTransitionActive)
         {
             ClearVerifiedStairCorrection();
@@ -1905,19 +1919,23 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
 
             direction = turnTargetDirection;
-            driveState = 0f;
             ResetBallVisualSplineSession();
-
-            // HardFreeze後はVisual回転中でもRigidbodyがDynamicになる。
-            // 0.30sのTween終了まで無監視で走らせない。
-            if (waitingForTurnGuide && !rb.isKinematic)
+            if (!turnContinuousVisualMotion)
             {
-                var transitioningGuide = knotDetector.Evaluate(rb.position);
-                var transitionSupport = HasGroundSupport();
-                GuardUncapturedTurnGuide(transitioningGuide,
-                    transitionSupport.Item1);
+                // Existing special-turn release and coast behavior.
+                driveState = 0f;
+                if (waitingForTurnGuide && !rb.isKinematic)
+                {
+                    var transitioningGuide = knotDetector.Evaluate(rb.position);
+                    var transitionSupport = HasGroundSupport();
+                    GuardUncapturedTurnGuide(transitioningGuide,
+                        transitionSupport.Item1);
+                }
+                return;
             }
-            return;
+            // Normal turn: fall through to physical guide validation below.
+            // Never suppress gravity, ordinary Drive or real floor support
+            // just because the VisualPlayerRoot is still rotating.
         }
 
         // Visual旋回後、新Spline捕捉まで旧SplineのDriveを再開しない。
@@ -2305,16 +2323,17 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (!captured)
             {
                 PauseExtremePointTracking();
-                driveState = 0f;
+                // Ordinary flicks are not emergency/special hold turns.
+                // Their velocities remain physical: no Drive reset or
+                // speed-clamp while the new spline is being identified.
+                if (!turnNaturalGuideHandoff)
+                    driveState = 0f;
                 GuardUncapturedTurnGuide(guide, grounded);
-
-                // The guide guard has already applied bounded support and
-                // roll-consistent spin damping on the REAL floor. No second
-                // full-strength spline Stick: it can push X/Z backwards.
                 return;
             }
 
             waitingForTurnGuide = false;
+            turnNaturalGuideHandoff = false;
             turnGuideCapturedAt = Time.fixedTime;
             stickState = Mathf.Min(stickState, Mathf.Max(0f, flatStick));
             ResetUncapturedTurnGuideStallWatch();
@@ -3004,6 +3023,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             !BeginCommandOnTouch || MainGameManager.OnDead)
             return;
 
+        // Natural flicks must never use the old emergency brake that can
+        // drive forward speed toward 0 / 1.7 / 2.8 / 3 m/s. Keep the motion
+        // in Rigidbody and let gravity work while the guide is not verified.
+        if (turnNaturalGuideHandoff)
+        {
+            ContinueNaturalTurnGuideHandoff(grounded);
+            return;
+        }
+
         Vector3 heading = NormalizeFlat(turnTargetDirection, travelDirection);
         Vector3 planar = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
         float forward = Vector3.Dot(planar, heading);
@@ -3134,6 +3162,69 @@ public float AdvancePredictedSplineDriveReadOnly(
             Debug.Log($"[TURN GUIDE SAFE-CRAWL] t={Time.fixedTime:F3} " +
                 $"forward={Vector3.Dot(corrected, heading):F2} " +
                 $"floor={aheadHit.collider.name}", this);
+        }
+    }
+
+    // Regular flick turn handoff: never set velocity, position, kinematic or
+    // angularVelocity, and never invent a receiving spline. Gravity keeps
+    // the ball descending. When a REAL close stage floor agrees with the
+    // authorized heading, add only a small normal Stick and forward Drive.
+    // Special held turns continue to use GuardUncapturedTurnGuide unchanged.
+    void ContinueNaturalTurnGuideHandoff(bool grounded)
+    {
+        if (!rb || rb.isKinematic || MainGameManager.OnDead ||
+            !BeginCommandOnTouch || !grounded)
+            return;
+
+        Vector3 centre = rb.worldCenterOfMass;
+        if (!TryAutoHoldGroundRay(centre, out RaycastHit floor) ||
+            !IsCloseGroundRay(floor, centre) ||
+            !IsAutoHoldStageHit(floor, float.NaN))
+            return;
+
+        Vector3 normal = floor.normal.normalized;
+        if (normal.sqrMagnitude <= Eps ||
+            Vector3.Angle(normal, Vector3.up) > maxSlopeAngle)
+            return;
+
+        Vector3 heading = NormalizeFlat(turnTargetDirection, direction);
+        Vector3 alongFloor = Vector3.ProjectOnPlane(heading, normal);
+        if (alongFloor.sqrMagnitude <= Eps)
+            return;
+        alongFloor.Normalize();
+
+        // An unrelated stair may be on the other side of a 90-degree seam.
+        // Reject any verified slope on which the committed direction would
+        // actually climb uphill; gravity alone is safer than a guessed drive.
+        bool sloped = Vector3.Angle(normal, Vector3.up) > 12f;
+        if (sloped && Vector3.Dot(Physics.gravity, alongFloor) < -0.25f)
+            return;
+
+        float forwardSpeed = Vector3.Dot(rb.velocity, heading);
+        float desiredDrive = Mathf.Clamp(
+            SpeedDrive(Mathf.Max(0f, forwardSpeed)),
+            0f, GroundAcceleration);
+        driveState = Move(Mathf.Max(0f, driveState),
+            desiredDrive, AccelerationJerk);
+
+        // No inherited 1000m/s2 slope Stick on a different stair.
+        // Normal force remains nonzero, and Y velocity stays untouched.
+        float gentleStick = Mathf.Max(0f, flatStick);
+        stickState = Move(
+            Mathf.Clamp(stickState, 0f, gentleStick),
+            gentleStick, StickJerk);
+        rb.AddForce(alongFloor * driveState - normal * stickState,
+            ForceMode.Acceleration);
+        dropAuditStickAppliedLastTick = stickState;
+
+        if (Time.fixedTime >= turnNaturalHandoffNextLogAt)
+        {
+            turnNaturalHandoffNextLogAt = Time.fixedTime + .15f;
+            Debug.Log($"[TURN NATURAL GUIDE WAIT] t={Time.fixedTime:F3} " +
+                $"forward={forwardSpeed:F2} vertical={rb.velocity.y:F2} " +
+                $"drive={driveState:F1} stick={stickState:F1} " +
+                $"floor={floor.collider.name} heading={heading:F2}; " +
+                "no freeze / no speed clamp", this);
         }
     }
 
@@ -9276,7 +9367,12 @@ public float AdvancePredictedSplineDriveReadOnly(
             fiveLineMode &&
             !preserveOutCornerLine;
 
-        if (!BeginTurnTransition(turnDegrees))
+        // Only the intentionally held/edge-snapped turn may use HardFreeze.
+        // A normal post-extreme flick (FiveLineAfterPop), normal InCorner
+        // and ordinary OutCorner must keep falling without stopping.
+        bool freezeForSpecialTurn = autoHoldSelected || tapEdgeSelected ||
+            slopeReleaseHoldTurnPending;
+        if (!BeginTurnTransition(turnDegrees, freezeForSpecialTurn))
         {
             if (autoHoldSelected)
                 AutoHoldLog("CANCEL", "could not begin physics turn");
@@ -9361,10 +9457,14 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnGuideCapturedAt = -1f;
         ResetUncapturedTurnGuideStallWatch();
         uncommandedGuideGuardLogged = false;
-        turnGuideReleasedAt = -1f;
+        // Natural flick already released its dynamic body during Begin.
+        // Preserve that timestamp for an uncaptured receiving guide.
+        if (!turnNaturalGuideHandoff)
+            turnGuideReleasedAt = -1f;
         turnGuideGuardBraking = false;
         turnGuideCrawlLogged = false;
-        if (currentGuideValid && currentGuide.isSlope) driveState = 0f;
+        if (!turnNaturalGuideHandoff && currentGuideValid && currentGuide.isSlope)
+            driveState = 0f;
         ResetBallVisualSplineSession();
 
         FindMapFrameReferences();
@@ -9418,7 +9518,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
     }
 
-    bool BeginTurnTransition(float turnDegrees)
+    bool BeginTurnTransition(float turnDegrees, bool freezeForSpecialTurn)
     {
         if (!rb || rb.isKinematic || turnTransitionActive)
             return false;
@@ -9437,14 +9537,44 @@ public float AdvancePredictedSplineDriveReadOnly(
         activeTurnDegrees =
             Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
 
-        // The turn snapshot stores velocity and angular velocity. Pause pose
-        // integration briefly without ever erasing those physical values.
-        rb.isKinematic = true;
-
         turnTransitionActive = true;
-        turnBodyFrozen = true;
         turnTransitionStartTime = Time.fixedTime;
-        LogDropAuditTurn("FREEZE", turnTransitionSnapshot.velocity);
+        turnContinuousVisualMotion = !freezeForSpecialTurn;
+        turnNaturalGuideHandoff = !freezeForSpecialTurn;
+        turnNaturalHandoffNextLogAt = 0f;
+
+        if (freezeForSpecialTurn)
+        {
+            // Explicit edge/long-hold intervention only; legacy snapshot
+            // and HardFreeze handoff remain unchanged for this mode.
+            rb.isKinematic = true;
+            turnBodyFrozen = true;
+            LogDropAuditTurn("FREEZE", turnTransitionSnapshot.velocity);
+        }
+        else
+        {
+            // Do not freeze even one physics tick on a normal flick.
+            // Convert only XZ direction. Existing turn methods preserve
+            // vertical falling velocity and the horizontal speed magnitude.
+            turnBodyFrozen = false;
+            Quaternion physicsTurn = Quaternion.AngleAxis(
+                activeTurnDegrees, Vector3.up);
+            if (activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
+                ApplyDirectInCornerTurn(turnTransitionSnapshot.velocity);
+            else
+                ApplyDirectFiveLineTurn(activeTurnDegrees);
+            rb.angularVelocity = physicsTurn *
+                turnTransitionSnapshot.angularVelocity;
+            turnGuideReleasedAt = Time.fixedTime;
+            turnHandoffNextAuditTime = 0f;
+            turnGuideGuardBraking = false;
+            turnGuideCrawlLogged = false;
+            Debug.Log($"[TURN NATURAL CONTINUE] t={Time.fixedTime:F3} " +
+                $"mode={activeTurnMode} " +
+                $"before={turnTransitionSnapshot.velocity:F3} " +
+                $"after={rb.velocity:F3} " +
+                "isKinematic=False; no HardFreeze", this);
+        }
 
         ResetBallVisualSplineSession();
         return true;
@@ -9555,9 +9685,12 @@ public float AdvancePredictedSplineDriveReadOnly(
         activeTurnDegrees = 0f;
         turnTransitionSnapshot = default;
 
-        // waitingForTurnGuideはApplyQuarterTurn開始時からtrueのまま。
-        // InCornerは既に新方向へ切り替え済み。Spline捕捉へ進む。
-        if (currentGuideValid && currentGuide.isSlope) driveState = 0f;
+        // The continuous-motion handoff outlives the visual tween until
+        // the receiving guide is physically captured. Never zero its Drive.
+        turnContinuousVisualMotion = false;
+        if (!turnNaturalGuideHandoff &&
+            currentGuideValid && currentGuide.isSlope)
+            driveState = 0f;
         ResetBallVisualSplineSession();
 
         Physics.SyncTransforms();
@@ -9606,6 +9739,9 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         turnTransitionActive = false;
         turnBodyFrozen = false;
+        turnContinuousVisualMotion = false;
+        turnNaturalGuideHandoff = false;
+        turnNaturalHandoffNextLogAt = 0f;
         turnTransitionStartTime = -1f;
         activeTurnDegrees = 0f;
         turnTransitionSnapshot = default;
@@ -9669,6 +9805,9 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         turnTransitionActive = false;
         turnBodyFrozen = false;
+        turnContinuousVisualMotion = false;
+        turnNaturalGuideHandoff = false;
+        turnNaturalHandoffNextLogAt = 0f;
         turnTransitionStartTime = -1f;
         activeTurnDegrees = 0f;
         turnTransitionSnapshot = default;
