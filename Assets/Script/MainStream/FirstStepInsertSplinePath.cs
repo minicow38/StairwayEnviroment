@@ -2400,8 +2400,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         int widthObj = FirstCorner
             ? UnityEngine.Random.Range(0, ShiftObj.Length)
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
-        float localX = ShiftObj[1].x;
-        bool onPylon = value < 1;
+        float localX = ShiftObj[widthObj].x;
+        bool onPylon = value < 2;
         bool generated = false;
 
         if (onPylon && PylonPrefab && ActiveStairway1 && ActiveStairway2)

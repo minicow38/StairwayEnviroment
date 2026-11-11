@@ -97,7 +97,8 @@ public sealed class CockpitGauge : MonoBehaviour,
     public float Value
     {
         get => value;
-        set => SetMeterValue(value, true);
+        set => SetMeterValue(value, 
+            true);
     }
     public bool Dead
     {
@@ -203,10 +204,33 @@ public sealed class CockpitGauge : MonoBehaviour,
         }
         floatingIndex = GetValueIndex();
         RefreshVisuals();
+
+        // An enabled SegmentLVInGauge owns the initial value, including the
+        // Value serialized in the Inspector before entering Play Mode.
+        // MainGameManager.core may not be ready until Start(), so Update() will
+        // retry through SynchronizeWithCore() if this first push is too early.
+        if (Application.isPlaying)
+        {
+            gaugeValueHasPriority = true;
+            lastPriorityCore = null;
+            ApplyToGame();
+        }
     }
 
     void OnDisable()
     {
+        // A disabled gauge never keeps overriding the InSubject Inspector.
+        // Preserve 'value': if enabled again, its displayed setting becomes
+        // the authority again (including a value authored before Play).
+        if (Application.isPlaying)
+        {
+            SlopeStickCore currentCore = lastPriorityCore != null
+                ? lastPriorityCore : MainGameManager.core;
+            if (currentCore != null)
+                currentCore.ReleaseTargetSlopeProgressGaugeControl();
+            gaugeValueHasPriority = false;
+            lastPriorityCore = null;
+        }
         if (slider != null) slider.onValueChanged.RemoveListener(OnSliderValueChanged);
         pressed = false;
         glowMode = false;
@@ -414,6 +438,8 @@ public sealed class CockpitGauge : MonoBehaviour,
 
     void ApplyToGame()
     {
+        // Setting Value on a disabled component must not rewrite InSubject.
+        if (!Application.isPlaying || !isActiveAndEnabled) return;
         SlopeStickCore core = MainGameManager.core;
         if (core == null) return;
         core.SetTargetSlopeProgressPercentFromGauge(value);
@@ -422,6 +448,7 @@ public sealed class CockpitGauge : MonoBehaviour,
 
     void SynchronizeWithCore()
     {
+        if (!isActiveAndEnabled) return;
         SlopeStickCore core = MainGameManager.core;
         if (core == null) return;
 
@@ -725,4 +752,3 @@ public sealed class CockpitGauge : MonoBehaviour,
     Color GetGlowColor(int i) =>
         Color.Lerp(lowerGlowColor, upperGlowColor, Mathf.Clamp01(i / 9f));
 }
-

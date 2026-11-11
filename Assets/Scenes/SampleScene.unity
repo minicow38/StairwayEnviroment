@@ -5563,7 +5563,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 1023
   travelDirection: {x: 0, y: 0, z: 1}
-  targetSlopeProgressPercent: 60
+  targetSlopeProgressPercent: 30
   correspondSubject: {fileID: 572935013}
   ballVisualSlopeDrive: {fileID: 423131475}
   physicsRoot: {fileID: 350604442}
@@ -8152,7 +8152,7 @@ PrefabInstance:
     - target: {fileID: 4458056703349474868, guid: a17cd67d6025c744b93f934f05bc2db2,
         type: 3}
       propertyPath: value
-      value: 60
+      value: 30
       objectReference: {fileID: 0}
     - target: {fileID: 4458056703349474868, guid: a17cd67d6025c744b93f934f05bc2db2,
         type: 3}
