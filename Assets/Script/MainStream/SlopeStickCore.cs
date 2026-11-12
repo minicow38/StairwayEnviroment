@@ -83,6 +83,101 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float EntryShockMaximumFlatAge = .12f;
     const float EntryShockRouteProtectionSeconds = .26f;
 
+    // Runtime GAME-VIEW sign and route ambiguity status. The sign lives for
+    // three seconds; it is NOT a three-second physics turn buffer. Only an
+    // already accepted user command may enter the normal 90-degree turn path.
+    [Header("Route Hold Game Sign / ゲーム画面の経路サイン")]
+    [Tooltip("ON: 経路保留・確認・旋回サインをGameビューに表示。OFF: 表示のみ無効。経路判定・旋回制御・ログには影響しません。")]
+    [SerializeField] private bool showRouteHoldGameSign = true;
+
+    enum RouteRecognitionState
+    {
+        Confirmed, Unverified, TemporarilyLost, Conflicting
+    }
+    RouteRecognitionState routeRecognitionState = RouteRecognitionState.Confirmed;
+    int routeRecognitionFamily = -1;
+    int routeUnverifiedFamily = -1;
+    float routeUnverifiedSince = -1f;
+    float routeSignVisibleUntil;
+    string routeSignTitle = "";
+    string routeSignDetail = "";
+    Color routeSignTint = Color.yellow;
+    const float RouteSignSeconds = 3f;
+    const float BReleaseRouteRecheckSeconds = .12f;
+
+    void ShowRouteGameSign(string title, string detail, Color color,
+        float seconds = RouteSignSeconds)
+    {
+        routeSignTitle = title;
+        routeSignDetail = detail;
+        routeSignTint = color;
+        routeSignVisibleUntil = Time.unscaledTime + seconds;
+    }
+
+    void SetRouteRecognitionState(RouteRecognitionState state, int family,
+        string reason)
+    {
+        if (routeRecognitionState == state && routeRecognitionFamily == family)
+            return;
+        bool previouslyPending = routeRecognitionState !=
+            RouteRecognitionState.Confirmed;
+        routeRecognitionState = state;
+        routeRecognitionFamily = family;
+        if (state == RouteRecognitionState.Confirmed)
+        {
+            if (previouslyPending)
+                ShowRouteGameSign("ROUTE CONFIRMED", "Normal turn path ready",
+                    new Color(.20f, 1f, .48f), 1.6f);
+            return;
+        }
+        string caption = state == RouteRecognitionState.TemporarilyLost
+            ? "ROUTE HOLD - CONTACT LOST"
+            : state == RouteRecognitionState.Conflicting
+                ? "ROUTE HOLD - STAIR CONFLICT"
+                : "ROUTE HOLD - CHECKING STAIR";
+        ShowRouteGameSign(caption, reason, state == RouteRecognitionState.Conflicting
+            ? new Color(1f, .40f, .28f) : new Color(1f, .78f, .20f));
+        if (logTurnTransition)
+            Debug.Log($"[ROUTE HOLD STATUS] t={Time.fixedTime:F3} " +
+                $"state={state} family={family} reason={reason}; " +
+                "no invented turn / velocity snap", this);
+    }
+
+    // OnGUI is visible IN GAME VIEW, including player builds. Avoid GUILayout
+    // and avoid creating materials, cameras, TMP assets, or scene objects.
+    void OnGUI()
+    {
+        if (!showRouteHoldGameSign ||
+            !Application.isPlaying || Time.unscaledTime >= routeSignVisibleUntil ||
+            MainGameManager.OnDead || string.IsNullOrEmpty(routeSignTitle))
+            return;
+        float width = Mathf.Min(430f, Screen.width - 20f);
+        if (width <= 50f) return;
+        float height = 58f;
+        Rect rect = new Rect((Screen.width - width) * .5f,
+            Mathf.Max(16f, Screen.height * .10f), width, height);
+        Color previous = GUI.color;
+        GUI.color = new Color(.06f, .09f, .13f, .86f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = routeSignTint;
+        GUI.DrawTexture(new Rect(rect.x, rect.y, 5f, rect.height),
+            Texture2D.whiteTexture);
+        GUIStyle titleStyle = new GUIStyle(GUI.skin.label);
+        titleStyle.alignment = TextAnchor.MiddleCenter;
+        titleStyle.fontStyle = FontStyle.Bold;
+        titleStyle.fontSize = Mathf.Clamp(Screen.height / 48, 13, 21);
+        titleStyle.normal.textColor = routeSignTint;
+        GUI.Label(new Rect(rect.x + 8f, rect.y + 5f,
+            rect.width - 16f, 27f), routeSignTitle, titleStyle);
+        GUIStyle detailStyle = new GUIStyle(GUI.skin.label);
+        detailStyle.alignment = TextAnchor.MiddleCenter;
+        detailStyle.fontSize = Mathf.Clamp(Screen.height / 70, 11, 15);
+        detailStyle.normal.textColor = Color.white;
+        GUI.Label(new Rect(rect.x + 8f, rect.y + 30f,
+            rect.width - 16f, 25f), routeSignDetail, detailStyle);
+        GUI.color = previous;
+    }
+
     const float RouteWitnessMinimumSpeed = 3f;
     const float RouteBasisDisagreementDot = .50f;
     const float RouteHeadingMinimumDot = .80f;
@@ -1354,6 +1449,7 @@ public float AdvancePredictedSplineDriveReadOnly(
 
     void OnDisable()
     {
+        routeSignVisibleUntil = 0f;
         ResetRouteIntegritySupervisor("component disabled");
         ClearUncommittedRouteGuard("component disabled");
         ClearVerifiedStairCorrection();
@@ -2004,7 +2100,8 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             else if (!MainGameManager.OnDead && rb && !rb.isKinematic &&
                 autoHoldEligible && bReleaseHandoffTime >= 0f &&
-                Time.time - bReleaseHandoffTime <= .08f &&
+                Time.time - bReleaseHandoffTime <=
+                    BReleaseRouteRecheckSeconds &&
                 !IsBAlreadyOnFollowingStair())
             {
                 // Preserve natural Rigidbody motion; do not allow ordinary
@@ -2014,6 +2111,8 @@ public float AdvancePredictedSplineDriveReadOnly(
             else
             {
                 flatStartReleaseCommitInProgress = false;
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
+                    verifiedRouteFlat, "B release recheck expired - no auto turn");
                 CancelAutoHold("B release recheck expired / invalidated");
                 ClearBReleaseHandoff();
             }
@@ -3252,6 +3351,12 @@ public float AdvancePredictedSplineDriveReadOnly(
     // ================================================================
     void ResetRouteIntegritySupervisor(string why)
     {
+        routeRecognitionState = RouteRecognitionState.Confirmed;
+        routeRecognitionFamily = -1;
+        routeUnverifiedFamily = -1;
+        routeUnverifiedSince = -1f;
+        routeSignVisibleUntil = 0f;
+        routeSignTitle = "";
         ResetEntryShockWitness();
         routeEpochActive = false;
         routePreviousStair = -1;
@@ -3717,8 +3822,16 @@ public float AdvancePredictedSplineDriveReadOnly(
             routeObservationPositionFamily = -1;
             routeObservationPositionAt = -1f;
             if (routeLastNearTime >= 0f &&
-                Time.fixedTime - routeLastNearTime > .35f)
+                Time.fixedTime - routeLastNearTime <= .35f)
+                SetRouteRecognitionState(RouteRecognitionState.TemporarilyLost,
+                    verifiedRouteStair, "Physical stair temporarily lost");
+            else if (routeLastNearTime >= 0f &&
+                     Time.fixedTime - routeLastNearTime > .35f)
+            {
+                SetRouteRecognitionState(RouteRecognitionState.Unverified,
+                    verifiedRouteStair, "Waiting for a real stair contact");
                 ClearVerifiedStairCorrection();
+            }
             return;
         }
 
@@ -3728,6 +3841,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                 (routeEpochActive && routeExpectedNextStair >= 0 &&
                  family < routeExpectedNextStair))
             {
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
+                    family, "Former stair is not the authorized new route");
                 routeObservationCount = 0;
                 routeObservationPositionFamily = -1;
                 return;
@@ -3756,6 +3871,20 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (!descending)
             {
                 if (!verifiedRouteCommitted) routeObservationCount = 0;
+                // Do not paint a normal newly entered stair as a failure.
+                // Only a sustained unresolved observation becomes a HOLD.
+                if (!verifiedRouteCommitted && !routeEpochActive)
+                {
+                    if (routeUnverifiedFamily != family)
+                    {
+                        routeUnverifiedFamily = family;
+                        routeUnverifiedSince = Time.fixedTime;
+                    }
+                    else if (routeUnverifiedSince >= 0f &&
+                             Time.fixedTime - routeUnverifiedSince >= .12f)
+                        SetRouteRecognitionState(RouteRecognitionState.Unverified,
+                            family, "Checking consecutive downhill movement");
+                }
                 routeLastNearTime = Time.fixedTime;
                 return;
             }
@@ -3781,6 +3910,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                 Vector3.Dot(heading, routeAuthorizedHeading) <
                     RouteHeadingMinimumDot)
             {
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
+                    family, "Detected direction conflicts with accepted turn");
                 routeObservationCount = 0;
                 return;
             }
@@ -3792,6 +3923,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                 family == verifiedRouteFlat &&
                 Vector3.Dot(verifiedRouteHeading, heading) < .70f)
             {
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
+                    family, "New stair direction is not player-authorized");
                 routeObservationCount = 0;
                 routeLastNearTime = Time.fixedTime;
                 if (Time.fixedTime >= routeIntegrityNextLogAt)
@@ -3828,6 +3961,10 @@ public float AdvancePredictedSplineDriveReadOnly(
                 verifiedRouteFlat = family + 1;
                 verifiedRouteHeading = heading;
                 verifiedRouteCommitted = true;
+                routeUnverifiedFamily = -1;
+                routeUnverifiedSince = -1f;
+                SetRouteRecognitionState(RouteRecognitionState.Confirmed,
+                    family, "consecutive verified descent");
             }
             routeLastNearTime = Time.fixedTime;
         }
@@ -5148,7 +5285,9 @@ public float AdvancePredictedSplineDriveReadOnly(
             bool receivingFlatRelease =
                 landing == AutoHoldLandingFloor.VerifiedFlat ||
                 (autoHoldNextFlatReady && landing == AutoHoldLandingFloor.Uncertain);
-            if (receivingFlatRelease && !IsBAlreadyOnFollowingStair())
+            if (receivingFlatRelease &&
+                (landing == AutoHoldLandingFloor.VerifiedFlat ||
+                 !IsBAlreadyOnFollowingStair()))
             {
                 bool committed = false;
                 if (landing == AutoHoldLandingFloor.VerifiedFlat)
@@ -5158,13 +5297,15 @@ public float AdvancePredictedSplineDriveReadOnly(
                     finally { flatStartReleaseCommitInProgress = false; }
                 }
                 // A release on a previously VERIFIED flat is not a new flick.
-                // Keep its existing release-only gate for at most 0.08 s while
+                // Keep its existing release-only gate for at most 0.12 s while
                 // FixedUpdate rechecks the SAME physical slab. No extra input
                 // event, UI flag or new turn authorization is generated.
                 if (!committed && autoHoldEligible && autoHoldNextFlatReady &&
-                    landing == AutoHoldLandingFloor.Uncertain &&
+                    (landing == AutoHoldLandingFloor.Uncertain ||
+                     landing == AutoHoldLandingFloor.VerifiedFlat) &&
                     autoHoldNextFlatLastSupportTime >= 0f &&
-                    Time.time - autoHoldNextFlatLastSupportTime <= .08f &&
+                    Time.time - autoHoldNextFlatLastSupportTime <=
+                        BReleaseRouteRecheckSeconds &&
                     !IsBAlreadyOnFollowingStair() &&
                     !MainGameManager.OnDead && rb && !rb.isKinematic &&
                     !HasPendingTurnIntent && !turnTransitionActive &&
@@ -5172,6 +5313,9 @@ public float AdvancePredictedSplineDriveReadOnly(
                 {
                     flatStartReleaseCommitInProgress = true;
                     bReleaseHandoffTime = Time.time;
+                    SetRouteRecognitionState(
+                        RouteRecognitionState.TemporarilyLost,
+                        verifiedRouteFlat, "B release: verifying receiving flat");
                     AutoHoldLog("B RELEASE LATCHED",
                         $"reason={landingReason} expected={autoHoldNextFlatCollider.name} " +
                         $"pos={rb.position:F3}; awaiting same-floor recheck");
@@ -5199,6 +5343,10 @@ public float AdvancePredictedSplineDriveReadOnly(
                 currentGuide.sectionProgress01 < TargetProgress &&
                 !extremePointFiredInSection && stairSupport.Item1 &&
                 IsAutoHoldStageHit(stairSupport.Item2, float.NaN);
+            if (autoHoldNextFlatReady)
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
+                    verifiedRouteFlat,
+                    "Release was too late or flat was not verified");
             AutoHoldLog("B RELEASE PHYSICAL REJECT",
                 $"landing={landing} reason={landingReason} " +
                 $"expected={(autoHoldNextFlatCollider ? autoHoldNextFlatCollider.name : "-")} " +
@@ -8240,6 +8388,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         flickConsumed = true;
         CapturePendingTurnSnapshot();
         RequestTurnHandoffForPendingIntent();
+        ShowRouteGameSign("TURN QUEUED", "Verified flat - normal 90 deg turn",
+            new Color(.20f, 1f, .48f), 1.6f);
         SlopeReleaseHoldLog("TURN QUEUED",
             $"corner={(innerTurn ? "InCorner" : "OutCorner")} " +
             $"half={(autoHoldLeftHalf ? "LEFT" : "RIGHT")} " +
@@ -8366,6 +8516,11 @@ public float AdvancePredictedSplineDriveReadOnly(
     {
         if (!rb || !autoHoldSawSlope || !
             TryGetAutoHoldReceivingFlat(out Vector3 start, out Vector3 forward))
+            return false;
+        // A confirmed ArcSlab on the real ball footprint has higher priority
+        // than a separate ray hitting the adjacent StairWay lip.
+        if (autoHoldNextFlatReady &&
+            TryGetBReleaseReceivingSupport(out _))
             return false;
         Vector3 centre = rb.worldCenterOfMass;
         if (!TryAutoHoldGroundRay(centre, out RaycastHit floor) ||
@@ -8678,8 +8833,10 @@ public float AdvancePredictedSplineDriveReadOnly(
             // departure. Hold the already queued B turn (not its movement
             // motor), but never EXECUTE it until the exact floor re-verifies.
             if (!departed && bReleaseHandoffTime >= 0f &&
-                Time.time - bReleaseHandoffTime <= .08f)
+                Time.time - bReleaseHandoffTime <= BReleaseRouteRecheckSeconds)
             {
+                SetRouteRecognitionState(RouteRecognitionState.TemporarilyLost,
+                    verifiedRouteFlat, "Queued turn: receiving flat temporarily lost");
                 AutoHoldLog("B SUPPORT TEMPORARY MISS",
                     $"wait={Time.time - bReleaseHandoffTime:F3}s " +
                     $"expected={(bReleaseHandoffFlat ? bReleaseHandoffFlat.name : "-")} " +
@@ -8771,9 +8928,13 @@ public float AdvancePredictedSplineDriveReadOnly(
         QueueAutoHoldHeldTurn(lateral);
         bool committed = autoHoldTurnPending && HasPendingTurnIntent;
         if (committed)
+        {
+            ShowRouteGameSign("TURN QUEUED", "Verified flat - normal 90 deg turn",
+                new Color(.20f, 1f, .48f), 1.6f);
             AutoHoldLog("RELEASE COMMIT",
                 $"sign={autoHoldTurnSign:+0;-0} lateral={lateral:F3} " +
                 $"pos={rb.position:F3}; one turn queued");
+        }
         return committed;
     }
 
@@ -9261,10 +9422,10 @@ public float AdvancePredictedSplineDriveReadOnly(
 
         // The movement Handoff may be skipped when Guide/Surface is invalid.
         // Still expire a B turn that has not reverified its original floor for
-        // 0.08 s. This guard is B-only; normal flicks use their own timeout.
+        // 0.12 s. This guard is B-only; normal flicks use their own timeout.
         if (autoHoldTurnPending && bReleaseHandoffActive &&
             bReleaseHandoffTime >= 0f &&
-            Time.time - bReleaseHandoffTime > .08f &&
+            Time.time - bReleaseHandoffTime > BReleaseRouteRecheckSeconds &&
             !TryGetBReleaseReceivingSupport(out _))
         {
             AutoHoldLog("B TURN CANCELED SUPPORT",
@@ -9555,7 +9716,14 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (tapEdgeSelected) CancelTapEdge("could not begin physics turn");
             return;
         }
+        bool resumedFromRouteHold = routeRecognitionState !=
+            RouteRecognitionState.Confirmed;
         ArmRouteIntegrityForTurn(turnTargetDirection, lastStair, nextStair);
+        SetRouteRecognitionState(RouteRecognitionState.Confirmed,
+            nextStair, "player-authorized turn");
+        if (resumedFromRouteHold)
+            ShowRouteGameSign("90 DEG TURN", "Normal turn controller engaged",
+                new Color(.20f, 1f, .48f), 1.8f);
         if (verifiedB && turnDegrees < 0f &&
             activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
         {
