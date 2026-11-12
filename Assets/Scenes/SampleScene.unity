@@ -5557,6 +5557,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SlopeStickCore
   maxGroundSpeed: 16
   GroundAcceleration: 35
+  showRouteHoldGameSign: 0
   TargetAccelerationLimit: 120
   knotDetector: {fileID: 156220176}
   groundMask:

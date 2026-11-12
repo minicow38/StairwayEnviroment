@@ -88,7 +88,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     // already accepted user command may enter the normal 90-degree turn path.
     [Header("Route Hold Game Sign / ゲーム画面の経路サイン")]
     [Tooltip("ON: 経路保留・確認・旋回サインをGameビューに表示。OFF: 表示のみ無効。経路判定・旋回制御・ログには影響しません。")]
-    [SerializeField] private bool showRouteHoldGameSign = true;
+    [SerializeField] private bool showRouteHoldGameSign = false;
 
     enum RouteRecognitionState
     {
