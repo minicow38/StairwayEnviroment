@@ -6,6 +6,11 @@ dependencies {
 // Android Resolver Dependencies Start
     implementation 'androidx.core:core:1.0.0+' // Assets/Plugins/VoxelBusters/CrossPlatformReplayKit/Editor/ReplayKitDependencies.xml:6
     implementation 'com.google.android.gms:play-services-ads-identifier:18.1.0' // Assets/Editor/Dependencies.xml:7
+    implementation 'com.google.android.gms:play-services-base:18.11.1' // Assets/Firebase/Editor/AppDependencies.xml:16
+    implementation 'com.google.firebase:firebase-analytics:24.0.0' // Assets/Firebase/Editor/AppDependencies.xml:14
+    implementation 'com.google.firebase:firebase-analytics-unity:14.1.0' // Assets/Firebase/Editor/AnalyticsDependencies.xml:17
+    implementation 'com.google.firebase:firebase-app-unity:14.1.0' // Assets/Firebase/Editor/AppDependencies.xml:21
+    implementation 'com.google.firebase:firebase-common:23.0.0' // Assets/Firebase/Editor/AppDependencies.xml:12
     implementation 'com.tenjin:android-sdk:1.16.7' // Assets/Editor/Dependencies.xml:4
 // Android Resolver Dependencies End
 **DEPS**}

@@ -1,3 +1,12 @@
+# Version 1.2.190 - Sep 29, 2026
+* General - This package is deprecated. Use [External Dependency Manager official Unity Package](https://docs.unity3d.com/Packages/com.unity.external-dependency-manager@2.1/manual/index.html) instead.
+
+# Version 1.2.189 - Sep 2, 2026
+* iOS Resolver - Add a `target` attribute to the Swift Package logic,
+  to allow targeting different Xcode project targets.
+* iOS Resolver - Fix issue with older versions of Unity not using Cocoapods
+  when Swift Packages were defined.
+
 # Version 1.2.188 - Jul 13, 2026
 * iOS Resolver - Change how project path is determined to support the new
   Swift Xcode project type.
