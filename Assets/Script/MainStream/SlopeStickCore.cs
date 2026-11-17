@@ -6069,6 +6069,28 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             return; // 階段でEarlyFlickが拒否されても90度旋回へ誤送しない。
         }
+        if (validFlick &&
+            tapEdgeState == TapEdgeState.Armed &&
+            currentGuideValid && currentGuide.isSlope)
+        {
+            bool tapOK = TryGetStageFamily(
+                tapEdgeFlatCollider, "ArcSlab", out int tapStage);
+
+            bool stairOK = TryGetStageFamily(
+                currentHit.collider, "StairWay", out int stairStage);
+
+            Debug.Log(
+                $"[TAP MICRO FALLBACK] " +
+                $"tap={(tapEdgeFlatCollider ? tapEdgeFlatCollider.name : "null")} " +
+                $"enabled={(tapEdgeFlatCollider && tapEdgeFlatCollider.enabled)} " +
+                $"tapStage={tapStage} tapOK={tapOK} " +
+                $"stair={(currentHit.collider ? currentHit.collider.name : "null")} " +
+                $"stairStage={stairStage} stairOK={stairOK} " +
+                $"supported={currentSupported} " +
+                $"beforeExtreme={flickStartedBeforeExtreme} " +
+                $"earlyOK={CanQueueEarlyFlick(flickStartedBeforeExtreme)}",
+                this);
+        }
 
         // 極限ポイント通過後の階段で離した場合など、既存の90度許可条件に従う。
         if (CanAcceptQuarterTurn(out _))
