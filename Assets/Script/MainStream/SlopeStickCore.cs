@@ -1,8 +1,10 @@
 using UnityEngine;
 using System.Collections;
 using TMPro;
+using Firebase.Analytics;
 using System.Text.RegularExpressions;
 using Sirenix.OdinInspector;
+
 
 [Searchable]
 [DisallowMultipleComponent]
@@ -1573,7 +1575,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         // the pre-Play Inspector Value to InSubject immediately.
         MainGameManager.Userbility.SetActive(true);
         MainGameManager.HopingSwipeTurn.SetActive(true);
-
+        //FirebaseAnalytics.LogEvent("Nuts");
         BeginCommandOnTouch = true;
         Earliest = true;
     }
