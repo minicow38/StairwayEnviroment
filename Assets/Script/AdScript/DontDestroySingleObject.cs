@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System;
 using UnityEngine;
 
 public class DontDestroySingleObject : MonoBehaviour
@@ -18,5 +19,10 @@ public class DontDestroySingleObject : MonoBehaviour
         }
         Instance = this;
         DontDestroyOnLoad(gameObject);
+    }
+
+    IEnumerator dealyScene()
+    {
+        yield return new WaitForSeconds(0.5f);
     }
 }

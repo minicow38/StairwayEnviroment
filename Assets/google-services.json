@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "698605872034",
+    "project_id": "wandit-04",
+    "storage_bucket": "wandit-04.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:698605872034:android:3ad81c6acb03100cc848fb",
+        "android_client_info": {
+          "package_name": "com.sg.guiltystairway"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC7cdRAI9HUD3zuoAPHsV0ojQCNPWplKR8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,10 +1,8 @@
 using UnityEngine;
 using System.Collections;
 using TMPro;
-using Firebase.Analytics;
 using System.Text.RegularExpressions;
 using Sirenix.OdinInspector;
-
 
 [Searchable]
 [DisallowMultipleComponent]
@@ -26,6 +24,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(0f)] [SerializeField] float maxGroundSpeed = 24f;
     // Compactから固定値化
     const float ProbeRadius = .475f;
+    // One visual handoff's worth of travel across StairWay(N) -> ArcSlab(N+1).
+    const float SlopeTerminalSuccessorFlatGraceSeconds = .35f;
     [SerializeField]public float GroundAcceleration = 35f;
     const float MaxDeceleration = 80f;
     const float ResponseInverse = 8.333333f;
@@ -1575,7 +1575,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         // the pre-Play Inspector Value to InSubject immediately.
         MainGameManager.Userbility.SetActive(true);
         MainGameManager.HopingSwipeTurn.SetActive(true);
-        //FirebaseAnalytics.LogEvent("Nuts");
+
         BeginCommandOnTouch = true;
         Earliest = true;
     }
@@ -2634,6 +2634,12 @@ public float AdvancePredictedSplineDriveReadOnly(
             direction = turnTargetDirection;
 
         var guide = knotDetector.Evaluate(rb.position);
+        // An actual StairWay(N+1) can take the B press before a misleading
+        // nearest-Spline guard returns from this physics tick. No turn occurs
+        // here: the recorded MouseUp still owns that decision.
+        if (slopeReleaseHoldArmed && autoHoldEligible &&
+            slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily)
+            TryTransferSlopeHoldToPhysicalNextStair(guide);
         // Shared by flat-B, stair-release and normal flick. The old stair
         // remains geometry, not permission to reverse the accepted 90 turn.
         if (GuardFormerStairGuideAfterTurn())
@@ -5950,12 +5956,41 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (slopeReleaseHoldArmed &&
                 TryCommitSlopeReleaseHoldOnFlat())
                 return;
+            // The release input may arrive in Update before FixedUpdate has
+            // transferred the actual StairWay(N+1) contact. Recheck the real
+            // floor now, without requiring ArcSlab(N+1) first.
+            if (slopeReleaseHoldArmed && knotDetector && rb)
+                TryTransferSlopeHoldToPhysicalNextStair(
+                    knotDetector.Evaluate(rb.position));
             // Pressed on stair N, crossed its verified flat, and released on
             // stair N+1: retain this single MouseUp for the SAME stair's end.
             // Never require a hypothetical flat N+2 to exist.
             if (slopeReleaseHoldArmed &&
                 LatchSlopeReleaseTerminalGesture())
                 return;
+            // MouseUp on the original real stair is still one B request.
+            // Keep it until that stair's immediate physical successor, not
+            // as a second EarlyFlick or as an automatic held-input turn.
+            if (slopeReleaseHoldArmed && autoHoldEligible &&
+                slopeReleaseFirstStairFamily >= 0 &&
+                slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily)
+            {
+                var original = HasGroundSupport();
+                if (original.Item1 && original.Item2.collider &&
+                    IsCloseGroundRay(original.Item2, rb.worldCenterOfMass) &&
+                    IsAutoHoldStageHit(original.Item2, float.NaN) &&
+                    TryGetStageFamily(original.Item2.collider,
+                        "StairWay", out int originalFamily) &&
+                    originalFamily == slopeReleaseFirstStairFamily)
+                {
+                    slopeReleaseTerminalReleaseAt = Time.time;
+                    flickConsumed = true;
+                    SlopeReleaseHoldLog("PRE-TRANSFER RELEASE LATCHED",
+                        $"from=StairWay{originalFamily}; waiting for " +
+                        $"physical StairWay{originalFamily + 1}");
+                    return;
+                }
+            }
             // An uncommitted stair-start gesture is not an ordinary flick.
             if (slopeReleaseHoldArmed && slopeReleaseHoldNextFlatSeen)
                 return;
@@ -6070,28 +6105,6 @@ public float AdvancePredictedSplineDriveReadOnly(
                 flickConsumed = true;
             }
             return; // 階段でEarlyFlickが拒否されても90度旋回へ誤送しない。
-        }
-        if (validFlick &&
-            tapEdgeState == TapEdgeState.Armed &&
-            currentGuideValid && currentGuide.isSlope)
-        {
-            bool tapOK = TryGetStageFamily(
-                tapEdgeFlatCollider, "ArcSlab", out int tapStage);
-
-            bool stairOK = TryGetStageFamily(
-                currentHit.collider, "StairWay", out int stairStage);
-
-            Debug.Log(
-                $"[TAP MICRO FALLBACK] " +
-                $"tap={(tapEdgeFlatCollider ? tapEdgeFlatCollider.name : "null")} " +
-                $"enabled={(tapEdgeFlatCollider && tapEdgeFlatCollider.enabled)} " +
-                $"tapStage={tapStage} tapOK={tapOK} " +
-                $"stair={(currentHit.collider ? currentHit.collider.name : "null")} " +
-                $"stairStage={stairStage} stairOK={stairOK} " +
-                $"supported={currentSupported} " +
-                $"beforeExtreme={flickStartedBeforeExtreme} " +
-                $"earlyOK={CanQueueEarlyFlick(flickStartedBeforeExtreme)}",
-                this);
         }
 
         // 極限ポイント通過後の階段で離した場合など、既存の90度許可条件に従う。
@@ -8809,11 +8822,30 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!slopeReleaseHoldArmed || !knotDetector || !rb)
             return;
         if (slopeReleaseTerminalReleaseAt >= 0f)
-            return; // FixedUpdate owns this already-released gesture.
-        // A physically verified next stair owns the held input even when
-        // nearest-spline bookkeeping has not caught up with its collider.
-        if (slopeReleaseHoldNextFlatSeen &&
-            TryTransferSlopeHoldToPhysicalNextStair(guide))
+        {
+            // An early MouseUp is recorded, not consumed, until the exact
+            // succeeding physical stair takes ownership.
+            if (!slopeReleaseTerminalStairCollider)
+            {
+                if (TryTransferSlopeHoldToPhysicalNextStair(guide))
+                    return;
+                var actual = HasGroundSupport();
+                if (actual.Item1 && actual.Item2.collider &&
+                    IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass) &&
+                    IsAutoHoldStageHit(actual.Item2, float.NaN) &&
+                    (TryGetStageFamily(actual.Item2.collider,
+                         "StairWay", out int family) ||
+                     TryGetStageFamily(actual.Item2.collider,
+                         "ArcSlab", out family)) &&
+                    (family < slopeReleaseFirstStairFamily ||
+                     family > slopeReleaseFirstStairFamily + 1))
+                    CancelAutoHold("released B reached unrelated stage");
+            }
+            return;
+        }
+        // Actual StairWay(N+1) contact is stronger than an intermediate
+        // ArcSlab(N+1) ray, which may never become formally verified.
+        if (TryTransferSlopeHoldToPhysicalNextStair(guide))
             return;
         if (TryObserveSlopeReleasePhysicalFlat())
             return;
@@ -8913,6 +8945,22 @@ public float AdvancePredictedSplineDriveReadOnly(
                         "StairWay", out int shockedFamily) &&
                     shockedFamily == entryShockStairFamily)
                     return;
+                if (!slopeReleaseHoldNextFlatSeen)
+                {
+                    // A nearest-Spline jump alone cannot revoke a held B.
+                    // Only a different, CLOSE physical stair proves that
+                    // the player actually left the intended N -> N+1 route.
+                    var actual = HasGroundSupport();
+                    if (actual.Item1 && actual.Item2.collider &&
+                        IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass) &&
+                        IsAutoHoldStageHit(actual.Item2, float.NaN) &&
+                        TryGetStageFamily(actual.Item2.collider,
+                            "StairWay", out int actualFamily) &&
+                        actualFamily != slopeReleaseOriginStairFamily &&
+                        actualFamily != slopeReleaseOriginStairFamily + 1)
+                        CancelAutoHold("verified unrelated physical stair");
+                    return;
+                }
                 // A spline jump is NOT proof of an unrelated physical stair.
                 // A verified receiving ArcSlab can have a different nearest
                 // guide before the ball's support switches to StairWay(N+1).
@@ -8949,7 +8997,6 @@ public float AdvancePredictedSplineDriveReadOnly(
                     }
                     return; // Unsupported/ambiguous seam is not a new stair.
                 }
-                CancelAutoHold("unrelated slope before any receiving flat verification");
                 return;
             }
             slopeReleaseHoldMaxProgress = Mathf.Max(
@@ -8976,26 +9023,55 @@ public float AdvancePredictedSplineDriveReadOnly(
         // TryObserveSlopeReleasePhysicalFlat above is the sole verifier.
     }
 
-    // Require two independent facts before inheriting a still-held gesture:
-    //  (1) the already verified ArcSlab(N+1), (2) actual close support on
-    // StairWay(N+1) with a matching local slope guide. A stray spline is not
-    // allowed to move the input owner or authorize a quarter turn.
+    // The exact, CLOSE physical StairWay(N+1) can inherit a stair hold even
+    // when the preceding ArcSlab(N+1) was crossed without formal detection.
+    // A nearest-spline change alone never authorizes this transfer.
     bool TryTransferSlopeHoldToPhysicalNextStair(
         NearestKnotDetector.GuideFrame guide)
     {
-        if (!slopeReleaseHoldArmed || !slopeReleaseHoldNextFlatSeen ||
-            !rb || !knotDetector || slopeReleaseOriginStairFamily < 0)
+        if (!slopeReleaseHoldArmed || slopeReleaseFirstStairFamily < 0 ||
+            slopeReleaseOriginStairFamily != slopeReleaseFirstStairFamily ||
+            !rb || !knotDetector)
             return false;
         var physical = HasGroundSupport();
-        if (!physical.Item1 || !physical.Item2.collider ||
-            !IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass) ||
-            !IsAutoHoldStageHit(physical.Item2, float.NaN) ||
-            !TryGetStageFamily(physical.Item2.collider, "StairWay", out int family) ||
+        RaycastHit owner = physical.Item2;
+        bool seamCarry = false;
+        if (!physical.Item1 || !owner.collider ||
+            !IsCloseGroundRay(owner, rb.worldCenterOfMass) ||
+            !TryGetStageFamily(owner.collider, "StairWay", out int liveFamily) ||
+            liveFamily != slopeReleaseOriginStairFamily + 1)
+        {
+            // MouseUp may land between FixedUpdates: the newest ray sees
+            // ArcSlab(N+2), while currentHit still contains the actually
+            // supported StairWay(N+1) from the preceding physics step.
+            // Both sides of that exact seam must be CLOSE; a stale stair
+            // hit or a later unrelated flat is not enough to transfer B.
+            if (!physical.Item1 || !physical.Item2.collider ||
+                !IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass) ||
+                Vector3.Angle(physical.Item2.normal, Vector3.up) > 18f ||
+                !TryGetStageFamily(physical.Item2.collider,
+                    "ArcSlab", out int flatFamily) ||
+                flatFamily != slopeReleaseOriginStairFamily + 2 ||
+                !currentSupported || !currentHit.collider ||
+                !IsCloseGroundRay(currentHit, rb.worldCenterOfMass) ||
+                Vector3.ProjectOnPlane(
+                    rb.worldCenterOfMass - currentHit.point,
+                    currentHit.normal).magnitude > ProbeRadius * 3f ||
+                !TryGetStageFamily(currentHit.collider,
+                    "StairWay", out int priorFamily) ||
+                priorFamily != slopeReleaseOriginStairFamily + 1)
+                return false;
+            owner = currentHit;
+            seamCarry = true;
+        }
+        if (!IsCloseGroundRay(owner, rb.worldCenterOfMass) ||
+            !TryGetStageFamily(owner.collider,
+                "StairWay", out int family) ||
             family != slopeReleaseOriginStairFamily + 1)
             return false;
         // sectionIndex is a Spline-local ordinal, NOT a StairWay family ID.
-        // A REAL, close StairWay(N+1) after the VERIFIED ArcSlab(N+1) is
-        // enough to transfer gesture ownership. Its nearest spline may still
+        // A REAL, close StairWay(N+1) is enough to transfer gesture
+        // ownership without a receiving-flat gate. Its nearest spline may still
         // be flat or off-lane on the first few physics frames.
         bool localSlopeGuide = guide.valid && guide.isSlope &&
             Vector3.ProjectOnPlane(guide.point - rb.position,
@@ -9004,9 +9080,9 @@ public float AdvancePredictedSplineDriveReadOnly(
             Mathf.Abs(guide.point.y - rb.position.y) <= 3.0f;
         Vector3 planarVelocity = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
         Vector3 physicalDown = Vector3.ProjectOnPlane(
-            Physics.gravity, physical.Item2.normal);
+            Physics.gravity, owner.normal);
         bool validDownNormal = physicalDown.sqrMagnitude > Eps &&
-            Vector3.Angle(physical.Item2.normal, Vector3.up) >= 18f;
+            Vector3.Angle(owner.normal, Vector3.up) >= 18f;
         Vector3 signedTangent = localSlopeGuide && guide.tangent.y > .02f
             ? -guide.tangent : (localSlopeGuide ? guide.tangent : Vector3.zero);
         Vector3 guideHeading = localSlopeGuide
@@ -9030,7 +9106,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         // The verified *physical* StairWay(N+1) becomes the input owner NOW.
         // Preserve this exact collider across a later one-frame ray miss on
         // release; the eventual turn still requires close support.
-        slopeReleaseTerminalStairCollider = physical.Item2.collider;
+        slopeReleaseTerminalStairCollider = owner.collider;
         slopeTerminalLastOwnerSupportAt = Time.time;
         slopeReleaseHoldStartGuide = localSlopeGuide ? guide : default;
         slopeReleaseHoldMaxProgress = localSlopeGuide
@@ -9051,10 +9127,11 @@ public float AdvancePredictedSplineDriveReadOnly(
         autoHoldLastForward = guideHeading;
         autoHoldLastLeft = Vector3.Cross(guideHeading, Vector3.up).normalized;
         SlopeReleaseHoldLog("STAIR OWNER TRANSFERRED",
-            $"from={previous} to={family} floor={physical.Item2.collider.name} " +
-            $"guideLocal={localSlopeGuide} " +
+            $"from={previous} to={family} floor={owner.collider.name} " +
+            $"seamCarry={seamCarry} guideLocal={localSlopeGuide} " +
             $"progress={(localSlopeGuide ? guide.sectionProgress01 : -1f):F3} " +
-            "pressed=True; no automatic turn");
+            $"releasedEarly={slopeReleaseTerminalReleaseAt >= 0f}; " +
+            "no automatic turn");
         return true;
     }
 
@@ -9067,6 +9144,19 @@ public float AdvancePredictedSplineDriveReadOnly(
                 "StairWay", out int expected) &&
             TryGetStageFamily(candidate, "StairWay", out int actual) &&
             actual == expected;
+    }
+
+    // Only the physically supported, immediate flat AFTER the verified owner
+    // stair may finish the same turn. No spline-only or airborne permission.
+    bool IsSlopeTerminalSuccessorFlat(RaycastHit hit)
+    {
+        return rb && slopeReleaseTerminalStairCollider && hit.collider &&
+            IsCloseGroundRay(hit, rb.worldCenterOfMass) &&
+            Vector3.Angle(hit.normal, Vector3.up) <= 18f &&
+            TryGetStageFamily(slopeReleaseTerminalStairCollider,
+                "StairWay", out int stairFamily) &&
+            TryGetStageFamily(hit.collider, "ArcSlab", out int flatFamily) &&
+            flatFamily == stairFamily + 1;
     }
 
     // The same verified staircase remains the owner until a turn begins.
@@ -9125,14 +9215,19 @@ public float AdvancePredictedSplineDriveReadOnly(
         var physical = HasGroundSupport();
         bool sameStair = physical.Item1 &&
             IsSameSlopeTerminalFamily(physical.Item2.collider);
+        bool recentStair = slopeTerminalLastOwnerSupportAt >= 0f &&
+            Time.time - slopeTerminalLastOwnerSupportAt <= .55f;
+        bool immediateSuccessor = physical.Item1 && recentStair &&
+            Time.time - slopeTerminalLastOwnerSupportAt <=
+                SlopeTerminalSuccessorFlatGraceSeconds &&
+            IsSlopeTerminalSuccessorFlat(physical.Item2);
         // A clearly different CLOSE support means the player left the
         // transferred stair. A distant ray hit is not physical evidence
         // of another stage, and must not silently delete a held B gesture.
-        if (physical.Item1 && !sameStair &&
+        // Exception: MouseUp just after the owner's verified exit seam.
+        if (physical.Item1 && !sameStair && !immediateSuccessor &&
             IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass))
             return false;
-        bool recentStair = slopeTerminalLastOwnerSupportAt >= 0f &&
-            Time.time - slopeTerminalLastOwnerSupportAt <= .55f;
         if (!sameStair && !recentStair)
             return false;
         if (sameStair && IsCloseGroundRay(physical.Item2,
@@ -9148,7 +9243,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         SlopeReleaseHoldLog("EARLY RELEASE LATCHED",
             $"stair={family} progress={slopeReleaseHoldMaxProgress:F3} " +
             $"floor={(physical.Item2.collider ? physical.Item2.collider.name : "-")} " +
-            $"recentOwner={recentStair}; turn reserved for close owner contact");
+            $"recentOwner={recentStair} successor={immediateSuccessor}; " +
+            "turn reserved for close owner/seam contact");
         return true;
     }
 
@@ -9234,19 +9330,30 @@ public float AdvancePredictedSplineDriveReadOnly(
         ResetAutoHoldObservation(false);
     }
 
-    // Reservation may exist while the ball is between steps. That is an
-    // INACTIVE turn, not a canceled input. The next close, real contact on
-    // the already transferred StairWay activates the ordinary 90-degree
-    // turn. Nothing is probed in the future turn direction.
+    // A verified owner stair can be left during the visual pose handoff.
+    // Its immediate, supported exit flat can finish that SAME reservation
+    // for a short time; otherwise wait for owner-stair contact as before.
     bool IsSlopeEarlyTurnReady(out string reason)
     {
         reason = "waiting for close physical support on transferred stair";
         if (!rb || !slopeReleaseTerminalStairCollider ||
             !slopeReleaseTerminalStairCollider.enabled)
             return false;
-        if (!TryGetSlopeTerminalSupport(out RaycastHit floor))
+        if (TryGetSlopeTerminalSupport(out RaycastHit floor))
+        {
+            reason = $"physical owner={floor.collider.name}; close support confirmed";
+            return true;
+        }
+        if (slopeTerminalLastOwnerSupportAt < 0f ||
+            Time.time - slopeTerminalLastOwnerSupportAt >
+                SlopeTerminalSuccessorFlatGraceSeconds)
             return false;
-        reason = $"physical owner={floor.collider.name}; close support confirmed";
+        var successor = HasGroundSupport();
+        if (!successor.Item1 ||
+            !IsSlopeTerminalSuccessorFlat(successor.Item2))
+            return false;
+        reason = $"verified owner exit onto {successor.Item2.collider.name}; " +
+            "short visual handoff grace";
         return true;
     }
 
@@ -9807,11 +9914,17 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!autoHoldEligible) return;
         // The actual next stage was observed or a released B is waiting for
         // it. Another nearest-Spline selection cannot undo this evidence.
-        if (bHoldOriginFlatFamily >= 0 &&
+        if (!slopeReleaseHoldArmed && bHoldOriginFlatFamily >= 0 &&
             (autoHoldNextFlatReady || flatStartReleaseCommitInProgress))
             return;
         if (slopeReleaseTerminalReleaseAt >= 0f)
-            return; // released B is owned by the physics terminal observer
+        {
+            // Before the next stair arrives, the terminal observer has no
+            // owner yet. Keep watching physical contact despite MouseUp.
+            if (slopeReleaseHoldArmed && !slopeReleaseTerminalStairCollider)
+                ObserveSlopeReleaseHoldGuide(guide);
+            return;
+        }
         if (!autoInCornerHoldEnabled || !BeginCommandOnTouch || !Earliest ||
             MainGameManager.OnDead || turnTransitionActive || waitingForTurnGuide ||
             HasPendingTurnIntent || generalStallRecovering)

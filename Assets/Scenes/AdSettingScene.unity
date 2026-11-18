@@ -240,37 +240,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
---- !u!1 &375336954
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 375336955}
-  m_Layer: 0
-  m_Name: TenjinSDK
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &375336955
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 375336954}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 4.87519, y: 1.7663617, z: 52.747944}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &961739749
 GameObject:
   m_ObjectHideFlags: 0
@@ -417,6 +386,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 993758757}
+  - component: {fileID: 993758759}
+  - component: {fileID: 993758758}
   m_Layer: 0
   m_Name: AdConversion
   m_TagString: Untagged
@@ -439,6 +410,38 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &993758758
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 993758756}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e903e1a21edd7a49b7d832849222462, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &993758759
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 993758756}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 950e64e097230a444acf8b657436cbfd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  adInterUnitId: 6ceaee824b30319e
+  bannerAdUnitId: 99cbe581cd188c87
+  mrecAdUnitId: 
+  adRewardUnitId: 22e2b13fef388914
+  SdkKey: NKkcleL6Nkf_bhAx78ENNVFxe7IGwFKzgmrtsHRpFJhgQHl5w1gJrI1EXyUzmt_2c9CnolSZ-EXLX96OMT8eh7
+  TestDeviceId: 08a7e81f-f93d-42f4-824e-d00c91a09daa
+  AutoBannerOn: 0
+  AdStopOn: 0
 --- !u!1 &1160234425
 GameObject:
   m_ObjectHideFlags: 0
@@ -495,5 +498,4 @@ SceneRoots:
   - {fileID: 961739753}
   - {fileID: 203844589}
   - {fileID: 1160234427}
-  - {fileID: 375336955}
   - {fileID: 993758757}
