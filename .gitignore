@@ -15,4 +15,4 @@
 mono_crash.mem*
 
 # Recodingsフォルダー全体を除外
-/Recodings/
+/Recordings/
