@@ -439,7 +439,7 @@ MonoBehaviour:
   mrecAdUnitId: 
   adRewardUnitId: 22e2b13fef388914
   SdkKey: NKkcleL6Nkf_bhAx78ENNVFxe7IGwFKzgmrtsHRpFJhgQHl5w1gJrI1EXyUzmt_2c9CnolSZ-EXLX96OMT8eh7
-  TestDeviceId: 08a7e81f-f93d-42f4-824e-d00c91a09daa
+  TestDeviceId: "  \t 08a7e81f-f93d-42f4-824e-d00c91a09daa"
   AutoBannerOn: 0
   AdStopOn: 0
 --- !u!1 &1160234425

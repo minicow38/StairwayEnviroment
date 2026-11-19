@@ -1575,7 +1575,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         // the pre-Play Inspector Value to InSubject immediately.
         MainGameManager.Userbility.SetActive(true);
         MainGameManager.HopingSwipeTurn.SetActive(true);
-
+        
+        Firebase.Analytics.FirebaseAnalytics.LogEvent("custom_ReStartButton_Event");  
         BeginCommandOnTouch = true;
         Earliest = true;
     }
@@ -5855,6 +5856,33 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!trackingFlick || flickConsumed)
             return;
 
+        // MouseUp on the already transferred REAL StairWay(N+1) belongs to
+        // the existing stair-start B. Its first few steps also look like an
+        // original-stair early flick, so check physical B ownership FIRST.
+        // A missing/ambiguous contact still cannot invent a 90-degree turn.
+        if (slopeReleaseHoldArmed && autoHoldEligible &&
+            slopeReleaseFirstStairFamily >= 0)
+        {
+            if (slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily &&
+                knotDetector && rb)
+                TryTransferSlopeHoldToPhysicalNextStair(
+                    knotDetector.Evaluate(rb.position));
+            if (slopeReleaseOriginStairFamily > slopeReleaseFirstStairFamily)
+            {
+                var support = HasGroundSupport();
+                bool onSuccessorFlat = support.Item1 &&
+                    IsSlopeTerminalSuccessorFlat(support.Item2);
+                if (!onSuccessorFlat && LatchSlopeReleaseTerminalGesture())
+                {
+                    SlopeReleaseHoldLog("NEXT STAIR B RELEASE",
+                        $"from={slopeReleaseFirstStairFamily} " +
+                        $"to={slopeReleaseOriginStairFamily}; " +
+                        "verified stair owner takes release before micro-flick");
+                    return;
+                }
+            }
+        }
+
         // A genuine pre-extreme stair flick steers immediately, then reserves
         // a turn ONLY on physical StairWay(N+1). A short preceding tap on
         // ArcSlab(N) is a permitted origin witness for the SAME reservation;
@@ -9912,10 +9940,12 @@ public float AdvancePredictedSplineDriveReadOnly(
     void ObserveAutoHoldGuide(NearestKnotDetector.GuideFrame guide)
     {
         if (!autoHoldEligible) return;
-        // The actual next stage was observed or a released B is waiting for
-        // it. Another nearest-Spline selection cannot undo this evidence.
-        if (!slopeReleaseHoldArmed && bHoldOriginFlatFamily >= 0 &&
-            (autoHoldNextFlatReady || flatStartReleaseCommitInProgress))
+        // A released flat B or stair micro waits for its physical next stage.
+        // Neither needs the finger held after MouseUp; the phase observer
+        // already owns the single pending release and its cancel conditions.
+        if (bHoldOriginFlatFamily >= 0 &&
+            (autoHoldNextFlatReady || flatStartReleaseCommitInProgress) &&
+            (!slopeReleaseHoldArmed || stairMicroPhaseTurnPending))
             return;
         if (slopeReleaseTerminalReleaseAt >= 0f)
         {
