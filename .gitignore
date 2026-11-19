@@ -13,3 +13,6 @@
 *.aab
 *_BurstDebugInformation_DoNotShip/
 mono_crash.mem*
+
+# Recodingsフォルダー全体を除外
+/Recodings/
