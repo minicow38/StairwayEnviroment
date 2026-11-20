@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dependencies>
+    <androidPackages>
+        <androidPackage spec="com.applovin.mediation:mintegral-adapter:17.2.21.0">
+            <repositories>
+                <repository>https://dl-maven-android.mintegral.com/repository/mbridge_android_sdk_oversea</repository>
+            </repositories>
+        </androidPackage>
+        <androidPackage spec="androidx.recyclerview:recyclerview:1.2.1" />
+    </androidPackages>
+    <iosPods>
+        <iosPod name="AppLovinMediationMintegralAdapter" version="8.1.9.0.0" />
+    </iosPods>
+    <remoteSwiftPackage url="https://github.com/AppLovin/AppLovin-MAX-Swift-Package-Mintegral.git" version="801090000.0.0">
+        <swiftPackage name="AppLovinMediationMintegralAdapter" replacesPod="AppLovinMediationMintegralAdapter" target="All" />
+    </remoteSwiftPackage>
+</dependencies>

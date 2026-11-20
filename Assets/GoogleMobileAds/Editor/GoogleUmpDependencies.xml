@@ -1,0 +1,23 @@
+<dependencies>
+  <androidPackages>
+    <androidPackage spec="com.google.android.ump:user-messaging-platform:4.0.0">
+      <repositories>
+        <repository>https://maven.google.com/</repository>
+      </repositories>
+    </androidPackage>
+  </androidPackages>
+
+  <remoteSwiftPackages>
+    <remoteSwiftPackage url="https://github.com/googleads/swift-package-manager-google-user-messaging-platform.git" version="3.1.0">
+      <swiftPackage name="GoogleUserMessagingPlatform" replacesPod="GoogleUserMessagingPlatform"/>
+    </remoteSwiftPackage>
+  </remoteSwiftPackages>
+
+  <iosPods>
+    <iosPod name="GoogleUserMessagingPlatform" version="3.1.0">
+      <sources>
+        <source>https://cdn.cocoapods.org/</source>
+      </sources>
+    </iosPod>
+  </iosPods>
+</dependencies>

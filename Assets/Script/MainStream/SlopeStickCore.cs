@@ -3,23 +3,19 @@ using System.Collections;
 using TMPro;
 using System.Text.RegularExpressions;
 using Sirenix.OdinInspector;
-
 [Searchable]
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Rigidbody), typeof(SphereCollider), typeof(NearestKnotDetector))]
 public sealed class SlopeStickCore : MonoBehaviour
 {
     public static event System.Action<Rigidbody, Vector3> AutoHoldEdgeSnapped;
-    
     public float MaxGroundSpeed
     {
         get => maxGroundSpeed;
         set => maxGroundSpeed = Mathf.Max(0f, value);
     }
     public float MaxGroundSpeedReadOnly => MaxGroundSpeed;
-    public float TargetSlopeProgress01ReadOnly =>
-        TargetProgress;
-
+    public float TargetSlopeProgress01ReadOnly => TargetProgress;
     const float Eps = 0.000001f;
     [Min(0f)] [SerializeField] float maxGroundSpeed = 24f;
     // Compactから固定値化
@@ -31,14 +27,20 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float ResponseInverse = 8.333333f;
     private Vector3 acceleration = Vector3.zero;
     const float AccelerationJerk = 600f;
-
-
+    public GameObject PhysicsMul;
+    public GameObject RendererMul;
+    public GameObject ReSubject;
+    public bool OneOnly = false;
+    public static readonly string isFreshInstallLaunch = "isFreshInstallLaunch";
+    public static readonly string CallForCurrrentScore = "CallForCurrrentScore";
+    public static readonly string CallForCurrrentCoin = "CallForCurrrentCoin";
+    public static readonly string itemList = "itemList";
+    public static readonly string CallForBestScore = "CallForBestScore";
+    public static int bestScore = 0;
     [Header("Lateral Jump Audit / 横ワープ原因調査")]
     [Tooltip("ON: 横速度や位置が異常に跳んだときだけ前後の物理履歴を記録。ゲーム操作、力、位置は変更しません。")]
     [SerializeField] private bool logLateralJumpAudit = true;
-
-    // Read-only ring: 32 preceding 0.02s steps ~= 0.64s. No per-step log,
-    // velocity clipping, position change, or new motor is introduced here.
+    // Read-only ring: 32 preceding 0.02s steps ~= 0.64s. No per-step log, velocity clipping, position change, or new motor is introduced here.
     const int LateralAuditCapacity = 48;
     const int LateralAuditPreSteps = 30;
     const int LateralAuditPostSteps = 10;
@@ -54,28 +56,23 @@ public sealed class SlopeStickCore : MonoBehaviour
         public bool slope, grounded, turn, waiting, recovery;
         public int routeEpoch;
     }
-    readonly LateralAuditFrame[] lateralAuditRing =
-        new LateralAuditFrame[LateralAuditCapacity];
+    readonly LateralAuditFrame[] lateralAuditRing = new LateralAuditFrame[LateralAuditCapacity];
     int lateralAuditNext, lateralAuditCount, lateralAuditPostRemaining;
     float lateralAuditLastTriggerAt = -10f;
     float lateralAuditLastFixedTime = -1f;
     Vector3 lateralAuditLastFixedPosition, lateralAuditLastFixedVelocity;
     Vector3 lateralAuditLastHeading;
     bool lateralAuditLastTurn;
-
     float nextFlatMotionLogTime;
     bool straightFlatFallLogged;
-
-    // Signed stage-route witness: acquired after sustained genuine downhill
-    // progress on a nearby physical stair. It survives only into the adjacent
-    // receiving flat, and is invalidated by any authorized 90-degree turn.
+    // Signed stage-route witness: acquired after sustained genuine downhill progress on a nearby physical stair. It survives only into the adjacent receiving flat, and is
+    // invalidated by any authorized 90-degree turn.
     int verifiedRouteStair = -1;
     int verifiedRouteFlat = -1;
     int routeObservationFamily = -1;
     int routeObservationCount;
-    // Physical displacement proof on the same real StairWay family. A
-    // horizontal stair tread can have an up normal, so normal-only direction
-    // witnesses missed the very descent seen in the user logs.
+    // Physical displacement proof on the same real StairWay family. A horizontal stair tread can have an up normal, so normal-only direction witnesses missed the very descent
+    // seen in the user logs.
     int routeObservationPositionFamily = -1;
     float routeObservationPositionAt = -1f;
     Vector3 routeObservationPosition;
@@ -84,9 +81,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector3 verifiedRouteHeading;
     bool verifiedRouteCommitted;
     float routeLastNearTime = -1f;
-    // All turn initiators share a single route-epoch supervisor. A physical
-    // descent is observation only; only a committed 90-degree turn can advance
-    // the authorized heading. This is not an extra auto-turn or rescue motor.
+    // All turn initiators share a single route-epoch supervisor. A physical descent is observation only; only a committed 90-degree turn can advance the authorized heading. This
+    // is not an extra auto-turn or rescue motor.
     int routeTurnEpoch;
     bool routeEpochActive;
     Vector3 routeAuthorizedHeading;
@@ -94,14 +90,11 @@ public sealed class SlopeStickCore : MonoBehaviour
     int routeExpectedNextStair = -1;
     float routeEpochAt = -1f;
     float routeIntegrityNextLogAt;
-
     readonly RaycastHit[] strictGroundCastHits = new RaycastHit[64];
     Vector3 bStageVelocityBeforeStep;
     float bStageCollisionLogAt = -1f;
-
-    // Short, physically grounded flat->stair shock witness shared by ALL
-    // gestures. Neither a turn authorization nor an additional drive motor.
-    // The second FixedUpdate sees the solver's impulse from the previous step.
+    // Short, physically grounded flat->stair shock witness shared by ALL gestures. Neither a turn authorization nor an additional drive motor. The second FixedUpdate sees the
+    // solver's impulse from the previous step.
     Vector3 entryShockPreviousVelocity;
     bool entryShockPreviousVelocityValid;
     int entryShockLastFlatFamily = -1;
@@ -115,14 +108,11 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float EntryShockMinimumUpSpeed = 1.5f;
     const float EntryShockMaximumFlatAge = .12f;
     const float EntryShockRouteProtectionSeconds = .26f;
-
-    // Runtime GAME-VIEW sign and route ambiguity status. The sign lives for
-    // three seconds; it is NOT a three-second physics turn buffer. Only an
-    // already accepted user command may enter the normal 90-degree turn path.
+    // Runtime GAME-VIEW sign and route ambiguity status. The sign lives for three seconds; it is NOT a three-second physics turn buffer. Only an already accepted user command may
+    // enter the normal 90-degree turn path.
     [Header("Route Hold Game Sign / ゲーム画面の経路サイン")]
     [Tooltip("ON: 経路保留・確認・旋回サインをGameビューに表示。OFF: 表示のみ無効。経路判定・旋回制御・ログには影響しません。")]
     [SerializeField] private bool showRouteHoldGameSign = false;
-
     enum RouteRecognitionState
     {
         Confirmed, Unverified, TemporarilyLost, Conflicting
@@ -136,148 +126,106 @@ public sealed class SlopeStickCore : MonoBehaviour
     string routeSignDetail = "";
     Color routeSignTint = Color.yellow;
     const float RouteSignSeconds = 3f;
-
-    void ShowRouteGameSign(string title, string detail, Color color,
-        float seconds = RouteSignSeconds)
+    void ShowRouteGameSign(string title, string detail, Color color, float seconds = RouteSignSeconds)
     {
         routeSignTitle = title;
         routeSignDetail = detail;
         routeSignTint = color;
         routeSignVisibleUntil = Time.unscaledTime + seconds;
     }
-
-    void SetRouteRecognitionState(RouteRecognitionState state, int family,
-        string reason)
+    void SetRouteRecognitionState(RouteRecognitionState state, int family, string reason)
     {
         if (routeRecognitionState == state && routeRecognitionFamily == family)
             return;
-        bool previouslyPending = routeRecognitionState !=
-            RouteRecognitionState.Confirmed;
+        bool previouslyPending = routeRecognitionState != RouteRecognitionState.Confirmed;
         routeRecognitionState = state;
         routeRecognitionFamily = family;
         if (state == RouteRecognitionState.Confirmed)
         {
             if (previouslyPending)
-                ShowRouteGameSign("ROUTE CONFIRMED", "Normal turn path ready",
-                    new Color(.20f, 1f, .48f), 1.6f);
+                ShowRouteGameSign("ROUTE CONFIRMED", "Normal turn path ready", new Color(.20f, 1f, .48f), 1.6f);
             return;
         }
-        string caption = state == RouteRecognitionState.TemporarilyLost
-            ? "ROUTE HOLD - CONTACT LOST"
-            : state == RouteRecognitionState.Conflicting
-                ? "ROUTE HOLD - STAIR CONFLICT"
-                : "ROUTE HOLD - CHECKING STAIR";
-        ShowRouteGameSign(caption, reason, state == RouteRecognitionState.Conflicting
-            ? new Color(1f, .40f, .28f) : new Color(1f, .78f, .20f));
+        string caption = state == RouteRecognitionState.TemporarilyLost ? "ROUTE HOLD - CONTACT LOST" : state == RouteRecognitionState.Conflicting
+                ? "ROUTE HOLD - STAIR CONFLICT" : "ROUTE HOLD - CHECKING STAIR";
+        ShowRouteGameSign(caption, reason, state == RouteRecognitionState.Conflicting ? new Color(1f, .40f, .28f) : new Color(1f, .78f, .20f));
         if (logTurnTransition)
-            Debug.Log($"[ROUTE HOLD STATUS] t={Time.fixedTime:F3} " +
-                $"state={state} family={family} reason={reason}; " +
-                "no invented turn / velocity snap", this);
+            Debug.Log($"[ROUTE HOLD STATUS] t={Time.fixedTime:F3} " + $"state={state} family={family} reason={reason}; " + "no invented turn / velocity snap", this);
     }
-
-    // OnGUI is visible IN GAME VIEW, including player builds. Avoid GUILayout
-    // and avoid creating materials, cameras, TMP assets, or scene objects.
+    // OnGUI is visible IN GAME VIEW, including player builds. Avoid GUILayout and avoid creating materials, cameras, TMP assets, or scene objects.
     void OnGUI()
     {
-        if (!showRouteHoldGameSign ||
-            !Application.isPlaying || Time.unscaledTime >= routeSignVisibleUntil ||
-            MainGameManager.OnDead || string.IsNullOrEmpty(routeSignTitle))
+        if (!showRouteHoldGameSign || !Application.isPlaying || Time.unscaledTime >= routeSignVisibleUntil || MainGameManager.OnDead || string.IsNullOrEmpty(routeSignTitle))
             return;
         float width = Mathf.Min(430f, Screen.width - 20f);
         if (width <= 50f) return;
         float height = 58f;
-        Rect rect = new Rect((Screen.width - width) * .5f,
-            Mathf.Max(16f, Screen.height * .10f), width, height);
+        Rect rect = new Rect((Screen.width - width) * .5f, Mathf.Max(16f, Screen.height * .10f), width, height);
         Color previous = GUI.color;
         GUI.color = new Color(.06f, .09f, .13f, .86f);
         GUI.DrawTexture(rect, Texture2D.whiteTexture);
         GUI.color = routeSignTint;
-        GUI.DrawTexture(new Rect(rect.x, rect.y, 5f, rect.height),
-            Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(rect.x, rect.y, 5f, rect.height), Texture2D.whiteTexture);
         GUIStyle titleStyle = new GUIStyle(GUI.skin.label);
         titleStyle.alignment = TextAnchor.MiddleCenter;
         titleStyle.fontStyle = FontStyle.Bold;
         titleStyle.fontSize = Mathf.Clamp(Screen.height / 48, 13, 21);
         titleStyle.normal.textColor = routeSignTint;
-        GUI.Label(new Rect(rect.x + 8f, rect.y + 5f,
-            rect.width - 16f, 27f), routeSignTitle, titleStyle);
+        GUI.Label(new Rect(rect.x + 8f, rect.y + 5f, rect.width - 16f, 27f), routeSignTitle, titleStyle);
         GUIStyle detailStyle = new GUIStyle(GUI.skin.label);
         detailStyle.alignment = TextAnchor.MiddleCenter;
         detailStyle.fontSize = Mathf.Clamp(Screen.height / 70, 11, 15);
         detailStyle.normal.textColor = Color.white;
-        GUI.Label(new Rect(rect.x + 8f, rect.y + 30f,
-            rect.width - 16f, 25f), routeSignDetail, detailStyle);
+        GUI.Label(new Rect(rect.x + 8f, rect.y + 30f, rect.width - 16f, 25f), routeSignDetail, detailStyle);
         GUI.color = previous;
     }
-
     const float RouteWitnessMinimumSpeed = 3f;
     const float RouteBasisDisagreementDot = .50f;
     const float RouteHeadingMinimumDot = .80f;
-
     const float TargetMinDistance = .27f;
     [SerializeField]public float TargetAccelerationLimit = 120f;
     const float PostTargetBlendWidth = .05f;
     const float PostTargetGravityRatio = .50f;
-    
     float sumTime = 0;
     private float bitInTime = 0.2f;
     private float SubtleLimitime = 0.2f;
     const float StickJerk = 3000f;
     const float ReleaseHold = .02f;
     const float NaturalReleaseEnd = .90f;
-    
-    public static readonly string CallForBestScore = "CallForBestScore";
-
-
     [SerializeField] NearestKnotDetector knotDetector;
     [SerializeField] LayerMask groundMask = ~0;
-
     [SerializeField] public RaycastHit currentHit;
     [Header("Travel")]
     [SerializeField] Vector3 travelDirection = Vector3.forward;
-    
     [Range(0f, 100f)] [SerializeField] public float targetSlopeProgressPercent = 60f;
-
-    // The gauge becomes the authoritative source only after an actual UI edit.
-    // Keep the original public serialized field for all existing scenes/callers.
+    // The gauge becomes the authoritative source only after an actual UI edit. Keep the original public serialized field for all existing scenes/callers.
     bool gaugeOwnsTargetSlopeProgress;
     float gaugeTargetSlopeProgressPercent;
-
     public void SetTargetSlopeProgressPercentFromGauge(float requestedPercent)
     {
         gaugeTargetSlopeProgressPercent = Mathf.Clamp(requestedPercent, 10f, 100f);
         gaugeOwnsTargetSlopeProgress = true;
         targetSlopeProgressPercent = gaugeTargetSlopeProgressPercent;
     }
-
     // Explicitly return control to the Core/other game logic when desired.
     public void ReleaseTargetSlopeProgressGaugeControl()
     {
         gaugeOwnsTargetSlopeProgress = false;
     }
-
     void KeepGaugeTargetSlopeProgress()
     {
         if (!gaugeOwnsTargetSlopeProgress) return;
-
-        // Never apply a stale gauge value while its UI or component is disabled.
-        // The gauge also releases ownership in OnDisable(); this is a fallback
-        // if the component references or lifecycle order change.
-        CockpitGauge gauge = correspondSubject
-            ? correspondSubject.TurnInputGauge : null;
-        if ((MainGameManager.Userbility != null &&
-             !MainGameManager.Userbility.activeInHierarchy) ||
-            (gauge != null && !gauge.isActiveAndEnabled))
+        // Never apply a stale gauge value while its UI or component is disabled. The gauge also releases ownership in OnDisable(); this is a fallback if the component references or
+        // lifecycle order change.
+        CockpitGauge gauge = correspondSubject ? correspondSubject.TurnInputGauge : null;
+        if ((MainGameManager.Userbility != null && !MainGameManager.Userbility.activeInHierarchy) || (gauge != null && !gauge.isActiveAndEnabled))
         {
             gaugeOwnsTargetSlopeProgress = false;
             return;
         }
-
-        if (!Mathf.Approximately(targetSlopeProgressPercent,
-                               gaugeTargetSlopeProgressPercent))
+        if (!Mathf.Approximately(targetSlopeProgressPercent, gaugeTargetSlopeProgressPercent))
             targetSlopeProgressPercent = gaugeTargetSlopeProgressPercent;
     }
-
     [Header("Coordinate Mapping")]
     [Tooltip("PhysicsRoot上のInSubjectをVisualPlayerRoot側へ写す座標変換担当です。")]
     [SerializeField] CorrespondSubject correspondSubject;
@@ -285,7 +233,6 @@ public sealed class SlopeStickCore : MonoBehaviour
     [SerializeField] BallVisualSlopeDrive ballVisualSlopeDrive;
     [Tooltip("回転させない物理座標系。InSubjectはこの配下で物理計算します。")]
     [SerializeField] Transform physicsRoot;
-
     [Header("Map Direction Turn")]
     [Tooltip("回転する表示座標系。InSubject/PhysicsRootは回転させません。")]
     [SerializeField] Transform visualPlayerRoot;
@@ -295,47 +242,31 @@ public sealed class SlopeStickCore : MonoBehaviour
     [SerializeField] bool visualRootTurnsOppositeToInput = true;
     [Tooltip("モバイルではDPIからmm換算、PCマウスでは1080p時の基準pxとして使用。方向・距離・速度で判定します。")]
     [Min(1f)] [SerializeField] float minimumFlickPixels = 10f;
-
     [Tooltip("Turn Input Intentを保持する最大時間[s]。古いフリックがRecovery/前回Turn終了後に突然実行されることを防ぎます。")]
     [Min(0.05f)] [SerializeField] float turnInputBufferSeconds = 0.25f;
-
     [Tooltip("極限ポイント通過後、階段上でフリックしたときのBallVisual Handoff待ち上限[s]。")]
     [Min(0.25f)] [SerializeField] float slopeExtremeTurnBufferSeconds = 1.0f;
-
     [Header("Turn Transition / Smooth Handoff")]
     [Tooltip("VisualPlayerRootの90度旋回時間[s]。CorrespondSubjectのTween時間をこの値で上書きします。")]
     [Min(0.05f)] [SerializeField] float turnVisualDurationSeconds = 0.30f;
-
     [Tooltip("旋回開始直後にInSubjectをKinematic停止する時間[s]。解除後はUTurnなら開始点から新方向へ直接進み、FiveLine系ならCoastへ移ります。")]
     [Min(0f)] [SerializeField] float turnHardFreezeSeconds = 0.12f;
-
     [Tooltip("Turn Input Intent / HardFreeze / Coastの診断ログを出します。")]
     [SerializeField] bool logTurnTransition = true;
-
     // 旋回角度は1系統だけ。入力強度や呼び出し元に関係なく必ず90度。
     const float QuarterTurnDegrees = 90f;
-
     public enum TurnResolutionMode
     {
-        None,
-        FiveLineAfterPop,
-        UTurnBeforeEnergyTarget,
-        FiveLineAfterEnergyTarget
+        None, FiveLineAfterPop, UTurnBeforeEnergyTarget, FiveLineAfterEnergyTarget
     }
-
     [Header("Turn Policy - Upper Stair / Flat / Energy Target")]
-    // Flat Entry / flick位置 / 次の斜面までの距離から旋回ごとに自動計算する。
-    // Inspectorの固定m閾値は使わない（旧 energyTargetPassToleranceMeters を廃止）。
-
+    // Flat Entry / flick位置 / 次の斜面までの距離から旋回ごとに自動計算する。 Inspectorの固定m閾値は使わない（旧 energyTargetPassToleranceMeters を廃止）。
     [Tooltip("FiveLine横補正を滑らかに収束させる時間[s]。")]
     [Min(0.02f)] [SerializeField] float fiveLineCorrectionDurationSeconds = 0.10f;
-
     [Tooltip("FiveLineが一度に許す最大横補正距離[m]。遠距離スナップを防ぎます。")]
     [Min(0.05f)] [SerializeField] float fiveLineMaximumCorrectionMeters = 0.75f;
-
     [Tooltip("Turn policyとFiveLine選択をログへ出します。")]
     [SerializeField] bool logTurnPolicy = true;
-
     [Header("Pre-Extreme Steering / 極限前の物理的な進路微調整")]
     [Tooltip("1回の横フリックで目標とする横方向の距離。通常の90度旋回とは独立しています。")]
     const float earlyFlickStepMeters = 1.2f;
@@ -346,39 +277,32 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float earlyFlickResponse = 50f;
     const float earlyFlickEndBrakeSeconds = 0.04f;
     [SerializeField] bool logEarlyFlick = true;
-
     [Header("Spline Support")]
     [Min(.01f)] [SerializeField] float probeDistance = .85f;
     [Range(1f, 89f)] [SerializeField] float maxSlopeAngle = 75f;
-
     [Min(0f)] [SerializeField] float supportGraceSeconds = .12f;
     [Min(0f)] [SerializeField] float supportGraceMaxGuideDistance = 1.75f;
     [Min(0f)] [SerializeField] float maxGraceOutwardSpeed = 2f;
-
     [Header("Stick")]
     [Min(0f)] [SerializeField] float flatStick = 24.6f;
     [Min(0f)] [SerializeField] float maxStick = 1000f;
     [Min(1f)] [SerializeField] float stickSafety = 1.10f;
-
     public bool StickSlopePharse = false;
     public bool AcceleFirstTurn = false;
     [Header("PlayerMotivation")] [SerializeField]
     public bool BeginCommandOnTouch = false;
     [Header("Debug")]
     [SerializeField] bool logCore;
-
     [Header("DropOut Distance Diagnostics")]
     [Tooltip("非接地になった瞬間と、最後の接触物のTransformから9m以上離れた間の診断ログを出します。死亡確定ログはこの設定に関係なく出ます。")]
     [SerializeField] bool logDropoutDistance = true;
     [Min(0.05f)] [SerializeField] float dropoutLogIntervalSeconds = 0.25f;
     float nextDropoutLogFixedTime;
     bool previousGroundedForDropoutLog = true;
-
     [Header("DropOut Cause Audit / 原因調査専用")]
     [Tooltip("旋回時と接地喪失時だけ履歴を出力します。Rigidbodyやステージの動作は変更しません。")]
     [SerializeField] bool logDropoutInvestigation = true;
     public bool LogDropoutInvestigation => logDropoutInvestigation;
-
     // 直近64物理ステップは数値だけ保持し、接地を失ったときだけログをまとめて出す。
     const int DropAuditCapacity = 64;
     const int DropAuditHistorySteps = 28;
@@ -399,8 +323,6 @@ public sealed class SlopeStickCore : MonoBehaviour
     readonly Collider[] dropAuditNearby = new Collider[16];
     int dropAuditNext, dropAuditCount, dropAuditPostRemaining;
     float dropAuditStickAppliedLastTick;
-
-
     // 進捗誤差が負から0以上になった瞬間だけ、表示側へ通知する。
     NearestKnotDetector.GuideFrame extremePointSection;
     bool extremePointSectionValid;
@@ -409,76 +331,55 @@ public sealed class SlopeStickCore : MonoBehaviour
     public bool ExtremePointPassedInCurrentSlope => extremePointFiredInSection;
     float previousExtremePointError;
     float previousExtremePointTarget;
-
     Rigidbody rb;
     Vector3 direction;
-
-    // ================================================================
-    // Initial Visual Frame Pose
-    // ================================================================
-    // VisualPlayerRoot は旋回時に position と rotation の両方が変化するため、
-    // Scene初期状態のワールドPoseをセットで保存して復元する。
+    // Initial Visual Frame Pose VisualPlayerRoot は旋回時に position と rotation の両方が変化するため、 Scene初期状態のワールドPoseをセットで保存して復元する。
     Vector3 initialVisualPlayerRootPosition;
     Quaternion initialVisualPlayerRootRotation = Quaternion.identity;
     bool hasInitialVisualPlayerRootPose;
-
-    // FirstStepInsertSplinePath側が「死亡復帰の再構築」を開始した時だけtrue。
-    // 通常のStart() -> delayStart()には復帰専用処理を侵入させない。
+    // FirstStepInsertSplinePath側が「死亡復帰の再構築」を開始した時だけtrue。 通常のStart() -> delayStart()には復帰専用処理を侵入させない。
     bool restartFramePrepared;
-
     Vector2 flickStart;
     bool trackingFlick;
     bool flickConsumed;
-    // The press began before the slope's energy target; crossing it mid-drag
-    // must not upgrade this gesture to a 90-degree turn while still on the slope.
+    // The press began before the slope's energy target; crossing it mid-drag must not upgrade this gesture to a 90-degree turn while still on the slope.
     bool flickStartedBeforeExtreme;
     // Remember a flat press across slope entry; never reinterpret it as EarlyFlick.
     bool flickStartedOnFlat;
     bool tapEdgePressOnFlat;
     Collider flickPressFlatCollider;
     float flickPressUnscaledTime;
-
-    // Independent from Auto Hold: flat TAP -> any number of pre-target
-    // EarlyFlicks -> automatic next-flat turn -> existing next-slope edge chase.
+    // Independent from Auto Hold: flat TAP -> any number of pre-target EarlyFlicks -> automatic next-flat turn -> existing next-slope edge chase.
     enum TapEdgeState { None, Armed, TurnQueued }
     TapEdgeState tapEdgeState;
     Collider tapEdgeFlatCollider;
     bool tapEdgeFastTurnQueued, tapEdgeHandoffHeld;
-
     [Header("Auto Hold / 左右どちらの半分でも押しっぱなし旋回")]
     [SerializeField] bool autoInCornerHoldEnabled = true;
-    [Tooltip("階段の中央から進行方向左へ、この距離以上で左半分とみなす[m]。")] 
+    [Tooltip("階段の中央から進行方向左へ、この距離以上で左半分とみなす[m]。")]
     [Min(0f)] [SerializeField] float autoHoldLeftHalfMarginMeters = .05f;
     [Tooltip("Auto Holdで物理Colliderの左端へ寄せる最大横速度[m/s]。")]
     [Min(.1f)] [SerializeField] float autoHoldMaxSideSpeed = 3f;
-    [Tooltip("Auto Holdで物理Colliderの左端へ寄せる最大横加速度[m/s²]。")] 
+    [Tooltip("Auto Holdで物理Colliderの左端へ寄せる最大横加速度[m/s²]。")]
     [Min(1f)] [SerializeField] float autoHoldMaxSideAcceleration = 55f;
-    [Tooltip("旋回前の物理エッジ推定に使用する横方向の許容幅[m]。")] 
+    [Tooltip("旋回前の物理エッジ推定に使用する横方向の許容幅[m]。")]
     [Min(.5f)] [SerializeField] float autoHoldExitWidthTolerance = 3.5f;
-    [Tooltip("幾何的に方向が不明な通常TapEdge用の旧フォールバック。長押し解放旋回には使用しない。OFF=左、ON=右。")] 
+    [Tooltip("幾何的に方向が不明な通常TapEdge用の旧フォールバック。長押し解放旋回には使用しない。OFF=左、ON=右。")]
     [SerializeField] bool autoHoldFallbackTurnRight = false;
-
     bool autoHoldEligible, autoHoldSawSlope, autoHoldLastHalfValid, autoHoldLeftHalf;
     bool autoHoldTurnPending;
     // B is keyed to physical stage identity, not intermediate stair contact.
     int bHoldOriginFlatFamily = -1;
     // An accepted release+phase change must not be vetoed by a later floor ray.
     bool bReleasePhaseTurnCommitted;
-    // Only a real early stair micro-flick may additionally turn after release
-    // on direct StairWay(N)->StairWay(N+1) contact. ArcSlab is not its target.
+    // Early micro release turns on the next physical StairWay; a flat-tap LEFT micro may also turn on its next supported ArcSlab.
     bool stairMicroPhaseTurnPending;
-    // A short flat tap followed by a LEFT stair micro-flick grants one
-    // post-turn left-edge approach on this next stage. Keep its stage identity
-    // when the stair-only rescue is canceled on a real intermediate flat.
+    // Flat tap + left early micro keeps one left-edge reward until the receiving-stage turn.
     int stairMicroFlatTapLeftEdgeStage = -1;
-    // Allow the next stair's real contact/probe to win over a one-frame
-    // ArcSlab seam hit; sustained flat travel still cancels the micro turn.
-    const float StairMicroNextFlatConfirmationSeconds = .10f;
-    // B ONLY: receiving-flat turn can be authorized by MouseUp/Touch.Ended,
-    // never by an old held-input automatic-turn path or FixedUpdate.
+    // A verified micro release survives ArcSlab(N+1) until StairWay(N+1) is physically reached.
+    // B ONLY: receiving-flat turn can be authorized by MouseUp/Touch.Ended, never by an old held-input automatic-turn path or FixedUpdate.
     bool flatStartReleaseCommitInProgress;
-    // B: movement state belongs to its actual receiving flat until turn begins.
-    // This is never an automatic held-input turn or an unrelated rescue motor.
+    // B: movement state belongs to its actual receiving flat until turn begins. This is never an automatic held-input turn or an unrelated rescue motor.
     bool bReleaseHandoffActive;
     Collider bReleaseHandoffFlat;
     Vector3 bReleaseOriginalHeading;
@@ -486,10 +387,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     float bReleaseHandoffTime = -1f;
     Vector3 bReleaseLastVerifiedPosition;
     float bReleaseNextLogTime;
-    // Only an ALREADY committed B turn may wait for the visual owner.
-    // The previous 0.18s/0.85m seam veto expired before the normal 0.18-0.20s
-    // visual handoff completed (23.580s log). This is an overall safety budget,
-    // NOT an additional turn trigger and not an automatic held-input turn.
+    // Only an ALREADY committed B turn may wait for the visual owner. The previous 0.18s/0.85m seam veto expired before the normal 0.18-0.20s visual handoff completed (23.580s
+    // log). This is an overall safety budget, NOT an additional turn trigger and not an automatic held-input turn.
     const float BReleaseCommittedHandoffMaxSeconds = .46f;
     const float BReleaseCommittedPhysicalCorridorMeters = 1.65f;
     const float BReleaseCommittedLateralDriftMeters = .90f;
@@ -497,31 +396,24 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float BReleaseHandoffSpeedCeiling = 9.5f;
     const float BReleaseHandoffBrakeAcceleration = 90f;
     const float BReleaseHandoffSideAcceleration = 85f;
-    // The next physical ArcSlab phase, or the next StairWay after a released
-    // stair-start B, is remembered here. Only release + phase change can
-    // authorize a turn; a held finger and a nearest-Spline switch cannot.
+    // The next physical ArcSlab phase, or the next StairWay after a released stair-start B, is remembered here. Only release + phase change can authorize a turn; a held finger
+    // and a nearest-Spline switch cannot.
     bool autoHoldNextFlatReady;
     Collider autoHoldNextFlatCollider;
     float autoHoldNextFlatLastSupportTime = -1f;
     Vector3 autoHoldNextFlatLastSupportPosition;
-    // A flat-start B hold keeps this signed world-space heading until release.
-    // Geometric nearest-Spline changes and adjacent stair colliders are NOT
-    // quarter-turn commands. No new Inspector field is needed.
+    // A flat-start B hold keeps this signed world-space heading until release. Geometric nearest-Spline changes and adjacent stair colliders are NOT quarter-turn commands. No new
+    // Inspector field is needed.
     Vector3 autoHoldPressConfirmedHeading;
-
-    // Physical flat evidence from the ordinary FixedUpdate support sample.
-    // Only an immediately recent flat can lend an extra 0.08s of press room
-    // at its exit. It is NOT a separate gesture or an alternate turn route.
+    // Physical flat evidence from the ordinary FixedUpdate support sample. Only an immediately recent flat can lend an extra 0.08s of press room at its exit. It is NOT a separate
+    // gesture or an alternate turn route.
     const float AutoHoldFlatPressGraceSeconds = .08f;
     const float AutoHoldFlatPressGraceSlopeProgress = .14f;
     Collider autoHoldRecentPressFlatCollider;
     float autoHoldRecentPressFlatTime = -1f;
     Vector3 autoHoldRecentPressFlatPosition, autoHoldRecentPressFlatHeading;
-
-    // Slope-start hold: press on a real slope, keep the finger down across
-    // its exit, then RELEASE on the immediately following physical flat.
-    // It shares Auto Hold's verified physical-edge approach and UTurn handoff,
-    // but it never triggers the old automatic flat-entry commit.
+    // Slope-start hold: press on a real slope, keep the finger down across its exit, then RELEASE on the immediately following physical flat. It shares Auto Hold's verified
+    // physical-edge approach and UTurn handoff, but it never triggers the old automatic flat-entry commit.
     bool slopeReleaseHoldArmed, slopeReleaseHoldNextFlatSeen;
     bool slopeReleaseHoldTurnPending, slopeReleaseHoldHandoffHeld;
     NearestKnotDetector.GuideFrame slopeReleaseHoldStartGuide;
@@ -533,18 +425,14 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector3 slopeReleaseHoldLastFlatSupportPosition;
     float slopeReleaseHoldNextFlatY;
     int slopeReleaseOriginStairFamily = -1;
-    // The finger may remain down across the verified flat onto the next
-    // physical stair. Only a REAL adjacent stair may inherit that gesture.
+    // The finger may remain down across the verified flat onto the next physical stair. Only a REAL adjacent stair may inherit that gesture.
     int slopeReleaseFirstStairFamily = -1;
-    // A nonnegative release time represents ONE released B gesture.
-    // The physically transferred next StairWay is already known at MouseUp;
-    // its collider is retained before the release, but never auto-turns.
+    // A nonnegative release time represents ONE released B gesture. The physically transferred next StairWay is already known at MouseUp; its collider is retained before the
+    // release, but never auto-turns.
     float slopeReleaseTerminalReleaseAt = -1f;
     Collider slopeReleaseTerminalStairCollider;
-    // Last close support on that real staircase. A brief gap at MouseUp may
-    // keep the reservation, but cannot authorize the physical turn.
+    // Last close support on that real staircase. A brief gap at MouseUp may keep the reservation, but cannot authorize the physical turn.
     float slopeTerminalLastOwnerSupportAt = -1f;
-
     [Header("Slope Hold: Extreme / Timed Spline Escape")]
     [Tooltip("階段の極限ポイント通過後に開始した長押しも次の平面で離すと受付。")]
     [SerializeField] bool slopeReleaseAllowPostExtremePress = true;
@@ -556,9 +444,11 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(1f)] [SerializeField] float slopeReleaseEscapeSideAcceleration = 45f;
     [Tooltip("逃げ先Splineに沿って再発進する前方加速度上限[m/s2]。")]
     [Min(1f)] [SerializeField] float slopeReleaseEscapeForwardAcceleration = 35f;
-
     bool slopeReleaseStartedAfterExtreme;
     bool slopeReleaseExtremeReachedWhileHeld;
+    // -1: inactive; -2: stage unknown. A single post-extreme DOWN cancels left-lip assistance for this turn, irrespective of press duration. Survives gesture reset and visual
+    // handoff.
+    int postExtremeNoLeftEdgeStage = -1;
     Vector3 slopeReleaseBeforeStopVelocity, slopeReleaseBeforeStopAcceleration;
     Vector3 slopeReleaseLastSampleVelocity, slopeReleaseObservedAcceleration;
     bool slopeReleaseLastSampleValid;
@@ -569,10 +459,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     Collider slopeReleaseEscapeFloor;
     float slopeReleaseEscapeStartedFixedTime;
     NearestKnotDetector.FiveLineGroup slopeReleaseEscapeGroup;
-
-    // General near-stall detection. Unlike the dedicated 0.30s Handoff
-    // escape, this is available on BOTH flat and stair sections, even when
-    // the player never pressed. It only assists after actual loss of progress.
+    // General near-stall detection. Unlike the dedicated 0.30s Handoff escape, this is available on BOTH flat and stair sections, even when the player never pressed. It only
+    // assists after actual loss of progress.
     [Header("Safe Spline Recovery / 平面と階段の失速救済")]
     [SerializeField] bool enableGeneralStallRecovery = true;
     [Tooltip("これ以下の速度で、さらに実際の前進距離が少ない状態を監視 [m/s]")]
@@ -587,10 +475,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     [Min(1f)] [SerializeField] float stallRecoverySideAcceleration = 45f;
     [Tooltip("Splineに沿って再発進する加速度上限 [m/s2]")]
     [Min(1f)] [SerializeField] float stallRecoveryForwardAcceleration = 35f;
-
     bool generalStallRecovering;
-    // Separate from ordinary near-stop: a released 90-degree turn can be
-    // stranded while waiting for the NEW guide, even on a real stair tread.
+    // Separate from ordinary near-stop: a released 90-degree turn can be stranded while waiting for the NEW guide, even on a real stair tread.
     bool stallRecoveryForUncapturedTurn;
     float turnGuideStallWatchSince = -1f;
     float turnGuideStallNextLogAt;
@@ -608,10 +494,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector3 stallRecoveryPoint, stallRecoveryHeading;
     bool stallRecoveryWasSlope;
     NearestKnotDetector.FiveLineGroup stallRecoveryLane;
-
-    // Early-stall samples are distinct from the existing 0.75s near-stop
-    // timer. A moving-but-not-converging ball must not reset that observation
-    // simply by travelling 0.30m along the wrong lane.
+    // Early-stall samples are distinct from the existing 0.75s near-stop timer. A moving-but-not-converging ball must not reset that observation simply by travelling 0.30m along
+    // the wrong lane.
     const float StallEarlyCreepSeconds = .40f;
     const float StallEarlyCreepProgress = .20f;
     const float StallEarlyCreepTravel = .30f;
@@ -622,14 +506,12 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector3 stallEarlyStartPosition, stallEarlyStartHeading;
     int stallEarlySectionIndex;
     bool stallEarlyWasSlope;
-
     NearestKnotDetector.GuideFrame autoHoldLastSlopeGuide;
     Vector3 autoHoldLastCenter, autoHoldLastLeft, autoHoldLastForward;
     Vector3 autoHoldExitPoint, autoHoldLastInnerLinePoint;
     float autoHoldLeftOffset, autoHoldInnerErrorAtCommit;
     float autoHoldTurnSign;
-    // Cached read-only future-slope geometry: avoids a costly spline scan
-    // every physics tick and works even when CurrentGuide is still a slope.
+    // Cached read-only future-slope geometry: avoids a costly spline scan every physics tick and works even when CurrentGuide is still a slope.
     bool autoHoldPredictedTurnSignValid;
     float autoHoldPredictedTurnSign;
     float autoHoldLastSlopeProgress;
@@ -641,9 +523,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     Collider autoHoldEdgeCollider;
     float autoHoldEdgeProbeHeight, autoHoldEdgeSurfaceHeight;
     readonly RaycastHit[] autoHoldCastHits = new RaycastHit[64];
-
-    // Only the NEXT flat and NEXT slope following a committed Auto Hold turn.
-    // No extra Inspector controls, and no correction during normal flick turns.
+    // Only the NEXT flat and NEXT slope following a committed Auto Hold turn. No extra Inspector controls, and no correction during normal flick turns.
     bool postAutoHoldEdgeActive, postAutoHoldNewGuide, postAutoHoldSawSlope;
     bool postAutoHoldHadEdgeSample, postAutoHoldCorrectionActive;
     bool postAutoHoldFastArrival, postAutoHoldFastDeadlineLogged;
@@ -660,25 +540,20 @@ public sealed class SlopeStickCore : MonoBehaviour
     float postAutoHoldLastError, postAutoHoldPeakSlopeError;
     float postAutoHoldMaxSlopeProgress;
     int postAutoHoldSlopeSamples, postAutoHoldCorrections;
-
-    // After a VERIFIED edge arrival, retain a small physical safety margin.
-    // This is a separate state: clearing the approach must not remove cruising
-    // protection. Never lock the old collider/edge across a 90-degree turn.
+    // After a VERIFIED edge arrival, retain a small physical safety margin. This is a separate state: clearing the approach must not remove cruising protection. Never lock the
+    // old collider/edge across a 90-degree turn.
     bool edgeCruiseActive, edgeCruiseSampleValid;
     Vector3 edgeCruiseHeading, edgeCruiseTarget;
     Collider edgeCruiseSupportCollider;
     float edgeCruiseNextProbeTime, edgeCruiseSampleTime, edgeCruiseNextLogTime;
     int edgeCruiseCorrections;
-
     // Android/iPhone: the specific game-play touch that began outside the gauge.
     int activeFlickFingerId = -1;
     float pendingTurnDegrees;
     float pendingTurnQueuedTime = -1f;
     // 階段の極限ポイント通過後にフリックした事実を、Handoff待ち中も保持する。
     bool pendingTurnFromPassedSlope;
-
-    // 旧版の段階的なSphereCastや膨大なログは使用しない。
-    // 進路の変更はInSubjectの側方加速度に限定し、Stick力は変更しない。
+    // 旧版の段階的なSphereCastや膨大なログは使用しない。 進路の変更はInSubjectの側方加速度に限定し、Stick力は変更しない。
     int pendingEarlyFlickSteps;
     bool earlyFlickSession;
     bool earlyFlickMoving;
@@ -687,23 +562,16 @@ public sealed class SlopeStickCore : MonoBehaviour
     NearestKnotDetector.GuideFrame earlyFlickGuide;
     float earlyFlickInitialOffset;
     float earlyFlickTargetOffset;
-
     // CorrespondSubjectの表示側が横方向だけ追従するための読み取り専用情報。
-    public bool HasPreExtremeLateralSession =>
-        earlyFlickSession && currentSurfaceValid && currentGuideValid &&
-        currentGuide.isSlope && !MainGameManager.OnDead;
-    public Vector3 PreExtremeSidePhysics =>
-        currentSurfaceValid ? currentSurface.side : Vector3.zero;
-
+    public bool HasPreExtremeLateralSession => earlyFlickSession && currentSurfaceValid && currentGuideValid && currentGuide.isSlope && !MainGameManager.OnDead;
+    public Vector3 PreExtremeSidePhysics => currentSurfaceValid ? currentSurface.side : Vector3.zero;
     float graceTimer;
     float driveState;
     float stickState;
     bool wasSlope;
-
     // 旋回が始まってからNearestKnotDetectorが旋回後Splineを捕捉するまでtrue。
     bool waitingForTurnGuide;
     Vector3 turnTargetDirection;
-
     struct TurnTransitionSnapshot
     {
         public bool valid;
@@ -714,16 +582,13 @@ public sealed class SlopeStickCore : MonoBehaviour
         public Vector3 direction;
         public bool useGravity;
     }
-    
     public bool Earliest=false;
-
     // Visual旋回全体と、先頭の短いKinematic停止区間を分ける。
     bool turnTransitionActive;
     bool turnBodyFrozen;
     float turnTransitionStartTime = -1f;
     float activeTurnDegrees;
     TurnTransitionSnapshot turnTransitionSnapshot;
-
     TurnResolutionMode activeTurnMode = TurnResolutionMode.None;
     bool fiveLineCorrectionPending;
     bool fiveLineCorrectionActive;
@@ -731,13 +596,10 @@ public sealed class SlopeStickCore : MonoBehaviour
     Vector3 fiveLineCorrectionSide;
     Vector3 fiveLineCorrectionStartPosition;
     float fiveLineCorrectionTargetOffset;
-    NearestKnotDetector.FiveLineGroup fiveLineTargetGroup =
-        NearestKnotDetector.FiveLineGroup.Center;
-
+    NearestKnotDetector.FiveLineGroup fiveLineTargetGroup = NearestKnotDetector.FiveLineGroup.Center;
     bool capturedTurnLandingIntentValid;
     BallVisualSlopeDrive.TurnLandingIntent capturedTurnLandingIntent;
     float lastEnergyTargetForwardDistance = float.PositiveInfinity;
-
     struct FlatEntryFrame
     {
         public bool valid;
@@ -746,7 +608,6 @@ public sealed class SlopeStickCore : MonoBehaviour
         public Vector3 direction;
         public float distanceToNextSlope;
     }
-
     FlatEntryFrame flatEntryFrame;
     FlatEntryFrame pendingFlatEntryFrame;
     bool pendingTurnSnapshotValid;
@@ -758,10 +619,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     BallVisualSlopeDrive.TurnLandingIntent pendingTurnLandingIntent;
     float dynamicEnergyTargetTolerance = float.NaN;
     float lastFlatTurnLimitProgress = float.NaN;
-
     public float LastDynamicEnergyTargetTolerance => dynamicEnergyTargetTolerance;
     public float LastFlatTurnLimitProgress => lastFlatTurnLimitProgress;
-
     // 旧READ ONLY APIとの互換性を維持。Bezier物理Pathは廃止したため常にfalse。
     public bool IsPhysicsTurnPathActive => false;
     public bool IsTurnTransitionActive => turnTransitionActive;
@@ -771,20 +630,14 @@ public sealed class SlopeStickCore : MonoBehaviour
     public bool IsFiveLineCorrectionActive => fiveLineCorrectionActive;
     public NearestKnotDetector.FiveLineGroup CurrentFiveLineTargetGroup => fiveLineTargetGroup;
     public float LastEnergyTargetForwardDistance => lastEnergyTargetForwardDistance;
-
     const float TurnGuideAlignmentMin = 0.8f;
-
-    // A new nearest Spline may be perpendicular at a geometric crossing.
-    // The player did not request a turn, so never treat that nearest line as
-    // the new forward direction. This guard does not fabricate a ground hit.
+    // A new nearest Spline may be perpendicular at a geometric crossing. The player did not request a turn, so never treat that nearest line as the new forward direction. This
+    // guard does not fabricate a ground hit.
     const float UncommandedGuideAlignmentMin = 0.65f;
     // No uncommanded seam brake: only input-authorized turn/hold paths may stop the body.
     bool uncommandedGuideGuardLogged;
-
-    // A rejected B release must not allow Evaluate() to traverse successive
-    // perpendicular splines (the StairWay9 / ArcSlab9 0->1->2 failure).
-    // No turn is created. The press-authorized heading is short-lived and
-    // applies only while a close real physical stage is still beneath us.
+    // A rejected B release must not allow Evaluate() to traverse successive perpendicular splines (the StairWay9 / ArcSlab9 0->1->2 failure). No turn is created. The
+    // press-authorized heading is short-lived and applies only while a close real physical stage is still beneath us.
     const float UncommittedRouteProtectSeconds = 2.80f;
     const float UncommittedRouteMaxTravel = 32f;
     const float UncommittedRouteGuideDistance = 1.50f;
@@ -792,15 +645,12 @@ public sealed class SlopeStickCore : MonoBehaviour
     bool uncommittedRouteGuardActive;
     Vector3 uncommittedRouteHeading, uncommittedRouteStart;
     float uncommittedRouteExpiresAt, uncommittedRouteLogAt;
-
-    // Dropout guard: no additional Inspector settings. Ordinary successful
-    // turns continue unchanged; intervention occurs only during an unsafe handoff.
+    // Dropout guard: no additional Inspector settings. Ordinary successful turns continue unchanged; intervention occurs only during an unsafe handoff.
     const float TurnGuideBrakeAcceleration = 90f;
     const float TurnGuideAheadMaximumMeters = 4f;
     const float TurnGuideSafeCrawlSpeed = 3f;
-    // Intentional turn only: brake translation toward a safe positive speed,
-    // damp excess spin without preventing physical rolling, and limit the
-    // first stair-tread Stick transient after guide reacquisition.
+    // Intentional turn only: brake translation toward a safe positive speed, damp excess spin without preventing physical rolling, and limit the first stair-tread Stick transient
+    // after guide reacquisition.
     const float TurnGuideSpinResponse = 7f;
     const float TurnGuideMaxAngularAcceleration = 65f;
     const float TurnGuideLandingSeconds = .24f;
@@ -810,10 +660,8 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float TurnGuideMinimumSupportedSpeed = 1.7f;
     float turnHandoffNextAuditTime;
     float turnGuideCapturedAt = -1f;
-
-    // Reverse-motion protection ONLY for an accepted B-release InCorner turn
-    // and the first physically verified descending stair after that turn.
-    // Ordinary straights, TapEdge, other flicks and OutCorner are untouched.
+    // Reverse-motion protection ONLY for an accepted B-release InCorner turn and the first physically verified descending stair after that turn. Ordinary straights, TapEdge,
+    // other flicks and OutCorner are untouched.
     const float PostBDownhillMaxWindow = 4.0f;
     const float PostBDownhillMinimumForwardSpeed = 2.5f;
     const float PostBDownhillMaxAssist = 42f;
@@ -826,8 +674,7 @@ public sealed class SlopeStickCore : MonoBehaviour
     float postBDownhillLastSupportTime = -1f;
     float postBDownhillRecentNearSlopeTime = -1f;
     float postBDownhillNextLogTime;
-    // Same physical StairWay family survives knot/lane/section switches.
-    // The left edge is measured on real floor, then held across a guide jump.
+    // Same physical StairWay family survives knot/lane/section switches. The left edge is measured on real floor, then held across a guide jump.
     int postBDownhillStairFamily = -1;
     int postBDownhillLastLoggedSection = -1;
     bool postBEdgeAnchorValid;
@@ -838,15 +685,12 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float PostBEdgeMaxSideAcceleration = 75f;
     const float PostBEdgeAnchorNoiseMeters = .24f;
     const float PostBEdgeAnchorSlewMetersPerSecond = 5f;
-
     float turnGuideReleasedAt = -1f;
     bool turnGuideGuardBraking;
     bool turnGuideCrawlLogged;
-
     float TargetProgress => Mathf.Clamp01(targetSlopeProgressPercent * .01f);
     float ReleaseStart => Mathf.Clamp01(TargetProgress + ReleaseHold);
     float ReleaseEnd => Mathf.Max(ReleaseStart, NaturalReleaseEnd);
-
     struct Surface
     {
         public Vector3 tangent, side, normal;
@@ -854,407 +698,180 @@ public sealed class SlopeStickCore : MonoBehaviour
         public float gravityAlong, gravitySupport;
         public bool Valid => tangent.sqrMagnitude > Eps;
     }
-
-    // ================================================================
-    // BallVisual READ ONLY motion reference
-    // ================================================================
-    // BallVisualSlopeDrive does not write to Core. Core exposes one stable
-    // spline-session plan whose meaning matches the successful SlopeStick3D
-    // contract while using NearestKnotDetector as the canonical path model.
-
+    // BallVisual READ ONLY motion reference BallVisualSlopeDrive does not write to Core. Core exposes one stable spline-session plan whose meaning matches the successful
+    // SlopeStick3D contract while using NearestKnotDetector as the canonical path model.
     NearestKnotDetector.GuideFrame currentGuide;
     Surface currentSurface;
     bool currentGuideValid;
     bool currentSurfaceValid;
     bool currentSupported;
-public float CurrentSplineDriveAccelerationReadOnly =>
-    driveState;
-
-public float CurrentSplineStickAccelerationReadOnly =>
-    stickState;
-
-public float PredictDesiredSplineDriveReadOnly(
-    bool isSlope,
-    float tangentSpeed,
-    float sectionProgress01,
-    float sectionLength,
-    float gravityAlong)
+public float CurrentSplineDriveAccelerationReadOnly => driveState;
+public float CurrentSplineStickAccelerationReadOnly => stickState;
+public float PredictDesiredSplineDriveReadOnly( bool isSlope, float tangentSpeed, float sectionProgress01, float sectionLength, float gravityAlong)
 {
-    tangentSpeed =
-        Mathf.Max(
-            0f,
-            tangentSpeed);
-
+    tangentSpeed = Mathf.Max( 0f, tangentSpeed);
     if (!isSlope)
     {
         return
-            SpeedDrive(
-                tangentSpeed);
+            SpeedDrive( tangentSpeed);
     }
-
     float target;
-
     if (sectionProgress01 < TargetProgress)
     {
-        float remaining =
-            Mathf.Max(
-                TargetMinDistance,
-                (TargetProgress -
+        float remaining = Mathf.Max( TargetMinDistance, (TargetProgress -
                  sectionProgress01) *
-                Mathf.Max(
-                    TargetMinDistance,
-                    sectionLength));
-
-        target =
-            (maxGroundSpeed *
+                Mathf.Max( TargetMinDistance, sectionLength));
+        target = (maxGroundSpeed *
              maxGroundSpeed -
              tangentSpeed *
              tangentSpeed) /
             (2f *
-             Mathf.Max(
-                 Eps,
-                 remaining))
+             Mathf.Max( Eps, remaining))
             -
             gravityAlong;
-
-        target =
-            Mathf.Clamp(
-                target,
-                -TargetAccelerationLimit,
-                TargetAccelerationLimit);
+        target = Mathf.Clamp( target, -TargetAccelerationLimit, TargetAccelerationLimit);
     }
     else
     {
-        target =
-            SpeedDrive(
-                tangentSpeed);
-
-        float blend =
-            SmoothRange01(
-                sectionProgress01,
-                TargetProgress,
-                Mathf.Clamp01(
-                    TargetProgress +
-                    PostTargetBlendWidth));
-
-        target -=
-            Mathf.Max(
-                0f,
-                gravityAlong) *
+        target = SpeedDrive( tangentSpeed);
+        float blend = SmoothRange01( sectionProgress01, TargetProgress, Mathf.Clamp01( TargetProgress + PostTargetBlendWidth));
+        target -= Mathf.Max( 0f, gravityAlong) *
             PostTargetGravityRatio *
             blend;
-
-        target =
-            Mathf.Min(
-                0f,
-                target);
+        target = Mathf.Min( 0f, target);
     }
-
     return
-        Mathf.Max(
-            -MaxDeceleration,
-            target);
+        Mathf.Max( -MaxDeceleration, target);
 }
-
-public float AdvancePredictedSplineDriveReadOnly(
-    float currentDrive,
-    float desiredDrive,
-    float deltaTime)
+public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desiredDrive, float deltaTime)
 {
     return
-        Mathf.MoveTowards(
-            currentDrive,
-            desiredDrive,
-            AccelerationJerk *
-            Mathf.Max(
-                0f,
-                deltaTime));
+        Mathf.MoveTowards( currentDrive, desiredDrive, AccelerationJerk *
+            Mathf.Max( 0f, deltaTime));
 }
     struct BallVisualSplinePlan
     {
         public bool valid;
-
         public Vector3 targetCenterPhysics;
         public Vector3 targetTangent;
         public Vector3 targetNormal;
         public Vector3 targetReferenceVelocityPhysics;
-
         public float targetCurvature;
         public float targetTangentSpeed;
-
         public float currentProgress01;
         public float progressRate01PerSecond;
         public float distanceToTarget;
     }
-
     BallVisualSplinePlan ballVisualPlan;
-
     NearestKnotDetector.GuideFrame ballVisualSessionGuide;
     bool hasBallVisualSession;
     int ballVisualStableFrames;
     float previousBallVisualProgress;
     float ballVisualProgressDelta;
-
     const int BallVisualStableFramesRequired = 2;
     const float BallVisualMaximumProgressJump01 = .25f;
     const float BallVisualAllowedReverseProgress01 = .005f;
-
     public Rigidbody Body => rb;
-
-    // READ ONLY handoff telemetry for BallVisualEqualizer.
-    // This is the exact inward Stable-N support acceleration that SlopeStickCore
-    // is currently applying through -surface.normal * stickState.
-    // Equalizer may capture it at Plane -> Stair entry, but never writes it back.
-    public float BallVisualNormalSupportAccelerationReadOnly =>
-        Mathf.Max(0f, stickState);
-
-    public bool BallVisualNormalSupportAvailableReadOnly =>
-        currentSupported && currentSurfaceValid;
-
-    public bool BallVisualIsOnFlat =>
-        currentSupported &&
-        currentGuideValid &&
-        !currentGuide.isSlope;
-
-    public bool BallVisualIsOnSlope =>
-        currentSupported &&
-        currentGuideValid &&
-        currentGuide.isSlope;
-
-    public bool BallVisualIsAir =>
-        !currentSupported;
-
-    // "Active slope frame" means that Core has a valid spline basis now.
-    // Incident readiness is stricter and is exposed separately below.
-    public bool BallVisualHasActiveSlopeFrame =>
-        currentSupported &&
-        currentGuideValid &&
-        currentSurfaceValid &&
-        currentGuide.isSlope &&
-        !waitingForTurnGuide &&
-        !IsPhysicsTurnPathActive &&
-        !turnTransitionActive;
-
-    public bool IsWaitingForTurnGuide =>
-        waitingForTurnGuide || IsPhysicsTurnPathActive || turnTransitionActive;
-
-    // Exact Incident gate used by BallVisualSlopeDrive.
-    // World-Y velocity is intentionally not used: outwardSpeed is measured
-    // against the spline surface normal.
+    // READ ONLY handoff telemetry for BallVisualEqualizer. This is the exact inward Stable-N support acceleration that SlopeStickCore is currently applying through
+    // -surface.normal * stickState. Equalizer may capture it at Plane -> Stair entry, but never writes it back.
+    public float BallVisualNormalSupportAccelerationReadOnly => Mathf.Max(0f, stickState);
+    public bool BallVisualNormalSupportAvailableReadOnly => currentSupported && currentSurfaceValid;
+    public bool BallVisualIsOnFlat => currentSupported && currentGuideValid && !currentGuide.isSlope;
+    public bool BallVisualIsOnSlope => currentSupported && currentGuideValid && currentGuide.isSlope;
+    public bool BallVisualIsAir => !currentSupported;
+    // "Active slope frame" means that Core has a valid spline basis now. Incident readiness is stricter and is exposed separately below.
+    public bool BallVisualHasActiveSlopeFrame => currentSupported && currentGuideValid && currentSurfaceValid && currentGuide.isSlope && !waitingForTurnGuide &&
+        !IsPhysicsTurnPathActive && !turnTransitionActive;
+    public bool IsWaitingForTurnGuide => waitingForTurnGuide || IsPhysicsTurnPathActive || turnTransitionActive;
+    // Exact Incident gate used by BallVisualSlopeDrive. World-Y velocity is intentionally not used: outwardSpeed is measured against the spline surface normal.
     public bool BallVisualIncidentReady
     {
         get
         {
-            if (!BallVisualHasActiveSlopeFrame ||
-                !ballVisualPlan.valid ||
-                ballVisualStableFrames < BallVisualStableFramesRequired)
+            if (!BallVisualHasActiveSlopeFrame || !ballVisualPlan.valid || ballVisualStableFrames < BallVisualStableFramesRequired)
             {
                 return false;
             }
-
             if (ballVisualPlan.currentProgress01 >= TargetProgress)
                 return false;
-
             if (currentSurface.tangentSpeed <= Eps)
                 return false;
-
             if (currentSurface.outwardSpeed > maxGraceOutwardSpeed)
                 return false;
-
             return true;
         }
     }
-
-    public Vector3 BallVisualSurfaceNormal =>
-        currentSurfaceValid
-            ? currentSurface.normal
-            : (currentGuideValid &&
-               currentGuide.normal.sqrMagnitude > Eps
-                ? currentGuide.normal.normalized
-                : Vector3.up);
-
-    public Vector3 BallVisualSlopeTangent =>
-        currentSurfaceValid
-            ? currentSurface.tangent
-            : NormalizeFlat(
-                currentGuideValid
-                    ? currentGuide.tangent
-                    : direction,
-                direction);
-
-    public float BallVisualSlopeProgress01 =>
-        ballVisualPlan.valid
-            ? ballVisualPlan.currentProgress01
-            : (currentGuideValid
-                ? currentGuide.sectionProgress01
-                : 0f);
-
-    public float BallVisualSlopeProgressRatePercentPerSecond =>
-        ballVisualPlan.valid
-            ? ballVisualPlan.progressRate01PerSecond * 100f
-            : 0f;
-
-    public float BallVisualSlopeSectionLength =>
-        currentGuideValid
-            ? currentGuide.sectionLength
-            : 0f;
-
-    public float BallVisualDistanceToTarget =>
-        ballVisualPlan.valid
-            ? ballVisualPlan.distanceToTarget
-            : 0f;
-
-    public float slopeProgressErrorPercent =>
-        ballVisualPlan.valid
-            ? (ballVisualPlan.currentProgress01 - TargetProgress) * 100f
-            : (currentGuideValid
-                ? (currentGuide.sectionProgress01 - TargetProgress) * 100f
-                : float.PositiveInfinity);
-
-    // Kept under the old API name so the successful BallVisualSlopeDrive
-    // formula can remain unchanged. Unlike the previous Core port, this is
-    // planned BEFORE Target crossing from the target spline sample.
-    public float CapturedTargetTangentSpeed =>
-        ballVisualPlan.valid
-            ? ballVisualPlan.targetTangentSpeed
-            : 0f;
-
-    public Vector3 BallVisualTargetTangentPhysics =>
-        ballVisualPlan.valid
-            ? ballVisualPlan.targetTangent
-            : BallVisualSlopeTangent;
-
-    public Vector3 BallVisualTargetNormalPhysics =>
-        ballVisualPlan.valid
-            ? ballVisualPlan.targetNormal
-            : BallVisualSurfaceNormal;
-
-    public Vector3 BallVisualTargetReferenceVelocityPhysics =>
-        ballVisualPlan.valid
-            ? ballVisualPlan.targetReferenceVelocityPhysics
-            : Vector3.zero;
-
-    public Vector3 BallVisualTargetProgressCenterPhysics =>
-        ballVisualPlan.valid && rb
-            ? ballVisualPlan.targetCenterPhysics
-            : (rb ? rb.position : transform.position);
-
-    public bool TryGetBallVisualTargetProgressCenterPhysics(
-        out Vector3 targetPosition)
+    public Vector3 BallVisualSurfaceNormal => currentSurfaceValid ? currentSurface.normal : (currentGuideValid && currentGuide.normal.sqrMagnitude > Eps
+                ? currentGuide.normal.normalized : Vector3.up);
+    public Vector3 BallVisualSlopeTangent => currentSurfaceValid ? currentSurface.tangent : NormalizeFlat( currentGuideValid ? currentGuide.tangent : direction, direction);
+    public float BallVisualSlopeProgress01 => ballVisualPlan.valid ? ballVisualPlan.currentProgress01 : (currentGuideValid ? currentGuide.sectionProgress01 : 0f);
+    public float BallVisualSlopeProgressRatePercentPerSecond => ballVisualPlan.valid ? ballVisualPlan.progressRate01PerSecond * 100f : 0f;
+    public float BallVisualSlopeSectionLength => currentGuideValid ? currentGuide.sectionLength : 0f;
+    public float BallVisualDistanceToTarget => ballVisualPlan.valid ? ballVisualPlan.distanceToTarget : 0f;
+    public float slopeProgressErrorPercent => ballVisualPlan.valid ? (ballVisualPlan.currentProgress01 - TargetProgress) * 100f : (currentGuideValid
+                ? (currentGuide.sectionProgress01 - TargetProgress) * 100f : float.PositiveInfinity);
+    // Kept under the old API name so the successful BallVisualSlopeDrive formula can remain unchanged. Unlike the previous Core port, this is planned BEFORE Target crossing from
+    // the target spline sample.
+    public float CapturedTargetTangentSpeed => ballVisualPlan.valid ? ballVisualPlan.targetTangentSpeed : 0f;
+    public Vector3 BallVisualTargetTangentPhysics => ballVisualPlan.valid ? ballVisualPlan.targetTangent : BallVisualSlopeTangent;
+    public Vector3 BallVisualTargetNormalPhysics => ballVisualPlan.valid ? ballVisualPlan.targetNormal : BallVisualSurfaceNormal;
+    public Vector3 BallVisualTargetReferenceVelocityPhysics => ballVisualPlan.valid ? ballVisualPlan.targetReferenceVelocityPhysics : Vector3.zero;
+    public Vector3 BallVisualTargetProgressCenterPhysics => ballVisualPlan.valid && rb ? ballVisualPlan.targetCenterPhysics : (rb ? rb.position : transform.position);
+    public bool TryGetBallVisualTargetProgressCenterPhysics( out Vector3 targetPosition)
     {
-        targetPosition =
-            BallVisualTargetProgressCenterPhysics;
-
+        targetPosition = BallVisualTargetProgressCenterPhysics;
         return
-            BallVisualHasActiveSlopeFrame &&
-            ballVisualPlan.valid;
+            BallVisualHasActiveSlopeFrame && ballVisualPlan.valid;
     }
-
     /// <summary>
     /// BallVisual / Envelope用READ ONLY API。
     /// 現在捕捉しているSpline区間のprogress01位置をPhysics座標で評価します。
     /// Rigidbody中心がGuide lineから持つSide/Normal offsetも同じ区間へ平行移送します。
     /// SlopeStickCoreの状態は変更しません。
     /// </summary>
-    public bool TryEvaluateBallVisualSectionFramePhysics(
-        float progress01,
-        out Vector3 centerPhysics,
-        out Vector3 tangentPhysics,
-        out Vector3 normalPhysics)
+    public bool TryEvaluateBallVisualSectionFramePhysics( float progress01, out Vector3 centerPhysics, out Vector3 tangentPhysics, out Vector3 normalPhysics)
     {
         centerPhysics = rb ? rb.position : transform.position;
         tangentPhysics = BallVisualSlopeTangent;
         normalPhysics = BallVisualSurfaceNormal;
-
-        if (!rb ||
-            !knotDetector ||
-            !currentGuideValid)
+        if (!rb || !knotDetector || !currentGuideValid)
         {
             return false;
         }
-
-        NearestKnotDetector.GuideFrame sectionGuide =
-            hasBallVisualSession
-                ? ballVisualSessionGuide
-                : currentGuide;
-
-        if (!sectionGuide.valid ||
-            !knotDetector.TryEvaluateSameSection(
-                sectionGuide,
-                Mathf.Clamp01(progress01),
-                out NearestKnotDetector.GuideSample sample) ||
+        NearestKnotDetector.GuideFrame sectionGuide = hasBallVisualSession ? ballVisualSessionGuide : currentGuide;
+        if (!sectionGuide.valid || !knotDetector.TryEvaluateSameSection( sectionGuide, Mathf.Clamp01(progress01), out NearestKnotDetector.GuideSample sample) ||
             !sample.valid)
         {
             return false;
         }
-
-        Vector3 normal =
-            sample.normal.sqrMagnitude > Eps
-                ? sample.normal.normalized
-                : Vector3.up;
-
-        Vector3 tangent =
-            Vector3.ProjectOnPlane(
-                sample.tangent,
-                normal);
-
+        Vector3 normal = sample.normal.sqrMagnitude > Eps ? sample.normal.normalized : Vector3.up;
+        Vector3 tangent = Vector3.ProjectOnPlane( sample.tangent, normal);
         if (tangent.sqrMagnitude <= Eps)
             return false;
-
         tangent.Normalize();
-
         if (Vector3.Dot(tangent, direction) < 0f)
             tangent = -tangent;
-
-        Vector3 side =
-            Vector3.Cross(
-                normal,
-                tangent);
-
+        Vector3 side = Vector3.Cross( normal, tangent);
         if (side.sqrMagnitude <= Eps)
             return false;
-
         side.Normalize();
         tangent = Vector3.Cross(side, normal).normalized;
-
         // Preserve the current Rigidbody-center offset from the spline guide.
-        Surface basis =
-            currentSurfaceValid
-                ? currentSurface
-                : BuildSplineSurface(currentGuide);
-
+        Surface basis = currentSurfaceValid ? currentSurface : BuildSplineSurface(currentGuide);
         float sideOffset = 0f;
         float normalOffset = 0f;
-
         if (basis.Valid)
         {
-            Vector3 currentOffset =
-                rb.position -
+            Vector3 currentOffset = rb.position -
                 currentGuide.point;
-
-            sideOffset =
-                Vector3.Dot(
-                    currentOffset,
-                    basis.side);
-
-            normalOffset =
-                Vector3.Dot(
-                    currentOffset,
-                    basis.normal);
+            sideOffset = Vector3.Dot( currentOffset, basis.side);
+            normalOffset = Vector3.Dot( currentOffset, basis.normal);
         }
-
-        centerPhysics =
-            sample.point +
-            side * sideOffset +
-            normal * normalOffset;
-
+        centerPhysics = sample.point + side * sideOffset + normal * normalOffset;
         tangentPhysics = tangent;
         normalPhysics = normal;
-
         return true;
     }
-
-
     void ResetBallVisualSplineSession()
     {
         ballVisualPlan = default;
@@ -1264,237 +881,105 @@ public float AdvancePredictedSplineDriveReadOnly(
         previousBallVisualProgress = 0f;
         ballVisualProgressDelta = 0f;
     }
-
-    void UpdateBallVisualSplinePlan(
-        NearestKnotDetector.GuideFrame guide,
-        Surface surface)
+    void UpdateBallVisualSplinePlan( NearestKnotDetector.GuideFrame guide, Surface surface)
     {
         ballVisualPlan = default;
-
-        if (!currentSupported ||
-            !guide.valid ||
-            !guide.isSlope ||
-            !surface.Valid ||
-            waitingForTurnGuide ||
-            IsPhysicsTurnPathActive ||
-            turnTransitionActive ||
-            !knotDetector)
+        if (!currentSupported || !guide.valid || !guide.isSlope || !surface.Valid || waitingForTurnGuide || IsPhysicsTurnPathActive || turnTransitionActive || !knotDetector)
         {
             ResetBallVisualSplineSession();
             return;
         }
-
-        bool sameSession =
-            hasBallVisualSession &&
-            knotDetector.IsSameSection(
-                ballVisualSessionGuide,
-                guide);
-
+        bool sameSession = hasBallVisualSession && knotDetector.IsSameSection( ballVisualSessionGuide, guide);
         if (!sameSession)
         {
             ballVisualSessionGuide = guide;
             hasBallVisualSession = true;
             ballVisualStableFrames = 1;
-            previousBallVisualProgress =
-                guide.sectionProgress01;
+            previousBallVisualProgress = guide.sectionProgress01;
             ballVisualProgressDelta = 0f;
             return;
         }
-
-        float progress =
-            guide.sectionProgress01;
-
-        float delta =
-            progress -
+        float progress = guide.sectionProgress01;
+        float delta = progress -
             previousBallVisualProgress;
-
-        previousBallVisualProgress =
-            progress;
-
-        bool plausibleProgress =
-            delta >= -BallVisualAllowedReverseProgress01 &&
-            Mathf.Abs(delta) <=
-                BallVisualMaximumProgressJump01;
-
+        previousBallVisualProgress = progress;
+        bool plausibleProgress = delta >= -BallVisualAllowedReverseProgress01 && Mathf.Abs(delta) <= BallVisualMaximumProgressJump01;
         if (!plausibleProgress)
         {
             ballVisualStableFrames = 1;
             ballVisualProgressDelta = 0f;
             return;
         }
-
         ballVisualStableFrames++;
         ballVisualProgressDelta = delta;
-
         if (ballVisualStableFrames <
             BallVisualStableFramesRequired)
         {
             return;
         }
-
-        if (!knotDetector.TryEvaluateSameSection(
-                ballVisualSessionGuide,
-                TargetProgress,
-                out NearestKnotDetector.GuideSample target) ||
-            !target.valid)
+        if (!knotDetector.TryEvaluateSameSection( ballVisualSessionGuide, TargetProgress, out NearestKnotDetector.GuideSample target) || !target.valid)
         {
             return;
         }
-
-        Vector3 targetNormal =
-            target.normal.sqrMagnitude > Eps
-                ? target.normal.normalized
-                : Vector3.up;
-
-        Vector3 targetTangent =
-            Vector3.ProjectOnPlane(
-                target.tangent,
-                targetNormal);
-
+        Vector3 targetNormal = target.normal.sqrMagnitude > Eps ? target.normal.normalized : Vector3.up;
+        Vector3 targetTangent = Vector3.ProjectOnPlane( target.tangent, targetNormal);
         if (targetTangent.sqrMagnitude <= Eps)
             return;
-
         targetTangent.Normalize();
-
-        if (Vector3.Dot(
-                targetTangent,
-                direction) < 0f)
+        if (Vector3.Dot( targetTangent, direction) < 0f)
         {
-            targetTangent =
-                -targetTangent;
+            targetTangent = -targetTangent;
         }
-
-        Vector3 targetSide =
-            Vector3.Cross(
-                targetNormal,
-                targetTangent);
-
+        Vector3 targetSide = Vector3.Cross( targetNormal, targetTangent);
         if (targetSide.sqrMagnitude <= Eps)
             return;
-
         targetSide.Normalize();
-
         // Re-orthogonalize the target tangent.
-        targetTangent =
-            Vector3.Cross(
-                targetSide,
-                targetNormal).normalized;
-
-        
+        targetTangent = Vector3.Cross( targetSide, targetNormal).normalized;
         Vector3 currentGuideOffset = rb.position - guide.point;
-
         float sideOffset = Vector3.Dot(currentGuideOffset, surface.side);
-
-        float normalOffset =
-            Vector3.Dot(currentGuideOffset, surface.normal);
-
-        Vector3 targetCenter =
-            target.point + targetSide * sideOffset + targetNormal * normalOffset;
-
-        float targetCurvature =
-            Mathf.Max(0f, Mathf.Max(target.curvature, target.entryCurvature));
-
-        float targetGravitySupport =
-            Mathf.Max(0f, Vector3.Dot(Physics.gravity, -targetNormal));
-
-        float targetTangentSpeed =
-            maxGroundSpeed;
-
+        float normalOffset = Vector3.Dot(currentGuideOffset, surface.normal);
+        Vector3 targetCenter = target.point + targetSide * sideOffset + targetNormal * normalOffset;
+        float targetCurvature = Mathf.Max(0f, Mathf.Max(target.curvature, target.entryCurvature));
+        float targetGravitySupport = Mathf.Max(0f, Vector3.Dot(Physics.gravity, -targetNormal));
+        float targetTangentSpeed = maxGroundSpeed;
         if (targetCurvature > Eps)
         {
-            // DesiredStick uses:
-            // v^2 * curvature * stickSafety - gravitySupport <= maxStick
-            // so invert the same inequality at Target Progress.
-            float supportedSpeed =
-                Mathf.Sqrt(Mathf.Max(0f, (maxStick + targetGravitySupport) / Mathf.Max(Eps, targetCurvature * stickSafety)));
-
-            targetTangentSpeed =
-                Mathf.Min(
-                    maxGroundSpeed,
-                    supportedSpeed);
+            // DesiredStick uses: v^2 * curvature * stickSafety - gravitySupport <= maxStick so invert the same inequality at Target Progress.
+            float supportedSpeed = Mathf.Sqrt(Mathf.Max(0f, (maxStick + targetGravitySupport) / Mathf.Max(Eps, targetCurvature * stickSafety)));
+            targetTangentSpeed = Mathf.Min( maxGroundSpeed, supportedSpeed);
         }
-
         float distanceToTarget;
-
-        if (!knotDetector.TryGetDistanceAlongSameSection(
-                ballVisualSessionGuide,
-                progress,
-                TargetProgress,
-                out distanceToTarget))
+        if (!knotDetector.TryGetDistanceAlongSameSection( ballVisualSessionGuide, progress, TargetProgress, out distanceToTarget))
         {
-            distanceToTarget =
-                Mathf.Abs(
-                    TargetProgress -
+            distanceToTarget = Mathf.Abs( TargetProgress -
                     progress) *
-                Mathf.Max(
-                    0f,
-                    guide.sectionLength);
+                Mathf.Max( 0f, guide.sectionLength);
         }
-
-        float progressRate =
-            ballVisualProgressDelta /
-            Mathf.Max(
-                Time.fixedDeltaTime,
-                Eps);
-
-        ballVisualPlan =
-            new BallVisualSplinePlan
+        float progressRate = ballVisualProgressDelta /
+            Mathf.Max( Time.fixedDeltaTime, Eps);
+        ballVisualPlan = new BallVisualSplinePlan
             {
-                valid = true,
-
-                targetCenterPhysics =
-                    targetCenter,
-
-                targetTangent =
-                    targetTangent,
-
-                targetNormal =
-                    targetNormal,
-
-                targetReferenceVelocityPhysics =
+                valid = true, targetCenterPhysics = targetCenter, targetTangent = targetTangent, targetNormal = targetNormal, targetReferenceVelocityPhysics =
                     targetTangent *
-                    targetTangentSpeed,
-
-                targetCurvature =
-                    targetCurvature,
-
-                targetTangentSpeed =
-                    targetTangentSpeed,
-
-                currentProgress01 =
-                    progress,
-
-                progressRate01PerSecond =
-                    progressRate,
-
-                distanceToTarget =
-                    distanceToTarget
+                    targetTangentSpeed, targetCurvature = targetCurvature, targetTangentSpeed = targetTangentSpeed, currentProgress01 = progress, progressRate01PerSecond =
+                    progressRate, distanceToTarget = distanceToTarget
             };
     }
-
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-
         if (!ballVisualSlopeDrive)
             ballVisualSlopeDrive = FindObjectOfType<BallVisualSlopeDrive>(true);
-
-
         if (!knotDetector)
             knotDetector = GetComponent<NearestKnotDetector>();
-
         direction = NormalizeFlat(travelDirection, transform.forward);
-
         // Start() より前、通常旋回が始まる前のPoseを保存する。
         FindMapFrameReferences();
         BindCoordinateFrames();
         CaptureInitialVisualFramePose();
     }
-
-    // ================================================================
     // Usability
-    // ================================================================
-
     void Start()
     {
         SubtleLimitime = sumTime + bitInTime;
@@ -1503,16 +988,15 @@ public float AdvancePredictedSplineDriveReadOnly(
         BindCoordinateFrames();
         StartCoroutine(delayStart());
     }
-
     void Update()
     {
         KeepGaugeTargetSlopeProgress();
         ReadTurnFlick();
     }
-
     void OnDisable()
     {
         stairMicroFlatTapLeftEdgeStage = -1;
+        postExtremeNoLeftEdgeStage = -1;
         routeSignVisibleUntil = 0f;
         ResetRouteIntegritySupervisor("component disabled");
         ClearUncommittedRouteGuard("component disabled");
@@ -1537,7 +1021,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         flatStartReleaseCommitInProgress = false;
         correspondSubject?.ResetTurnGestureTracking();
     }
-
     void OnApplicationPause(bool paused)
     {
         if (paused) ResetRouteIntegritySupervisor("application paused");
@@ -1546,6 +1029,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         ClearPostBDownhillGuard("lifecycle reset");
         if (!paused) return;
         stairMicroFlatTapLeftEdgeStage = -1;
+        postExtremeNoLeftEdgeStage = -1;
         flatStartReleaseCommitInProgress = false;
         ClearBReleaseHandoff();
         turnGuideCapturedAt = -1f;
@@ -1562,7 +1046,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         autoHoldRecentPressFlatTime = -1f;
         correspondSubject?.ResetTurnGestureTracking();
     }
-
     public void PushStart()
     {
         stairMicroFlatTapLeftEdgeStage = -1;
@@ -1570,26 +1053,19 @@ public float AdvancePredictedSplineDriveReadOnly(
         MainGameManager.PreviewIconRoot.SetActive(false);
         MainGameManager.TopLiteral.SetActive(false);
         MainGameManager.PlayButton.SetActive(false);
+        // Enabling the UI invokes CockpitGauge.OnEnable(), which transfers the pre-Play Inspector Value to InSubject immediately.
 
-        // Enabling the UI invokes CockpitGauge.OnEnable(), which transfers
-        // the pre-Play Inspector Value to InSubject immediately.
         MainGameManager.Userbility.SetActive(true);
         MainGameManager.HopingSwipeTurn.SetActive(true);
-        
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("custom_ReStartButton_Event");  
+            // Firebase.Analytics.FirebaseAnalytics.LogEvent("custom_ReStartButton_Event");
         BeginCommandOnTouch = true;
         Earliest = true;
     }
-
     IEnumerator delayTurn()
     {
         yield return new WaitForSeconds(1f);
-        Debug.Log(
-            $"[START UI] t={Time.time:F3} " +
-            $"AcceleFirstTurn={AcceleFirstTurn} " +
-            $"BeginCommandOnTouch={BeginCommandOnTouch} " +
-            $"PlayButtonActive={MainGameManager.PlayButton.activeSelf}"
-        );
+        Debug.Log( $"[START UI] t={Time.time:F3} " + $"AcceleFirstTurn={AcceleFirstTurn} " + $"BeginCommandOnTouch={BeginCommandOnTouch} " +
+            $"PlayButtonActive={MainGameManager.PlayButton.activeSelf}" );
         if (!AcceleFirstTurn)
         {
             MainGameManager.PlayButton.SetActive(true);
@@ -1597,180 +1073,123 @@ public float AdvancePredictedSplineDriveReadOnly(
             waitingForTurnGuide = false;
             BeginCommandOnTouch = false;
         }
-
-
     }
-
     IEnumerator Recover()
     {
-        
         yield return new WaitForSeconds(0.5f);
         MainGameManager.DropOut.SetActive(true);
         yield return new WaitForSeconds(2f);
         MainGameManager.DropOut.SetActive(false);
         AcceleFirstTurn = false;
         MainGameManager.OpenChunkStage = true;
-        
+        AndroidOneOnly.pharseCoin = MainGameManager.Coin;
+        PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
+         Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);
+        AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
+         Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentScore"+MainGameManager.PointToPlane);
          
+         AdManager.instance.InterstitialsAdStart();
+
+        if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
+        {
+            PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
+            AndroidOneOnly.bestScore = MainGameManager.CurrentPointToPlane;
+        }
         MainGameManager.TopTitle.SetActive(true);
         MainGameManager.PreviewIconRoot.SetActive(true);
         MainGameManager.TopLiteral.SetActive(true);
         MainGameManager.PlayButton.SetActive(true);
         MainGameManager.Userbility.SetActive(false);
-
     }
     public IEnumerator delayStart()
     {
         yield return new WaitForSeconds(0.15f);
-        GameObject startSlab =
-            GameObject.Find(
-                "CollisionStageRoot/__GeneratedPhysics/ArcSlab2_0_Physics");
-
+        GameObject startSlab = GameObject.Find( "CollisionStageRoot/__GeneratedPhysics/ArcSlab2_0_Physics");
         if (!startSlab)
         {
-            Debug.LogError(
-                "[CORE DELAY START] ArcSlab2_0_Physicsが見つかりません。",
-                this);
+            Debug.LogError( "[CORE DELAY START] ArcSlab2_0_Physicsが見つかりません。", this);
             yield break;
         }
-
         if (!rb)
         {
-            Debug.LogError(
-                "[CORE DELAY START] InSubject Rigidbodyがありません。",
-                this);
+            Debug.LogError( "[CORE DELAY START] InSubject Rigidbodyがありません。", this);
             yield break;
         }
-
-        // ------------------------------------------------------------
-        // Soft restart gate
-        // ------------------------------------------------------------
-        // Start()からもdelayStart()は呼ばれるため、復帰専用処理を
-        // 無条件にここへ入れると通常起動のdirection/Controller状態まで変えてしまう。
-        // FirstStepInsertSplinePathが死亡復帰時にPrepareForStageRebuild()を
+        // Soft restart gate Start()からもdelayStart()は呼ばれるため、復帰専用処理を 無条件にここへ入れると通常起動のdirection/Controller状態まで変えてしまう。 FirstStepInsertSplinePathが死亡復帰時にPrepareForStageRebuild()を
         // 呼んだ場合だけ、下のrestartPreparedがtrueになる。
         bool restartPrepared = restartFramePrepared;
         restartFramePrepared = false;
         if (restartPrepared)
             ClearVerifiedStairCorrection();
         MainGameManager.OnDead = false;
-        
-
-
-        Vector3 restart =
-            startSlab.transform.position;
-
+        Vector3 restart = startSlab.transform.position;
         if (restartPrepared)
         {
-            // Root PoseはStage/Spline再生成前に既に復元済み。
-            // ここでは「遅れて残ったTween」だけを念のため止める。
-            // Rootをもう一度復元しないので、再生成後の座標基準を再び動かさない。
+            // Root PoseはStage/Spline再生成前に既に復元済み。 ここでは「遅れて残ったTween」だけを念のため止める。 Rootをもう一度復元しないので、再生成後の座標基準を再び動かさない。
             correspondSubject?.CancelVisualFrameTurn(false);
-
-            // KnotDetector.Evaluate()は使わない。
-            // 再生成直後のGuide選択差がdirectionへ流れ込むのを避け、
-            // 実際の開始Physics板のforwardだけを使う。
-            direction = ResolveRestartDirectionSoft(
-                startSlab.transform);
+            // KnotDetector.Evaluate()は使わない。 再生成直後のGuide選択差がdirectionへ流れ込むのを避け、 実際の開始Physics板のforwardだけを使う。
+            direction = ResolveRestartDirectionSoft( startSlab.transform);
         }
         else
         {
             // 通常起動は従来の挙動を維持。
             direction = Vector3.forward;
         }
-
         MainGameManager.LimitTouchingphase = 9;
         turnTargetDirection = direction;
-
         // 旋回中に死亡/再構築へ入ってもKinematic状態を持ち越さない。
         if (rb.isKinematic)
             rb.isKinematic = false;
-
-        rb.position =
-            new Vector3(
-                restart.x,
-                restart.y + 2f,
-                restart.z);
+        rb.position = new Vector3( restart.x, restart.y + 2f, restart.z);
         LateralAuditMarkPositionWriter("RestartPose");
-
         // 位置を飛ばすのと同じ瞬間に物理速度を0へ戻す。
         rb.velocity = Vector3.zero;
         LateralAuditMarkVelocityWriter("RestartStopVelocity");
         rb.angularVelocity = Vector3.zero;
         if (logDropoutInvestigation)
-            Debug.Log($"[DROP AUDIT RESTART] t={Time.fixedTime:F3} pos={rb.position:F3} " +
-                      $"restartPrepared={restartPrepared}", this);
-
+            Debug.Log($"[DROP AUDIT RESTART] t={Time.fixedTime:F3} pos={rb.position:F3} " + $"restartPrepared={restartPrepared}", this);
         if (restartPrepared)
         {
-            // 復帰専用の状態破棄はこの瞬間だけ。
-            // Stage再生成の0.3秒前にdrive/stickを先に0へする処理はやめる。
+            // 復帰専用の状態破棄はこの瞬間だけ。 Stage再生成の0.3秒前にdrive/stickを先に0へする処理はやめる。
             ResetRestartTransientStateSoft();
-
             if (logCore)
             {
                 ;
             }
         }
-
         Physics.SyncTransforms();
         correspondSubject?.SynchronizeNow(true);
     }
-
-    // ================================================================
     // Main
-    // ================================================================
-
-    // 判定に使っているTransform原点までの距離と、Collider表面までの距離を
-    // 同時に記録して、「長い階段のTransform原点による誤判定」を判別する。
-    // ここから物理状態や死亡条件は変更しない。
+    // 判定に使っているTransform原点までの距離と、Collider表面までの距離を 同時に記録して、「長い階段のTransform原点による誤判定」を判別する。 ここから物理状態や死亡条件は変更しない。
     void LogDropoutDistanceDiagnostic(string phase, bool grounded, RaycastHit latestHit, float originDistance)
     {
         Transform previousTransform = currentHit.transform;
         Collider previousCollider = currentHit.collider;
         bool hasPreviousCollider = previousCollider != null;
         // Unity's ClosestPoint cannot be safely used for a non-convex mesh.
-        bool canQueryClosest = hasPreviousCollider &&
-            (!(previousCollider is MeshCollider mesh) || mesh.convex);
-        Vector3 closestPoint = canQueryClosest
-            ? previousCollider.ClosestPoint(transform.position)
-            : Vector3.zero;
-        float surfaceDistance = canQueryClosest
-            ? Vector3.Distance(transform.position, closestPoint)
-            : -1f;
-
-        string message =
-            $"[CORE DROPOUT {phase}] fixedTime={Time.fixedTime:F3} frame={Time.frameCount} " +
-            $"grounded={grounded} onDeadBefore={MainGameManager.OnDead} " +
-            $"originDistance={originDistance:F4} threshold=12.0000 " +
-            $"lastHit={(previousTransform != null ? previousTransform.name : "<null>")} " +
-            $"lastHitOrigin={(previousTransform != null ? previousTransform.position.ToString("F4") : "<null>")} " +
-            $"lastHitPoint={currentHit.point.ToString("F4")} " +
-            $"lastCollider={(hasPreviousCollider ? previousCollider.name : "<null>")} " +
-            $"closestPoint={(hasPreviousCollider ? closestPoint.ToString("F4") : "<null>")} " +
-            $"surfaceDistance={surfaceDistance:F4} " +
-            $"latestHit={(latestHit.transform != null ? latestHit.transform.name : "<null>")} " +
-            $"latestHitPoint={latestHit.point.ToString("F4")} " +
-            $"playerPos={transform.position.ToString("F4")} rbPos={rb.position.ToString("F4")} " +
-            $"velocity={rb.velocity.ToString("F4")} speed={rb.velocity.magnitude:F3} " +
-            $"graceTimer={graceTimer:F3} supportGrace={supportGraceSeconds:F3} " +
-            $"guideDistance={currentGuide.distanceToGuide:F4} guideIsSlope={currentGuide.isSlope} " +
-            $"kinematic={rb.isKinematic}";
-
+        bool canQueryClosest = hasPreviousCollider && (!(previousCollider is MeshCollider mesh) || mesh.convex);
+        Vector3 closestPoint = canQueryClosest ? previousCollider.ClosestPoint(transform.position) : Vector3.zero;
+        float surfaceDistance = canQueryClosest ? Vector3.Distance(transform.position, closestPoint) : -1f;
+        string message = $"[CORE DROPOUT {phase}] fixedTime={Time.fixedTime:F3} frame={Time.frameCount} " + $"grounded={grounded} onDeadBefore={MainGameManager.OnDead} " +
+            $"originDistance={originDistance:F4} threshold=12.0000 " + $"lastHit={(previousTransform != null ? previousTransform.name : "<null>")} " +
+            $"lastHitOrigin={(previousTransform != null ? previousTransform.position.ToString("F4") : "<null>")} " + $"lastHitPoint={currentHit.point.ToString("F4")} " +
+            $"lastCollider={(hasPreviousCollider ? previousCollider.name : "<null>")} " + $"closestPoint={(hasPreviousCollider ? closestPoint.ToString("F4") : "<null>")} " +
+            $"surfaceDistance={surfaceDistance:F4} " + $"latestHit={(latestHit.transform != null ? latestHit.transform.name : "<null>")} " +
+            $"latestHitPoint={latestHit.point.ToString("F4")} " + $"playerPos={transform.position.ToString("F4")} rbPos={rb.position.ToString("F4")} " +
+            $"velocity={rb.velocity.ToString("F4")} speed={rb.velocity.magnitude:F3} " + $"graceTimer={graceTimer:F3} supportGrace={supportGraceSeconds:F3} " +
+            $"guideDistance={currentGuide.distanceToGuide:F4} guideIsSlope={currentGuide.isSlope} " + $"kinematic={rb.isKinematic}";
         /*if (phase == "TRIGGER")
             Debug.LogError(message, this);
         else
             Debug.LogWarning(message, this);*/
     }
-
     // 比較不能な間は直前サンプルを捨てる。発火済み区間は保持する。
     void PauseExtremePointTracking()
     {
         extremePointHasPrevious = false;
     }
-
-    // 平面に戻ったとき、またはゲーム再構築時だけ再武装する。
-    // 階段の中でKnot/Sectionが切り替わっても発火済みフラグを消さない。
+    // 平面に戻ったとき、またはゲーム再構築時だけ再武装する。 階段の中でKnot/Sectionが切り替わっても発火済みフラグを消さない。
     void ResetExtremePointTracking()
     {
         ClearEarlyFlick();
@@ -1781,18 +1200,14 @@ public float AdvancePredictedSplineDriveReadOnly(
         previousExtremePointError = 0f;
         previousExtremePointTarget = 0f;
     }
-
-    // 階段 -> 平面を観測した物理フレームでParticleを止める。
-    // 非接地やSplineの一時的な欠測ではStopしない。
+    // 階段 -> 平面を観測した物理フレームでParticleを止める。 非接地やSplineの一時的な欠測ではStopしない。
     void CompleteExtremePointAtFlat()
     {
         if (!extremePointSectionValid)
             return;
-
         correspondSubject?.StopExtremePointEffect();
         ResetExtremePointTracking();
     }
-
     void ObserveExtremePoint(NearestKnotDetector.GuideFrame guide)
     {
         if (!guide.valid || !guide.isSlope || !knotDetector || MainGameManager.OnDead)
@@ -1800,10 +1215,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             PauseExtremePointTracking();
             return;
         }
-
-        bool sameSection = extremePointSectionValid &&
-            knotDetector.IsSameSection(extremePointSection, guide);
-
+        bool sameSection = extremePointSectionValid && knotDetector.IsSameSection(extremePointSection, guide);
         if (!sameSection)
         {
             extremePointSection = guide;
@@ -1811,67 +1223,38 @@ public float AdvancePredictedSplineDriveReadOnly(
             // 発火済みフラグは保持。解除するのはFlatへの移行時だけ。
             extremePointHasPrevious = false;
         }
-
         float target = TargetProgress;
         float error = guide.sectionProgress01 - target;
-
         // Inspector/UIで設定値が変わっただけでは発火させない。
-        bool targetUnchanged = extremePointHasPrevious &&
-            Mathf.Abs(previousExtremePointTarget - target) <= Eps;
-
-        bool crossedZero = targetUnchanged &&
-            previousExtremePointError < 0f && error >= 0f;
-        
+        bool targetUnchanged = extremePointHasPrevious && Mathf.Abs(previousExtremePointTarget - target) <= Eps;
+        bool crossedZero = targetUnchanged && previousExtremePointError < 0f && error >= 0f;
         MainGameManager.OnInifnite = crossedZero;
-
         // 目標が0%なら、斜面の最初の有効なサンプルを発火点とする。
-        bool enteredAtZero = !extremePointHasPrevious &&
-            target <= Eps && error >= 0f;
-
+        bool enteredAtZero = !extremePointHasPrevious && target <= Eps && error >= 0f;
         if (!extremePointFiredInSection && (crossedZero || enteredAtZero))
         {
             extremePointFiredInSection = true;
             correspondSubject?.PlayExtremePointEffect();
         }
-
         previousExtremePointError = error;
         previousExtremePointTarget = target;
         extremePointHasPrevious = true;
     }
-
-    // ================================================================
     // DropOut Cause Audit: observation only (no force, velocity or transform writes)
-    // ================================================================
     void CaptureDropAuditBeforeStep()
     {
         if (!logDropoutInvestigation || !rb)
             return;
-
-        Vector3 heading = (turnTransitionActive || waitingForTurnGuide)
-            ? turnTargetDirection : direction;
+        Vector3 heading = (turnTransitionActive || waitingForTurnGuide) ? turnTargetDirection : direction;
         heading = Vector3.ProjectOnPlane(heading, Vector3.up);
         if (heading.sqrMagnitude > Eps)
             heading.Normalize();
-
-        Vector3 side = heading.sqrMagnitude > Eps
-            ? Vector3.Cross(Vector3.up, heading) : Vector3.zero;
-
+        Vector3 side = heading.sqrMagnitude > Eps ? Vector3.Cross(Vector3.up, heading) : Vector3.zero;
         dropAuditHistory[dropAuditNext] = new DropAuditSample
         {
-            time = Time.fixedTime,
-            frame = Time.frameCount,
-            position = rb.position,
-            velocity = rb.velocity,
-            heading = heading,
-            lateralSpeed = Vector3.Dot(rb.velocity, side),
-            kinematic = rb.isKinematic,
-            turning = turnTransitionActive,
-            waitingGuide = waitingForTurnGuide,
-            turnMode = activeTurnMode,
-            stickState = stickState,
-            stickAppliedLastTick = dropAuditStickAppliedLastTick,
-            graceTimer = graceTimer,
-            lastHitName = currentHit.collider ? currentHit.collider.name : "-",
+            time = Time.fixedTime, frame = Time.frameCount, position = rb.position, velocity = rb.velocity, heading = heading, lateralSpeed = Vector3.Dot(rb.velocity, side),
+            kinematic = rb.isKinematic, turning = turnTransitionActive, waitingGuide = waitingForTurnGuide, turnMode = activeTurnMode, stickState = stickState,
+            stickAppliedLastTick = dropAuditStickAppliedLastTick, graceTimer = graceTimer, lastHitName = currentHit.collider ? currentHit.collider.name : "-",
             newHitName = "-"
         };
         dropAuditNext = (dropAuditNext + 1) % DropAuditCapacity;
@@ -1879,12 +1262,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         // このFixedUpdateが実際にAddForceしたときだけ、次のサンプルへ記録する。
         dropAuditStickAppliedLastTick = 0f;
     }
-
     void CaptureDropAuditSupport(NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit hit)
     {
         if (!logDropoutInvestigation || dropAuditCount == 0)
             return;
-
         int index = (dropAuditNext + DropAuditCapacity - 1) % DropAuditCapacity;
         DropAuditSample record = dropAuditHistory[index];
         record.supportKnown = true;
@@ -1894,7 +1275,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         record.graceTimer = graceTimer;
         record.guideDistance = guide.distanceToGuide;
         record.newHitName = hit.collider ? hit.collider.name : "-";
-
         if (guide.valid)
         {
             record.guidePoint = guide.point;
@@ -1911,51 +1291,34 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         dropAuditHistory[index] = record;
     }
-
     void WriteDropAuditSample(DropAuditSample record, string phase)
     {
-        Debug.Log(
-            $"[DROP AUDIT {phase}] t={record.time:F3} frame={record.frame} " +
-            $"pos={record.position:F3} vel={record.velocity:F3} " +
-            $"heading={record.heading:F3} lateralSpeed={record.lateralSpeed:F3} " +
-            $"guideValid={record.guideValid} slope={record.slope} " +
-            $"guidePoint={record.guidePoint:F3} crossTrack={record.crossTrack:F3} " +
-            $"normalOffset={record.normalOffset:F3} guideDist={record.guideDistance:F3} " +
-            $"guideHeadingAlignment={record.tangentAlignment:F3} " +
-            $"groundKnown={record.supportKnown} grounded={record.grounded} " +
-            $"hit={record.lastHitName}->{record.newHitName} " +
-            $"stickState={record.stickState:F2} stickAppliedLastTick={record.stickAppliedLastTick:F2} " +
-            $"grace={record.graceTimer:F3} kinematic={record.kinematic} " +
-            $"turning={record.turning} waitingGuide={record.waitingGuide} mode={record.turnMode}", this);
+        Debug.Log( $"[DROP AUDIT {phase}] t={record.time:F3} frame={record.frame} " + $"pos={record.position:F3} vel={record.velocity:F3} " +
+            $"heading={record.heading:F3} lateralSpeed={record.lateralSpeed:F3} " + $"guideValid={record.guideValid} slope={record.slope} " +
+            $"guidePoint={record.guidePoint:F3} crossTrack={record.crossTrack:F3} " + $"normalOffset={record.normalOffset:F3} guideDist={record.guideDistance:F3} " +
+            $"guideHeadingAlignment={record.tangentAlignment:F3} " + $"groundKnown={record.supportKnown} grounded={record.grounded} " +
+            $"hit={record.lastHitName}->{record.newHitName} " + $"stickState={record.stickState:F2} stickAppliedLastTick={record.stickAppliedLastTick:F2} " +
+            $"grace={record.graceTimer:F3} kinematic={record.kinematic} " + $"turning={record.turning} waitingGuide={record.waitingGuide} mode={record.turnMode}", this);
     }
-
     void LogDropAuditTurn(string phase, Vector3 extraVelocity, float intendedDegrees = float.NaN)
     {
         if (!logDropoutInvestigation || !rb)
             return;
-
         Vector3 target = Vector3.ProjectOnPlane(turnTargetDirection, Vector3.up);
         if (target.sqrMagnitude > Eps)
             target.Normalize();
         float lateral = Vector3.Dot(rb.velocity, Vector3.Cross(Vector3.up, target));
         float loggedDegrees = float.IsNaN(intendedDegrees) ? activeTurnDegrees : intendedDegrees;
-        Debug.Log(
-            $"[DROP TURN {phase}] t={Time.fixedTime:F3} " +
-            $"mode={activeTurnMode} degrees={loggedDegrees:F1} " +
-            $"pos={rb.position:F3} velocity={rb.velocity:F3} " +
-            $"snapshotVelocity={extraVelocity:F3} direction={direction:F3} " +
-            $"target={turnTargetDirection:F3} lateralToTarget={lateral:F3} " +
-            $"frozen={turnBodyFrozen} waitingGuide={waitingForTurnGuide} " +
+        Debug.Log( $"[DROP TURN {phase}] t={Time.fixedTime:F3} " + $"mode={activeTurnMode} degrees={loggedDegrees:F1} " +
+            $"pos={rb.position:F3} velocity={rb.velocity:F3} " + $"snapshotVelocity={extraVelocity:F3} direction={direction:F3} " +
+            $"target={turnTargetDirection:F3} lateralToTarget={lateral:F3} " + $"frozen={turnBodyFrozen} waitingGuide={waitingForTurnGuide} " +
             $"kinematic={rb.isKinematic}", this);
     }
-
-    // SphereCastが外れた物理ステップで、Rayと球の重なりを追加診断する。
-    // Ray側の5点は「床の端」そのものの計測ではなく、近傍床の存在確認。
+    // SphereCastが外れた物理ステップで、Rayと球の重なりを追加診断する。 Ray側の5点は「床の端」そのものの計測ではなく、近傍床の存在確認。
     void LogDropAuditGeometry(RaycastHit sphereHit)
     {
         if (!logDropoutInvestigation || !rb)
             return;
-
         Vector3 origin = rb.worldCenterOfMass + Vector3.up * .05f;
         Vector3 forward = Vector3.ProjectOnPlane(turnTargetDirection, Vector3.up);
         if (forward.sqrMagnitude <= Eps)
@@ -1968,39 +1331,25 @@ public float AdvancePredictedSplineDriveReadOnly(
         string[] names = { "center", "right", "left", "forward", "back" };
         for (int i = 0; i < offsets.Length; i++)
         {
-            bool hit = Physics.Raycast(origin + offsets[i], Vector3.down,
-                out RaycastHit ray, maxDistance, groundMask, QueryTriggerInteraction.Ignore);
-            Debug.Log(
-                $"[DROP GEOMETRY ray-{names[i]}] t={Time.fixedTime:F3} " +
-                $"found={hit} collider={(hit ? ray.collider.name : "-")} " +
-                $"distance={(hit ? ray.distance : -1f):F3} " +
-                $"normal={(hit ? ray.normal : Vector3.zero):F3} " +
-                $"origin={(origin + offsets[i]):F3}", this);
+            bool hit = Physics.Raycast(origin + offsets[i], Vector3.down, out RaycastHit ray, maxDistance, groundMask, QueryTriggerInteraction.Ignore);
+            Debug.Log( $"[DROP GEOMETRY ray-{names[i]}] t={Time.fixedTime:F3} " + $"found={hit} collider={(hit ? ray.collider.name : "-")} " +
+                $"distance={(hit ? ray.distance : -1f):F3} " + $"normal={(hit ? ray.normal : Vector3.zero):F3} " + $"origin={(origin + offsets[i]):F3}", this);
         }
-
-        int total = Physics.OverlapSphereNonAlloc(rb.worldCenterOfMass, ProbeRadius + .05f,
-            dropAuditNearby, groundMask, QueryTriggerInteraction.Ignore);
+        int total = Physics.OverlapSphereNonAlloc(rb.worldCenterOfMass, ProbeRadius + .05f, dropAuditNearby, groundMask, QueryTriggerInteraction.Ignore);
         // OverlapSphereは近傍Colliderの診断であり、実際の接触数は表しません。
-        Debug.Log(
-            $"[DROP GEOMETRY overlap] t={Time.fixedTime:F3} " +
-            $"overlapCount={total} capacity={dropAuditNearby.Length} " +
-            $"sphereCastHit={(sphereHit.collider ? sphereHit.collider.name : "-")} " +
-            $"sphereNormal={sphereHit.normal:F3} sphereHitDistance={sphereHit.distance:F3} " +
-            $"maxSlopeAngle={maxSlopeAngle:F2} " +
-            $"lastCollider={(currentHit.collider ? currentHit.collider.name : "-")} " +
+        Debug.Log( $"[DROP GEOMETRY overlap] t={Time.fixedTime:F3} " + $"overlapCount={total} capacity={dropAuditNearby.Length} " +
+            $"sphereCastHit={(sphereHit.collider ? sphereHit.collider.name : "-")} " + $"sphereNormal={sphereHit.normal:F3} sphereHitDistance={sphereHit.distance:F3} " +
+            $"maxSlopeAngle={maxSlopeAngle:F2} " + $"lastCollider={(currentHit.collider ? currentHit.collider.name : "-")} " +
             $"lastColliderEnabled={(currentHit.collider && currentHit.collider.enabled)} " +
             $"lastColliderType={(currentHit.collider ? currentHit.collider.GetType().Name : "-")}", this);
         for (int i = 0; i < total; i++)
             Debug.Log($"[DROP GEOMETRY nearby] {dropAuditNearby[i].name} layer={dropAuditNearby[i].gameObject.layer}", this);
     }
-
     void LogDropAuditGuideLost()
     {
         if (!logDropoutInvestigation || !currentGuideValid)
             return;
-        Debug.LogWarning($"[DROP AUDIT GUIDE-INVALID] t={Time.fixedTime:F3} " +
-            $"pos={rb.position:F3} vel={rb.velocity:F3} " +
-            $"lastGuidePoint={currentGuide.point:F3} " +
+        Debug.LogWarning($"[DROP AUDIT GUIDE-INVALID] t={Time.fixedTime:F3} " + $"pos={rb.position:F3} vel={rb.velocity:F3} " + $"lastGuidePoint={currentGuide.point:F3} " +
             $"lastHit={(currentHit.collider ? currentHit.collider.name : "-")}", this);
         int n = Mathf.Min(DropAuditHistorySteps, dropAuditCount);
         int first = (dropAuditNext - n + DropAuditCapacity) % DropAuditCapacity;
@@ -2008,20 +1357,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             WriteDropAuditSample(dropAuditHistory[(first + j) % DropAuditCapacity], "GUIDE-LOST-HISTORY");
         LogDropAuditGeometry(default);
     }
-
     void FlushDropAuditOnSupportChange(bool justLostGround, RaycastHit hit)
     {
         if (!logDropoutInvestigation || dropAuditCount == 0)
             return;
-
         int lastIndex = (dropAuditNext + DropAuditCapacity - 1) % DropAuditCapacity;
         if (justLostGround)
         {
-            Debug.LogWarning(
-                $"[DROP AUDIT LOST] t={Time.fixedTime:F3} " +
-                $"mode={activeTurnMode} latestHit={(hit.collider ? hit.collider.name : "-")} " +
-                $"lastHit={(currentHit.collider ? currentHit.collider.name : "-")} " +
-                $"pos={rb.position:F3} vel={rb.velocity:F3}", this);
+            Debug.LogWarning( $"[DROP AUDIT LOST] t={Time.fixedTime:F3} " + $"mode={activeTurnMode} latestHit={(hit.collider ? hit.collider.name : "-")} " +
+                $"lastHit={(currentHit.collider ? currentHit.collider.name : "-")} " + $"pos={rb.position:F3} vel={rb.velocity:F3}", this);
             int n = Mathf.Min(DropAuditHistorySteps, dropAuditCount);
             int first = (dropAuditNext - n + DropAuditCapacity) % DropAuditCapacity;
             for (int j = 0; j < n; j++)
@@ -2035,27 +1379,19 @@ public float AdvancePredictedSplineDriveReadOnly(
             dropAuditPostRemaining--;
         }
     }
-
-    // Contact phase observation only records an input-authorized receiving
-    // floor; it does not change velocity. The impulse log remains diagnostic.
-    // OnCollisionStay captures an already active
-    // receiving-stair manifold that OnCollisionEnter alone can miss.
+    // Contact phase observation only records an input-authorized receiving floor; it does not change velocity. The impulse log remains diagnostic. OnCollisionStay captures an
+    // already active receiving-stair manifold that OnCollisionEnter alone can miss.
     void OnCollisionEnter(Collision collision) => RecordStageContactImpulse(collision);
-
     void OnCollisionStay(Collision collision) => RecordStageContactImpulse(collision);
-
     void RecordStageContactImpulse(Collision collision)
     {
         LateralAuditRecordCollision(collision);
         ObserveBReceivingPhaseContact(collision);
-        if (!rb || collision == null || !collision.collider ||
-            !IsGeneratedStageFloor(collision.collider) ||
-            collision.contactCount == 0 ||
+        if (!rb || collision == null || !collision.collider || !IsGeneratedStageFloor(collision.collider) || collision.contactCount == 0 ||
             Time.fixedTime - bStageCollisionLogAt < .06f)
             return;
         Vector3 delta = rb.velocity - bStageVelocityBeforeStep;
-        // Ordinary downhill contact has a positive normal impulse but does
-        // not necessarily throw the ball upwards. Do not flood the log.
+        // Ordinary downhill contact has a positive normal impulse but does not necessarily throw the ball upwards. Do not flood the log.
         Vector3 planarDelta = Vector3.ProjectOnPlane(delta, Vector3.up);
         Vector3 routeAxis = NormalizeFlat(direction, travelDirection);
         Vector3 lateralDelta = planarDelta -
@@ -2066,43 +1402,25 @@ public float AdvancePredictedSplineDriveReadOnly(
         ContactPoint point = collision.GetContact(0);
         bStageCollisionLogAt = Time.fixedTime;
         Debug.LogWarning($"[{(upward ? "STAGE CONTACT UP-IMPULSE" : "STAGE CONTACT LATERAL-IMPULSE")}] t={Time.fixedTime:F3} " +
-            $"collider={collision.collider.name} contact={point.point:F3} " +
-            $"normal={point.normal:F3} impulse={collision.impulse:F3} " +
-            $"relativeVelocity={collision.relativeVelocity:F3} " +
-            $"preVelocity={bStageVelocityBeforeStep:F3} " +
-            $"postVelocity={rb.velocity:F3} deltaY={delta.y:F3} " +
-            $"deltaXYZ={delta:F3} lateralDelta={lateralDelta.magnitude:F3} " +
-            $"BHold={autoHoldEligible} slopeHold={slopeReleaseHoldArmed}; " +
-            "diagnostic only", this);
+            $"collider={collision.collider.name} contact={point.point:F3} " + $"normal={point.normal:F3} impulse={collision.impulse:F3} " +
+            $"relativeVelocity={collision.relativeVelocity:F3} " + $"preVelocity={bStageVelocityBeforeStep:F3} " + $"postVelocity={rb.velocity:F3} deltaY={delta.y:F3} " +
+            $"deltaXYZ={delta:F3} lateralDelta={lateralDelta.magnitude:F3} " + $"BHold={autoHoldEligible} slopeHold={slopeReleaseHoldArmed}; " + "diagnostic only", this);
     }
-
-    // Ordinary B accepts ArcSlab(N+1) floor contact. A released micro-flick
-    // instead accepts ONLY StairWay(N+1) with an actual upward floor normal;
-    // a next-flat wall and an unrelated collision cannot grant a micro turn.
-    // Both observations feed the same next-stage B release turn motor.
+    // Contact callbacks verify next StairWay for stair micro; the ground probe separately verifies ArcSlab for flat-tap LEFT micro. Side walls grant neither.
     void ObserveBReceivingPhaseContact(Collision collision)
     {
-        if (!autoHoldEligible ||
-            bHoldOriginFlatFamily < 0 || !rb || collision == null ||
-            !collision.collider || collision.contactCount == 0 ||
-            !collision.collider.name.EndsWith("_Physics",
-                System.StringComparison.Ordinal))
+        if (!autoHoldEligible || bHoldOriginFlatFamily < 0 || !rb || collision == null || !collision.collider || collision.contactCount == 0 ||
+            !collision.collider.name.EndsWith("_Physics", System.StringComparison.Ordinal))
             return;
-
         if (stairMicroPhaseTurnPending)
         {
-            if (!flatStartReleaseCommitInProgress ||
-                !TryGetStageFamily(collision.collider, "StairWay",
-                    out int stairFamily) ||
-                stairFamily != bHoldOriginFlatFamily + 1)
+            if (!flatStartReleaseCommitInProgress || !TryGetStageFamily(collision.collider, "StairWay", out int stairFamily) || stairFamily != bHoldOriginFlatFamily + 1)
                 return;
-
             bool supportedStairContact = false;
             for (int i = 0; i < collision.contactCount; i++)
             {
                 ContactPoint contact = collision.GetContact(i);
-                if (contact.normal.y >= .55f &&
-                    contact.point.y <= rb.worldCenterOfMass.y)
+                if (contact.normal.y >= .55f && contact.point.y <= rb.worldCenterOfMass.y)
                 {
                     supportedStairContact = true;
                     break;
@@ -2111,20 +1429,16 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (!supportedStairContact)
                 return;
             if (!autoHoldNextFlatReady || autoHoldNextFlatCollider != collision.collider)
-                AutoHoldLog("B PHASE CHANGED",
-                    $"from=Stage{bHoldOriginFlatFamily} " +
-                    $"to={collision.collider.name} released=True verified solver floor contact");
+                AutoHoldLog("B PHASE CHANGED", $"from=Stage{bHoldOriginFlatFamily} " + $"to={collision.collider.name} released=True verified solver floor contact");
             autoHoldNextFlatReady = true;
             autoHoldNextFlatCollider = collision.collider;
             autoHoldNextFlatLastSupportTime = Time.time;
             autoHoldNextFlatLastSupportPosition = rb.position;
             return;
         }
-        bool receivingFlat = TryGetStageFamily(collision.collider,
-            "ArcSlab", out int flatFamily);
+        bool receivingFlat = TryGetStageFamily(collision.collider, "ArcSlab", out int flatFamily);
         if (!receivingFlat || flatFamily != bHoldOriginFlatFamily + 1)
             return;
-
         // An edge can have a tilted contact normal; reject only side walls.
         bool landed = false;
         for (int i = 0; i < collision.contactCount; i++)
@@ -2138,32 +1452,22 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!landed)
             return;
         if (!autoHoldNextFlatReady)
-            AutoHoldLog("B PHASE CHANGED",
-                $"from=Stage{bHoldOriginFlatFamily} " +
-                $"to={collision.collider.name} " +
-                $"released={flatStartReleaseCommitInProgress} " +
+            AutoHoldLog("B PHASE CHANGED", $"from=Stage{bHoldOriginFlatFamily} " + $"to={collision.collider.name} " + $"released={flatStartReleaseCommitInProgress} " +
                 "physical phase, intermediate flat optional");
         autoHoldNextFlatReady = true;
         autoHoldNextFlatCollider = collision.collider;
         autoHoldNextFlatLastSupportTime = Time.time;
         autoHoldNextFlatLastSupportPosition = rb.position;
     }
-
-    // Reuse HasGroundSupport's actual stage-floor witness. This is called
-    // once per FixedUpdate after the normal ground probe, not from an arbitrary
-    // collision callback. A transient ArcSlab side contact can neither cancel
-    // the special reservation nor hide a genuine StairWay(N+1) transition.
+    // Reuse HasGroundSupport's actual stage-floor witness. This is called once per FixedUpdate after the normal ground probe, not from an arbitrary collision callback. A
+    // transient ArcSlab side contact can neither cancel the special reservation nor hide a genuine StairWay(N+1) transition.
     void ObserveStairMicroReceivingGroundSupport(bool grounded, RaycastHit hit)
     {
-        if (!stairMicroPhaseTurnPending || !flatStartReleaseCommitInProgress ||
-            !autoHoldEligible ||
-            bHoldOriginFlatFamily < 0 || !rb)
+        if (!stairMicroPhaseTurnPending || !flatStartReleaseCommitInProgress || !autoHoldEligible || bHoldOriginFlatFamily < 0 || !rb)
             return;
-
         if (!grounded || !hit.collider)
         {
-            // A missing floor breaks continuous flat support, not the
-            // released stair turn itself. A later flat starts a new window.
+            // A missing floor breaks continuous flat support, not the released stair turn itself. A later flat starts a new window.
             if (!autoHoldNextFlatReady)
             {
                 autoHoldNextFlatCollider = null;
@@ -2171,40 +1475,26 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             return;
         }
-
-        if (TryGetStageFamily(hit.collider, "StairWay", out int stageFamily) &&
-            stageFamily == bHoldOriginFlatFamily + 1)
+        if (TryGetStageFamily(hit.collider, "StairWay", out int stageFamily) && stageFamily == bHoldOriginFlatFamily + 1)
         {
             if (!autoHoldNextFlatReady || autoHoldNextFlatCollider != hit.collider)
-                AutoHoldLog("B PHASE CHANGED",
-                    $"from=Stage{bHoldOriginFlatFamily} " +
-                    $"to={hit.collider.name} released=True verified ground support");
+                AutoHoldLog("B PHASE CHANGED", $"from=Stage{bHoldOriginFlatFamily} " + $"to={hit.collider.name} released=True verified ground support");
             autoHoldNextFlatReady = true;
             autoHoldNextFlatCollider = hit.collider;
             autoHoldNextFlatLastSupportTime = Time.time;
             autoHoldNextFlatLastSupportPosition = rb.position;
             return;
         }
-
-        // A real StairWay solver contact may precede a floor ray that still
-        // sees the adjacent ArcSlab. Never let that flat probe undo a stronger
-        // physical receiving-stair witness before the turn motor can run.
-        if (autoHoldNextFlatReady &&
-            TryGetStageFamily(autoHoldNextFlatCollider, "StairWay",
-                out int confirmedStairFamily) &&
+        // A real StairWay solver contact may precede a floor ray that still sees the adjacent ArcSlab. Never let that flat probe undo a stronger physical receiving-stair witness
+        // before the turn motor can run.
+        if (autoHoldNextFlatReady && TryGetStageFamily(autoHoldNextFlatCollider, "StairWay", out int confirmedStairFamily) &&
             confirmedStairFamily == bHoldOriginFlatFamily + 1)
             return;
-
-        // At a fast seam the floor probe can find ArcSlab(N+1) immediately
-        // before it finds StairWay(N+1). Neither the first flat hit nor a
-        // preview Spline may revoke an already released micro-flick.
-        // Confirm sustained support of the SAME flat stage for a brief
-        // physics window; Physics/Render colliders count as one stage.
-        if (TryGetStageFamily(hit.collider, "ArcSlab", out int flatFamily) &&
-            flatFamily == bHoldOriginFlatFamily + 1 &&
-            Vector3.Angle(hit.normal, Vector3.up) <= 18f &&
+        // A real ArcSlab(N+1) restores the old flat-tap LEFT micro turn; stair-start micro still waits for StairWay(N+1).
+        if (TryGetStageFamily(hit.collider, "ArcSlab", out int flatFamily) && flatFamily == bHoldOriginFlatFamily + 1 && Vector3.Angle(hit.normal, Vector3.up) <= 18f &&
             IsCloseGroundRay(hit, rb.worldCenterOfMass))
         {
+            // Preserve the previously successful first-corner route.
             if (bHoldOriginFlatFamily == 2)
             {
                 stairMicroPhaseTurnPending = false;
@@ -2212,114 +1502,83 @@ public float AdvancePredictedSplineDriveReadOnly(
                 autoHoldNextFlatCollider = hit.collider;
                 return;
             }
-
-            bool sameNextFlat = autoHoldNextFlatLastSupportTime >= 0f &&
-                TryGetStageFamily(autoHoldNextFlatCollider, "ArcSlab",
-                    out int candidateFlatFamily) &&
-                candidateFlatFamily == flatFamily;
-            if (!sameNextFlat)
+            if (stairMicroFlatTapLeftEdgeStage == flatFamily)
             {
+                // The preceding stair exits well before the corner on some flats: turn near the real forward lip, not at first flat contact.
+                Vector3 heading = NormalizeFlat(autoHoldPressConfirmedHeading, direction);
+                if (!TryMeasureBReleaseFlatExitDistance(hit.collider, heading, out float lipDistance, 3.5f, true))
+                    return;
+                if (!autoHoldNextFlatReady || autoHoldNextFlatCollider != hit.collider)
+                    AutoHoldLog("B PHASE CHANGED", $"from=Stage{bHoldOriginFlatFamily} to={hit.collider.name} released=True verified flat-tap micro floor lip={lipDistance:F2}m");
+                autoHoldNextFlatReady = true;
                 autoHoldNextFlatCollider = hit.collider;
                 autoHoldNextFlatLastSupportTime = Time.time;
-                AutoHoldLog("STAIR MICRO NEXT FLAT PROVISIONAL",
-                    $"flat={hit.collider.name}; waiting briefly for StairWay{flatFamily}");
+                autoHoldNextFlatLastSupportPosition = rb.position;
                 return;
             }
-            if (Time.time - autoHoldNextFlatLastSupportTime <
-                StairMicroNextFlatConfirmationSeconds)
-                return;
-
-            // A sustained receiving flat ends the STAIR-only rescue, not the
-            // earlier flat tap's left-edge intent. Ordinary player/camera
-            // turning remains available here; apply the edge only after it.
-            bool carryLeftEdge = stairMicroFlatTapLeftEdgeStage == flatFamily;
-            flatStartReleaseCommitInProgress = false;
-            CancelAutoHold("stair micro-flick reached next flat");
-            if (carryLeftEdge)
-                AutoHoldLog("FLAT TAP LEFT EDGE CARRIED",
-                    $"nextStage={flatFamily}; waiting for normal 90-degree turn");
+            if (!autoHoldNextFlatCollider || !TryGetStageFamily(autoHoldNextFlatCollider, "ArcSlab", out int observedFlatFamily) || observedFlatFamily != flatFamily)
+                AutoHoldLog("STAIR MICRO NEXT FLAT PASSED", $"flat={hit.collider.name}; release retained for StairWay{flatFamily}");
+            autoHoldNextFlatCollider = hit.collider;
             return;
         }
-
-        // Contact with the original stair (or a side obstacle) is not a
-        // continuous next-flat landing. Do not accumulate its elapsed time.
+        // Do not carry this one-stage gesture into a later corner if its intended StairWay was truly missed.
+        if ((TryGetStageFamily(hit.collider, "ArcSlab", out int passedFamily) || TryGetStageFamily(hit.collider, "StairWay", out passedFamily)) &&
+            passedFamily > bHoldOriginFlatFamily + 1)
+        {
+            flatStartReleaseCommitInProgress = false;
+            CancelAutoHold("stair micro destination passed");
+            return;
+        }
+        // Contact with the original stair (or a side obstacle) is not a continuous next-flat landing. Do not accumulate its elapsed time.
         if (!autoHoldNextFlatReady)
         {
             autoHoldNextFlatCollider = null;
             autoHoldNextFlatLastSupportTime = -1f;
         }
     }
-
-    // Physics.contact callbacks can precede this FixedUpdate. Detect the
-    // resulting velocity discontinuity here, independently of input routing.
+    // Physics.contact callbacks can precede this FixedUpdate. Detect the resulting velocity discontinuity here, independently of input routing.
     void ObserveEntryShockAtFixedStart()
     {
         if (!rb) return;
         Vector3 now = rb.velocity;
-        if (entryShockActive &&
-            Time.fixedTime - entryShockDetectedAt > EntryShockRouteProtectionSeconds)
+        if (entryShockActive && Time.fixedTime - entryShockDetectedAt > EntryShockRouteProtectionSeconds)
             entryShockActive = false;
-
-        if (entryShockPreviousVelocityValid && BeginCommandOnTouch &&
-            !MainGameManager.OnDead && !rb.isKinematic &&
-            !turnTransitionActive && !waitingForTurnGuide &&
-            !HasPendingTurnIntent && entryShockLastFlatFamily >= 0 &&
-            entryShockLastFlatAt >= 0f &&
-            Time.fixedTime - entryShockLastFlatAt <= EntryShockMaximumFlatAge &&
-            now.y > EntryShockMinimumUpSpeed &&
-            now.y - entryShockPreviousVelocity.y > EntryShockMinimumDeltaUp &&
-            entryShockPreviousVelocity.y < 1.5f &&
-            Vector3.ProjectOnPlane(entryShockPreviousVelocity,
-                Vector3.up).magnitude > 6f &&
-            Vector3.ProjectOnPlane(rb.position - entryShockLastFlatPosition,
-                Vector3.up).magnitude < 2f &&
-            TryAutoHoldGroundRay(rb.worldCenterOfMass,
-                out RaycastHit stairFloor) &&
-            TryGetStageFamily(stairFloor.collider, "StairWay", out int stair) &&
-            stair == entryShockLastFlatFamily &&
-            Vector3.Angle(stairFloor.normal, Vector3.up) >= 25f &&
+        if (entryShockPreviousVelocityValid && BeginCommandOnTouch && !MainGameManager.OnDead && !rb.isKinematic && !turnTransitionActive && !waitingForTurnGuide &&
+            !HasPendingTurnIntent && entryShockLastFlatFamily >= 0 && entryShockLastFlatAt >= 0f && Time.fixedTime - entryShockLastFlatAt <= EntryShockMaximumFlatAge &&
+            now.y > EntryShockMinimumUpSpeed && now.y - entryShockPreviousVelocity.y > EntryShockMinimumDeltaUp && entryShockPreviousVelocity.y < 1.5f &&
+            Vector3.ProjectOnPlane(entryShockPreviousVelocity, Vector3.up).magnitude > 6f && Vector3.ProjectOnPlane(rb.position - entryShockLastFlatPosition,
+                Vector3.up).magnitude < 2f && TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit stairFloor) &&
+            TryGetStageFamily(stairFloor.collider, "StairWay", out int stair) && stair == entryShockLastFlatFamily && Vector3.Angle(stairFloor.normal, Vector3.up) >= 25f &&
             Vector3.Angle(stairFloor.normal, Vector3.up) <= 65f)
         {
-            Vector3 physicalDownhill = Vector3.ProjectOnPlane(
-                Physics.gravity, stairFloor.normal);
-            Vector3 physicalHeading = NormalizeFlat(
-                physicalDownhill, entryShockLastFlatHeading);
+            Vector3 physicalDownhill = Vector3.ProjectOnPlane( Physics.gravity, stairFloor.normal);
+            Vector3 physicalHeading = NormalizeFlat( physicalDownhill, entryShockLastFlatHeading);
             if (Vector3.Dot(physicalHeading, entryShockLastFlatHeading) >= .75f)
             {
                 entryShockActive = true;
                 entryShockDetectedAt = Time.fixedTime;
                 entryShockStairFamily = stair;
                 entryShockAuthorizedHeading = entryShockLastFlatHeading;
-                Debug.LogWarning($"[ENTRY SHOCK DETECTED] t={Time.fixedTime:F3} " +
-                    $"flat={entryShockLastFlatFamily} stair={stair} " +
-                    $"deltaY={now.y - entryShockPreviousVelocity.y:F3} " +
-                    $"before={entryShockPreviousVelocity:F3} after={now:F3} " +
-                    $"rayNormal={stairFloor.normal:F3} " +
-                    $"heading={entryShockAuthorizedHeading:F3} " +
-                    $"flatHold={autoHoldEligible && !slopeReleaseHoldArmed} " +
+                Debug.LogWarning($"[ENTRY SHOCK DETECTED] t={Time.fixedTime:F3} " + $"flat={entryShockLastFlatFamily} stair={stair} " +
+                    $"deltaY={now.y - entryShockPreviousVelocity.y:F3} " + $"before={entryShockPreviousVelocity:F3} after={now:F3} " + $"rayNormal={stairFloor.normal:F3} " +
+                    $"heading={entryShockAuthorizedHeading:F3} " + $"flatHold={autoHoldEligible && !slopeReleaseHoldArmed} " +
                     $"slopeHold={slopeReleaseHoldArmed}; no forced turn/velocity", this);
             }
         }
         entryShockPreviousVelocity = now;
         entryShockPreviousVelocityValid = true;
     }
-
     void RememberEntryFlatSupport(bool grounded, RaycastHit hit)
     {
-        if (!grounded || !rb || rb.isKinematic ||
-            !IsCloseGroundRay(hit, rb.worldCenterOfMass) ||
-            !TryGetStageFamily(hit.collider, "ArcSlab", out int family) ||
+        if (!grounded || !rb || rb.isKinematic || !IsCloseGroundRay(hit, rb.worldCenterOfMass) || !TryGetStageFamily(hit.collider, "ArcSlab", out int family) ||
             Vector3.Angle(hit.normal, Vector3.up) > 18f)
             return;
         entryShockLastFlatFamily = family;
         entryShockLastFlatAt = Time.fixedTime;
         entryShockLastFlatPosition = rb.position;
-        entryShockLastFlatHeading = verifiedRouteCommitted &&
-            family == verifiedRouteFlat
-            ? NormalizeFlat(verifiedRouteHeading, direction)
+        entryShockLastFlatHeading = verifiedRouteCommitted && family == verifiedRouteFlat ? NormalizeFlat(verifiedRouteHeading, direction)
             : NormalizeFlat(direction, travelDirection);
     }
-
     void ResetEntryShockWitness()
     {
         entryShockPreviousVelocityValid = false;
@@ -2330,13 +1589,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         entryShockDetectedAt = -1f;
         entryShockAuthorizedHeading = Vector3.zero;
     }
-
-
-    // ================================================================
-    // Lateral Jump Audit: observation ONLY (no Rigidbody writes).
-    // The previous sample contains the forces requested before the solver,
-    // whereas the new sample contains the solver's resulting velocity.
-    // ================================================================
+    // Lateral Jump Audit: observation ONLY (no Rigidbody writes). The previous sample contains the forces requested before the solver, whereas the new sample contains the
+    // solver's resulting velocity.
     void ResetLateralJumpAudit()
     {
         lateralAuditNext = 0;
@@ -2345,23 +1599,15 @@ public float AdvancePredictedSplineDriveReadOnly(
         lateralAuditLastFixedTime = -1f;
         lateralAuditLastTriggerAt = -10f;
     }
-
     void LateralAuditLogFrame(LateralAuditFrame f, string phase)
     {
-        Debug.Log($"[LATERAL AUDIT {phase}] t={f.t:F3} " +
-            $"pos={f.pos:F3} vel={f.vel:F3} heading={f.heading:F3} " +
-            $"floor={f.floor} grounded={f.grounded} slope={f.slope} " +
-            $"turn={f.turn} waiting={f.waiting} recovery={f.recovery} " +
-            $"epoch={f.routeEpoch} drive={f.drive:F2} side={f.side:F2} " +
-            $"stick={f.stick:F2} otherForce={f.otherForce:F2} " +
-            $"otherSource={f.otherSource ?? "-"} velocityChange={f.velocityChange:F2} " +
-            $"sideSources(E/H/P/C)={f.earlySide:F1}/{f.holdSide:F1}/" +
-            $"{f.postSide:F1}/{f.cruiseSide:F1} " +
-            $"velWriter={f.velocityWriter ?? "-"} posWriter={f.positionWriter ?? "-"} " +
-            $"contact={f.contactCollider ?? "-"} contactN={f.contactNormal:F2} " +
-            $"contactImpulse={f.contactImpulse:F2} contactDeltaV={f.contactDeltaV:F2}", this);
+        Debug.Log($"[LATERAL AUDIT {phase}] t={f.t:F3} " + $"pos={f.pos:F3} vel={f.vel:F3} heading={f.heading:F3} " +
+            $"floor={f.floor} grounded={f.grounded} slope={f.slope} " + $"turn={f.turn} waiting={f.waiting} recovery={f.recovery} " +
+            $"epoch={f.routeEpoch} drive={f.drive:F2} side={f.side:F2} " + $"stick={f.stick:F2} otherForce={f.otherForce:F2} " +
+            $"otherSource={f.otherSource ?? "-"} velocityChange={f.velocityChange:F2} " + $"sideSources(E/H/P/C)={f.earlySide:F1}/{f.holdSide:F1}/" +
+            $"{f.postSide:F1}/{f.cruiseSide:F1} " + $"velWriter={f.velocityWriter ?? "-"} posWriter={f.positionWriter ?? "-"} " +
+            $"contact={f.contactCollider ?? "-"} contactN={f.contactNormal:F2} " + $"contactImpulse={f.contactImpulse:F2} contactDeltaV={f.contactDeltaV:F2}", this);
     }
-
     void LateralAuditAtFixedStart()
     {
         if (!logLateralJumpAudit || !rb) return;
@@ -2370,11 +1616,9 @@ public float AdvancePredictedSplineDriveReadOnly(
         Vector3 vel = rb.velocity;
         Vector3 heading = NormalizeFlat(direction, travelDirection);
         float dt = t - lateralAuditLastFixedTime;
-        bool validPrevious = lateralAuditCount > 0 &&
-            dt >= .005f && dt <= .08f;
+        bool validPrevious = lateralAuditCount > 0 && dt >= .005f && dt <= .08f;
         if (lateralAuditCount > 0 && (dt < 0f || dt > .20f))
             ResetLateralJumpAudit();
-
         Vector3 previousPosition = lateralAuditLastFixedPosition;
         Vector3 deltaV = Vector3.zero;
         Vector3 displacementError = Vector3.zero;
@@ -2393,62 +1637,39 @@ public float AdvancePredictedSplineDriveReadOnly(
                 formerAxis * Vector3.Dot(horizontalVel, formerAxis)).magnitude;
             displacementError = pos - lateralAuditLastFixedPosition -
                 lateralAuditLastFixedVelocity * dt;
-            Vector3 lateralPositionError = Vector3.ProjectOnPlane(
-                displacementError, Vector3.up);
+            Vector3 lateralPositionError = Vector3.ProjectOnPlane( displacementError, Vector3.up);
             lateralPositionError -= formerAxis *
                 Vector3.Dot(lateralPositionError, formerAxis);
-            // Thresholds are only log gates. 90-degree turns/respawns cannot
-            // be misclassified as ordinary sideways movement.
-            bool normalTurn = lateralAuditLastTurn || turnTransitionActive ||
-                turnBodyFrozen || rb.isKinematic || !BeginCommandOnTouch ||
-                MainGameManager.OnDead ||
+            // Thresholds are only log gates. 90-degree turns/respawns cannot be misclassified as ordinary sideways movement.
+            bool normalTurn = lateralAuditLastTurn || turnTransitionActive || turnBodyFrozen || rb.isKinematic || !BeginCommandOnTouch || MainGameManager.OnDead ||
                 (routeEpochAt >= 0f && t - routeEpochAt < .40f);
-            anomalous = !normalTurn &&
-                (lateralDeltaSpeed >= 8f ||
-                 lateralPositionError.magnitude >= .90f ||
-                 (lateralAbsolute >= 22f && lateralDeltaSpeed >= 3f));
+            anomalous = !normalTurn && (lateralDeltaSpeed >= 8f || lateralPositionError.magnitude >= .90f || (lateralAbsolute >= 22f && lateralDeltaSpeed >= 3f));
         }
-
         LateralAuditFrame frame = new LateralAuditFrame
         {
-            t = t, pos = pos, vel = vel, heading = heading,
-            floor = currentHit.collider ? currentHit.collider.name : "-",
-            grounded = currentSupported,
-            slope = currentGuideValid && currentGuide.isSlope,
-            turn = turnTransitionActive || turnBodyFrozen,
-            waiting = waitingForTurnGuide,
-            recovery = generalStallRecovering || slopeReleaseEscapeActive,
-            routeEpoch = routeTurnEpoch
+            t = t, pos = pos, vel = vel, heading = heading, floor = currentHit.collider ? currentHit.collider.name : "-", grounded = currentSupported,
+            slope = currentGuideValid && currentGuide.isSlope, turn = turnTransitionActive || turnBodyFrozen, waiting = waitingForTurnGuide,
+            recovery = generalStallRecovering || slopeReleaseEscapeActive, routeEpoch = routeTurnEpoch
         };
         lateralAuditRing[lateralAuditNext] = frame;
         lateralAuditNext = (lateralAuditNext + 1) % LateralAuditCapacity;
-        lateralAuditCount = Mathf.Min(lateralAuditCount + 1,
-            LateralAuditCapacity);
+        lateralAuditCount = Mathf.Min(lateralAuditCount + 1, LateralAuditCapacity);
         lateralAuditLastFixedTime = t;
         lateralAuditLastFixedPosition = pos;
         lateralAuditLastFixedVelocity = vel;
         lateralAuditLastHeading = heading;
         lateralAuditLastTurn = frame.turn || frame.waiting;
-
-        if (anomalous && lateralAuditPostRemaining <= 0 &&
-            t - lateralAuditLastTriggerAt >= 1.0f)
+        if (anomalous && lateralAuditPostRemaining <= 0 && t - lateralAuditLastTriggerAt >= 1.0f)
         {
             lateralAuditLastTriggerAt = t;
-            Debug.LogWarning($"[LATERAL AUDIT TRIGGER] t={t:F3} " +
-                $"stepDt={dt:F3} lateralDeltaV={lateralDeltaSpeed:F2}m/s " +
-                $"lateralSpeed={lateralAbsolute:F2}m/s " +
-                $"deltaVelocity={deltaV:F3} residualPosition={displacementError:F3} " +
-                $"from={previousPosition:F3} " +
-                $"to={pos:F3} heading={heading:F3}; " +
-                "previous frame contains requested forces/contact diagnostics; " +
-                "no physics changed", this);
+            Debug.LogWarning($"[LATERAL AUDIT TRIGGER] t={t:F3} " + $"stepDt={dt:F3} lateralDeltaV={lateralDeltaSpeed:F2}m/s " + $"lateralSpeed={lateralAbsolute:F2}m/s " +
+                $"deltaVelocity={deltaV:F3} residualPosition={displacementError:F3} " + $"from={previousPosition:F3} " + $"to={pos:F3} heading={heading:F3}; " +
+                "previous frame contains requested forces/contact diagnostics; " + "no physics changed", this);
             int n = Mathf.Min(LateralAuditPreSteps, lateralAuditCount);
             int first = (lateralAuditNext - n + LateralAuditCapacity) %
                 LateralAuditCapacity;
             for (int i = 0; i < n; i++)
-                LateralAuditLogFrame(
-                    lateralAuditRing[(first + i) % LateralAuditCapacity],
-                    i == n - 1 ? "NOW" : "BEFORE");
+                LateralAuditLogFrame( lateralAuditRing[(first + i) % LateralAuditCapacity], i == n - 1 ? "NOW" : "BEFORE");
             lateralAuditPostRemaining = LateralAuditPostSteps;
         }
         else if (lateralAuditPostRemaining > 0)
@@ -2457,10 +1678,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             lateralAuditPostRemaining--;
         }
     }
-
-    void LateralAuditRecordMainForce(Vector3 applied,
-        Vector3 side, Vector3 stick,
-        float early, float hold, float post, float cruise)
+    void LateralAuditRecordMainForce(Vector3 applied, Vector3 side, Vector3 stick, float early, float hold, float post, float cruise)
     {
         if (!logLateralJumpAudit || lateralAuditCount == 0) return;
         int k = (lateralAuditNext + LateralAuditCapacity - 1) %
@@ -2473,9 +1691,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         lateralAuditRing[k].postSide = post;
         lateralAuditRing[k].cruiseSide = cruise;
     }
-
-    void LateralAuditRecordOtherForce(string source, Vector3 applied,
-        ForceMode mode)
+    void LateralAuditRecordOtherForce(string source, Vector3 applied, ForceMode mode)
     {
         if (!logLateralJumpAudit || lateralAuditCount == 0) return;
         int k = (lateralAuditNext + LateralAuditCapacity - 1) %
@@ -2490,7 +1706,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         else if (previousSource != source && previousSource.Length < 90)
             lateralAuditRing[k].otherSource = previousSource + "+" + source;
     }
-
     void LateralAuditMarkVelocityWriter(string source)
     {
         if (!logLateralJumpAudit || lateralAuditCount == 0) return;
@@ -2498,7 +1713,6 @@ public float AdvancePredictedSplineDriveReadOnly(
             LateralAuditCapacity;
         lateralAuditRing[k].velocityWriter = source;
     }
-
     void LateralAuditMarkPositionWriter(string source)
     {
         if (!logLateralJumpAudit || lateralAuditCount == 0) return;
@@ -2506,19 +1720,14 @@ public float AdvancePredictedSplineDriveReadOnly(
             LateralAuditCapacity;
         lateralAuditRing[k].positionWriter = source;
     }
-
     void LateralAuditRecordCollision(Collision collision)
     {
-        if (!logLateralJumpAudit || lateralAuditCount == 0 ||
-            collision == null || collision.collider == null ||
-            collision.contactCount == 0 || !rb) return;
+        if (!logLateralJumpAudit || lateralAuditCount == 0 || collision == null || collision.collider == null || collision.contactCount == 0 || !rb) return;
         int k = (lateralAuditNext + LateralAuditCapacity - 1) %
             LateralAuditCapacity;
         Vector3 delta = rb.velocity - bStageVelocityBeforeStep;
-        // Prefer the most significant contact in the solver step, including
-        // obstacles/Render colliders, not just the generated stage floor.
-        if (lateralAuditRing[k].contactCollider != null &&
-            delta.sqrMagnitude < lateralAuditRing[k].contactDeltaV.sqrMagnitude)
+        // Prefer the most significant contact in the solver step, including obstacles/Render colliders, not just the generated stage floor.
+        if (lateralAuditRing[k].contactCollider != null && delta.sqrMagnitude < lateralAuditRing[k].contactDeltaV.sqrMagnitude)
             return;
         ContactPoint c = collision.GetContact(0);
         lateralAuditRing[k].contactCollider = collision.collider.name;
@@ -2526,7 +1735,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         lateralAuditRing[k].contactImpulse = collision.impulse;
         lateralAuditRing[k].contactDeltaV = delta;
     }
-
     void FixedUpdate()
     {
         // Before Spline/gesture processing, inspect the last physics solver step.
@@ -2538,8 +1746,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         CaptureDropAuditBeforeStep();
         CaptureSlopeReleaseBeforeStopMotion();
         sumTime += Time.deltaTime;
-        // B can be released BEFORE the next stage enters the contact solver.
-        // Hold the one release; the actual next-stage phase will commit it.
+        // B can be released BEFORE the next stage enters the contact solver. Hold the one release; the actual next-stage phase will commit it.
         if (flatStartReleaseCommitInProgress && !HasPendingTurnIntent)
         {
             if (TryCommitBReleaseOnObservedPhase())
@@ -2547,22 +1754,19 @@ public float AdvancePredictedSplineDriveReadOnly(
                 flatStartReleaseCommitInProgress = false;
                 AutoHoldLog("B PHASE TURN QUEUED", "released + next stage");
             }
-            else if (MainGameManager.OnDead || !rb || rb.isKinematic ||
-                !autoHoldEligible)
+            else if (MainGameManager.OnDead || !rb || rb.isKinematic || !autoHoldEligible)
             {
                 flatStartReleaseCommitInProgress = false;
                 CancelAutoHold("B release invalidated before next stage");
                 ClearBReleaseHandoff();
             }
         }
-        // Release can be on the real next StairWay, even if a later ArcSlab
-        // does not exist. This observer does NOT turn while the finger is down.
+        // Release can be on the real next StairWay, even if a later ArcSlab does not exist. This observer does NOT turn while the finger is down.
         StepSlopeReleaseTerminalIntent();
         // Updateで予約した90度旋回を、物理/Spline観測より先に1回だけ適用する。
         ApplyPendingQuarterTurn();
-        // Run committed B's physical hold BEFORE any nearest-Spline guard can
-        // return early. Keep the normal contact/DropOut observation below;
-        // only ordinary Drive is suppressed if B already owns this tick.
+        // Run committed B's physical hold BEFORE any nearest-Spline guard can return early. Keep the normal contact/DropOut observation below; only ordinary Drive is suppressed if B
+        // already owns this tick.
         bool committedBReleaseOwnsDrive = StepPendingBReleaseHandoff();
         // Reset observation during authorized turn/freeze/handoff/press states.
         if (!generalStallRecovering && GeneralStallHasControlConflict())
@@ -2570,38 +1774,28 @@ public float AdvancePredictedSplineDriveReadOnly(
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
         }
-        // An elapsed stop (rather than a single contact/velocity frame) may
-        // authorize a one-time controlled escape onto a REAL supported spline.
+        // An elapsed stop (rather than a single contact/velocity frame) may authorize a one-time controlled escape onto a REAL supported spline.
         if (slopeReleaseEscapeActive && StepSlopeReleaseTimedEscape())
             return;
-        // The rescue motor has its own collision/geometry check every tick.
-        // If active, it owns Drive and side force for a bounded duration.
+        // The rescue motor has its own collision/geometry check every tick. If active, it owns Drive and side force for a bounded duration.
         if (generalStallRecovering && StepGeneralStallRecovery())
             return;
-
-        // If turn Handoff is blocked, do not undo the safe horizontal hold
-        // with ordinary spline acceleration later in this same FixedUpdate.
-        if (tapEdgeHandoffHeld && tapEdgeFastTurnQueued && HasPendingTurnIntent &&
-            tapEdgeState == TapEdgeState.TurnQueued)
+        // If turn Handoff is blocked, do not undo the safe horizontal hold with ordinary spline acceleration later in this same FixedUpdate.
+        if (tapEdgeHandoffHeld && tapEdgeFastTurnQueued && HasPendingTurnIntent && tapEdgeState == TapEdgeState.TurnQueued)
         {
             var heldContact = HasGroundSupport();
             if (heldContact.Item1 && heldContact.Item2.collider == tapEdgeFlatCollider)
                 return;
         }
-        // Unlike normal driving, a queued slope-release turn must not be
-        // accelerated off its verified receiving flat while handoff is pending.
-        if (slopeReleaseHoldHandoffHeld && slopeReleaseHoldTurnPending &&
-            HasPendingTurnIntent)
+        // Unlike normal driving, a queued slope-release turn must not be accelerated off its verified receiving flat while handoff is pending.
+        if (slopeReleaseHoldHandoffHeld && slopeReleaseHoldTurnPending && HasPendingTurnIntent)
         {
             var heldContact = HasGroundSupport();
-            if (heldContact.Item1 &&
-                heldContact.Item2.collider == slopeReleaseHoldNextFlatCollider)
+            if (heldContact.Item1 && heldContact.Item2.collider == slopeReleaseHoldNextFlatCollider)
                 return;
             slopeReleaseHoldHandoffHeld = false;
         }
-
-        // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。
-        // UTurnはHardFreeze解除時に90度方向転換済み。円弧追従は行わない。
+        // Visual旋回中は通常のSpline Drive / Stick / FiveLineを止める。 UTurnはHardFreeze解除時に90度方向転換済み。円弧追従は行わない。
         if (turnTransitionActive)
         {
             ClearVerifiedStairCorrection();
@@ -2613,91 +1807,58 @@ public float AdvancePredictedSplineDriveReadOnly(
                 ResetBallVisualSplineSession();
                 return;
             }
-
             direction = turnTargetDirection;
             driveState = 0f;
             ResetBallVisualSplineSession();
-
-            // HardFreeze後はVisual回転中でもRigidbodyがDynamicになる。
-            // 0.30sのTween終了まで無監視で走らせない。
+            // HardFreeze後はVisual回転中でもRigidbodyがDynamicになる。 0.30sのTween終了まで無監視で走らせない。
             if (waitingForTurnGuide && !rb.isKinematic)
             {
                 var transitioningGuide = knotDetector.Evaluate(rb.position);
                 var transitionSupport = HasGroundSupport();
-                GuardUncapturedTurnGuide(transitioningGuide,
-                    transitionSupport.Item1);
+                GuardUncapturedTurnGuide(transitioningGuide, transitionSupport.Item1);
             }
             return;
         }
-
         // Visual旋回後、新Spline捕捉まで旧SplineのDriveを再開しない。
         if (waitingForTurnGuide)
             direction = turnTargetDirection;
-
         var guide = knotDetector.Evaluate(rb.position);
-        // An actual StairWay(N+1) can take the B press before a misleading
-        // nearest-Spline guard returns from this physics tick. No turn occurs
-        // here: the recorded MouseUp still owns that decision.
-        if (slopeReleaseHoldArmed && autoHoldEligible &&
-            slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily)
+        // An actual StairWay(N+1) can take the B press before a misleading nearest-Spline guard returns from this physics tick. No turn occurs here: the recorded MouseUp still owns
+        // that decision.
+        if (slopeReleaseHoldArmed && autoHoldEligible && slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily)
             TryTransferSlopeHoldToPhysicalNextStair(guide);
-        // Shared by flat-B, stair-release and normal flick. The old stair
-        // remains geometry, not permission to reverse the accepted 90 turn.
+        // Shared by flat-B, stair-release and normal flick. The old stair remains geometry, not permission to reverse the accepted 90 turn.
         if (GuardFormerStairGuideAfterTurn())
             return;
-        // If a B release was rejected, protect its last authorized heading
-        // across successive nearest-spline changes (including after finger up).
+        // If a B release was rejected, protect its last authorized heading across successive nearest-spline changes (including after finger up).
         if (HasValidUncommittedRouteGuard())
         {
             if (BlockUncommittedRouteGuide(ref guide))
                 return;
         }
-        // Evaluate() is geometric proximity, NOT a 90-degree turn command.
-        // Reject a sudden perpendicular nearest-line jump before it can
-        // redefine lateralSpeed/crossTrack or pull the ball off the slab.
+        // Evaluate() is geometric proximity, NOT a 90-degree turn command. Reject a sudden perpendicular nearest-line jump before it can redefine lateralSpeed/crossTrack or pull the
+        // ball off the slab.
         if (GuardUncommandedGuideJump(guide))
         {
-            // A nearest-Spline jump cannot create a stage phase. The physical
-            // contact observer remains active even on this rejected guide.
-            // Do not create a separate motor on a rejected Guide. Keep the
-            // measured Rigidbody inertia and the established turn guard.
-            // The only powered route is evaluated below on a valid Guide.
-            // A B press has already established a straight heading. For a
-            // physically supported, *nearby* former guide, reuse that one
-            // frame instead of stopping the normal Drive each time nearest
-            // spline selects a perpendicular/wrong-way branch. Never carry
-            // an old guide across an unsupported gap or beyond 1.5 metres.
-            // A previous guide must not be reused on a physically DIFFERENT
-            // stair family. This was the missing safety gate at StairWay13:
-            // a nearby old flat/stair guide can be geometrically close but
-            // belong to the wrong section after a 90-degree transition.
+            // A nearest-Spline jump cannot create a stage phase. The physical Do not create a separate motor on a rejected Guide. Keep the measured Rigidbody inertia and the established
+            // turn guard. The only powered route is evaluated below on a valid Guide. A previous guide must not be reused on a physically DIFFERENT
             bool formerGuideBelongsToFloor = true;
             var physicalNow = HasGroundSupport();
-            if (physicalNow.Item1 &&
-                IsCloseGroundRay(physicalNow.Item2, rb.worldCenterOfMass) &&
-                TryGetPostBStairFamily(physicalNow.Item2.collider,
+            if (physicalNow.Item1 && IsCloseGroundRay(physicalNow.Item2, rb.worldCenterOfMass) && TryGetPostBStairFamily(physicalNow.Item2.collider,
                     out int physicalStairFamily))
-                formerGuideBelongsToFloor = currentGuide.isSlope &&
-                    currentGuide.sectionIndex == physicalStairFamily;
-            if (IsProtectedFlatHold && formerGuideBelongsToFloor &&
-                currentGuideValid && currentSurfaceValid &&
-                Vector3.Distance(rb.position, currentGuide.point) < 1.5f &&
-                Vector3.Dot(NormalizeFlat(currentGuide.tangent, direction),
-                    NormalizeFlat(autoHoldPressConfirmedHeading, direction)) >= .80f)
+                formerGuideBelongsToFloor = currentGuide.isSlope && currentGuide.sectionIndex == physicalStairFamily;
+            if (IsProtectedFlatHold && formerGuideBelongsToFloor && currentGuideValid && currentSurfaceValid && Vector3.Distance(rb.position, currentGuide.point) < 1.5f &&
+                Vector3.Dot(NormalizeFlat(currentGuide.tangent, direction), NormalizeFlat(autoHoldPressConfirmedHeading, direction)) >= .80f)
             {
                 guide = currentGuide;
             }
             else
             {
-                // No verified safe guide: preserve real inertia and the
-                // existing dropout path, not a guessed 90-degree steering.
-                if (currentGuideValid && currentSurfaceValid &&
-                    Vector3.Distance(rb.position, currentGuide.point) < 1.5f)
+                // No verified safe guide: preserve real inertia and the existing dropout path, not a guessed 90-degree steering.
+                if (currentGuideValid && currentSurfaceValid && Vector3.Distance(rb.position, currentGuide.point) < 1.5f)
                 {
                     var knownFloor = HasGroundSupport();
-                    ObserveGeneralStallRecovery(
-                        currentGuide, currentSurface,
-                        knownFloor.Item1, knownFloor.Item2);
+                    ObserveGeneralStallRecovery( currentGuide, currentSurface, knownFloor.Item1, knownFloor.Item2);
                 }
                 else
                     ResetGeneralStallWatch();
@@ -2705,7 +1866,6 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
         }
         ObserveAutoHoldGuide(guide);
-
         // Splineが存在しなければCoreは制御しない。
         if (!guide.valid)
         {
@@ -2724,31 +1884,23 @@ public float AdvancePredictedSplineDriveReadOnly(
             LoseSupport();
             return;
         }
-
-        // 平面の最初の有効なGuideで、必ず停止・再武装。
-        // BeginCommandOnTouch / 接地状態より前に判定して取りこぼしを防ぐ。
+        // 平面の最初の有効なGuideで、必ず停止・再武装。 BeginCommandOnTouch / 接地状態より前に判定して取りこぼしを防ぐ。
         if (!guide.isSlope)
             CompleteExtremePointAtFlat();
-
-        // Capture previous frame before replacing the spline frame.
-        // Its horizontal heading tells us whether this is a true straight
-        // flat-to-stair transition or a player-authorized 90-degree turn.
+        // Capture previous frame before replacing the spline frame. Its horizontal heading tells us whether this is a true straight flat-to-stair transition or a player-authorized
+        // 90-degree turn.
         NearestKnotDetector.GuideFrame previousGuide = currentGuide;
         currentGuide = guide;
         currentGuideValid = true;
-
         (bool grounded,RaycastHit hit)= HasGroundSupport();
         bool ordinaryStraightFlat = IsUncommandedStraightFlat(guide);
-        // A long downward SphereCast is not proof that the ball is still
-        // touching a straight slab. Require a real local floor witness.
-        if (ordinaryStraightFlat && grounded &&
-            !IsCloseGroundRay(hit, rb.worldCenterOfMass))
+        // A long downward SphereCast is not proof that the ball is still touching a straight slab. Require a real local floor witness.
+        if (ordinaryStraightFlat && grounded && !IsCloseGroundRay(hit, rb.worldCenterOfMass))
             grounded = false;
         RememberAutoHoldRecentPhysicalFlat(guide, grounded, hit);
         RememberEntryFlatSupport(grounded, hit);
         ObserveStairMicroReceivingGroundSupport(grounded, hit);
         ObservePhysicalRouteWitness(grounded, hit);
-
         if (grounded)
         {
             graceTimer = supportGraceSeconds;
@@ -2760,40 +1912,22 @@ public float AdvancePredictedSplineDriveReadOnly(
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
         }
-
-        // 死亡判定は従来通り「最後の接触物のTransform原点との距離 > 12 && !grounded」。
-        // currentHitはこの下で更新するため、latestHitとlastHitの違いも記録する。
-        float lastHitOriginDistance = currentHit.transform != null
-            ? Vector3.Distance(transform.position, currentHit.transform.position)
-            : -1f;
-        
-        Debug.Log(
-            $"[DROPOUT CHECK] " +
-            $"grounded={grounded} " +
-            $"distance={lastHitOriginDistance:F3} " +
-            $"lastHit={currentHit.transform?.name} " +
-            $"newHit={hit.transform?.name} " +
-            $"pos={rb.position:F3} " +
-            $"velocity={rb.velocity:F3}"
-        );
+        // 死亡判定は従来通り「最後の接触物のTransform原点との距離 > 12 && !grounded」。 currentHitはこの下で更新するため、latestHitとlastHitの違いも記録する。
+        float lastHitOriginDistance = currentHit.transform != null ? Vector3.Distance(transform.position, currentHit.transform.position) : -1f;
+        Debug.Log( $"[DROPOUT CHECK] " + $"grounded={grounded} " + $"distance={lastHitOriginDistance:F3} " + $"lastHit={currentHit.transform?.name} " +
+            $"newHit={hit.transform?.name} " + $"pos={rb.position:F3} " + $"velocity={rb.velocity:F3}" );
         bool justLostGround = previousGroundedForDropoutLog && !grounded;
-        if (logDropoutDistance && !grounded &&
-            (justLostGround || lastHitOriginDistance >= 9f) &&
-            (justLostGround || Time.fixedTime >= nextDropoutLogFixedTime))
+        if (logDropoutDistance && !grounded && (justLostGround || lastHitOriginDistance >= 9f) && (justLostGround || Time.fixedTime >= nextDropoutLogFixedTime))
         {
-            
-
             LogDropoutDistanceDiagnostic("WATCH", grounded, hit, lastHitOriginDistance);
             nextDropoutLogFixedTime = Time.fixedTime + Mathf.Max(0.05f, dropoutLogIntervalSeconds);
         }
         CaptureDropAuditSupport(guide, grounded, hit);
         FlushDropAuditOnSupportChange(justLostGround, hit);
         previousGroundedForDropoutLog = grounded;
-
         if (currentHit.transform != null)
             if (lastHitOriginDistance > 15 && !grounded)
             {
-
                 if (!MainGameManager.OnDead)
                 {
                     if (logDropoutInvestigation)
@@ -2804,7 +1938,6 @@ public float AdvancePredictedSplineDriveReadOnly(
                     LogDropoutDistanceDiagnostic("TRIGGER", grounded, hit, lastHitOriginDistance);
                     StartCoroutine(Recover());
                 }
-
                 AndroidOneOnly.pharseCoin = MainGameManager.Coin;
                AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
                if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
@@ -2812,28 +1945,18 @@ public float AdvancePredictedSplineDriveReadOnly(
                    PlayerPrefs.SetInt(CallForBestScore, MainGameManager.CurrentPointToPlane);
                    AndroidOneOnly.bestScore = MainGameManager.CurrentPointToPlane;
                }
-
-               
                MainGameManager.OnDead = true;
                 MainGameManager.core.BeginCommandOnTouch = false;
-
                 MainGameManager.core.Earliest=false;
             }
-
         if (hit.transform != null)
         {
             currentHit = hit;
-
         }
-        
-        
         float load = grounded ? 0f : SupportLoad(guide);
-        // A straight flat with no pending turn MUST NOT continue exerting
-        // Spline Stick/Drive while unsupported: preserve rb.velocity and
-        // let Unity gravity carry the ball naturally off its edge.
-        bool grace = !grounded && !ordinaryStraightFlat &&
-            graceTimer > 0f && load <= 1f && CanGrace(guide);
-
+        // A straight flat with no pending turn MUST NOT continue exerting Spline Stick/Drive while unsupported: preserve rb.velocity and let Unity gravity carry the ball naturally
+        // off its edge.
+        bool grace = !grounded && !ordinaryStraightFlat && graceTimer > 0f && load <= 1f && CanGrace(guide);
         if (grounded || !ordinaryStraightFlat)
             straightFlatFallLogged = false;
         if (!grounded && !grace)
@@ -2841,8 +1964,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (ordinaryStraightFlat && !straightFlatFallLogged)
             {
                 straightFlatFallLogged = true;
-                Debug.Log($"[STRAIGHT FLAT FREEFALL] t={Time.fixedTime:F3} " +
-                    $"velocity preserved={rb.velocity:F3}; no Stick/Drive/Grace", this);
+                Debug.Log($"[STRAIGHT FLAT FREEFALL] t={Time.fixedTime:F3} " + $"velocity preserved={rb.velocity:F3}; no Stick/Drive/Grace", this);
             }
             ResetUncapturedTurnGuideStallWatch();
             // Safety must execute even if the normal spline controller returns.
@@ -2850,15 +1972,11 @@ public float AdvancePredictedSplineDriveReadOnly(
                 GuardUncapturedTurnGuide(guide, false);
             if (logCore)
                 ;
-
             LoseSupport();
             return;
         }
-        
         currentSupported = true;
-        
         Surface surface = BuildSplineSurface(guide);
-
         if (!surface.Valid)
         {
             ResetGeneralStallWatch();
@@ -2867,58 +1985,37 @@ public float AdvancePredictedSplineDriveReadOnly(
             PauseExtremePointTracking();
             return;
         }
-
         currentSurface = surface;
         currentSurfaceValid = true;
-        // B was already stepped at the beginning of this FixedUpdate, before
-        // GuardUncommandedGuideJump could return. Do not apply it twice.
+        // B was already stepped at the beginning of this FixedUpdate, before GuardUncommandedGuideJump could return. Do not apply it twice.
         if (committedBReleaseOwnsDrive)
             return;
         // 平面上の前進速度・横速度を調べる
         if (!guide.isSlope && Time.fixedTime >= nextFlatMotionLogTime)
         {
             nextFlatMotionLogTime = Time.fixedTime + 0.1f;
-
-            float forwardSpeed =
-                Vector3.Dot(rb.velocity, surface.tangent);
-
-            float lateralSpeed =
-                Vector3.Dot(rb.velocity, surface.side);
-
-            float lateralOffset =
-                Vector3.Dot(rb.position - guide.point, surface.side);
-
-            Debug.Log(
-                $"[FLAT MOTION] " +
-                $"forward={forwardSpeed:F2}m/s " +
-                $"lateral={lateralSpeed:F2}m/s " +
-                $"offset={lateralOffset:F2}m " +
-                $"pos={rb.position:F3} " +
-                $"velocity={rb.velocity:F3}"
-            );
+            float forwardSpeed = Vector3.Dot(rb.velocity, surface.tangent);
+            float lateralSpeed = Vector3.Dot(rb.velocity, surface.side);
+            float lateralOffset = Vector3.Dot(rb.position - guide.point, surface.side);
+            Debug.Log( $"[FLAT MOTION] " + $"forward={forwardSpeed:F2}m/s " + $"lateral={lateralSpeed:F2}m/s " + $"offset={lateralOffset:F2}m " + $"pos={rb.position:F3} " +
+                $"velocity={rb.velocity:F3}" );
         }
         // Slopeへの切替そのものもSpline判定。
         if (guide.isSlope &&BallVisualIsOnSlope)
         {
-            
             if (sumTime >SubtleLimitime)
             {
                 SubtleLimitime = sumTime + bitInTime;
             }
-
         }
         if (guide.isSlope && !wasSlope)
         {
             AcceleFirstTurn = true;
             StickSlopePharse = false;
             TrySwitchStageCollidersOnSlopeEntry(hit);
-            // Ordinary straight continuation needs no artificial Drive reset
-            // and no normal-velocity projection. Keep the incoming momentum.
-            // A real 90-degree turn or non-straight transition retains its
-            // existing controlled transport path.
-            if (!IsUncommandedStraightSlopeEntry(previousGuide, guide) &&
-                !(IsProtectedFlatHold && grounded &&
-                  Vector3.Dot(NormalizeFlat(guide.tangent, direction),
+            // Ordinary straight continuation needs no artificial Drive reset and no normal-velocity projection. Keep the incoming momentum. A real 90-degree turn or non-straight
+            // transition retains its existing controlled transport path.
+            if (!IsUncommandedStraightSlopeEntry(previousGuide, guide) && !(IsProtectedFlatHold && grounded && Vector3.Dot(NormalizeFlat(guide.tangent, direction),
                       NormalizeFlat(direction, travelDirection)) >= .85f))
             {
                 driveState = 0f;
@@ -2929,13 +2026,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             StickSlopePharse = true;
         }
-      
-
-        
-
-        // Display/gesture basis remains the Spline guide. The independent
-        // force basis below may use a verified physical normal and signed route.
-
+        // Display/gesture basis remains the Spline guide. The independent force basis below may use a verified physical normal and signed route.
         if (!surface.Valid)
         {
             ResetGeneralStallWatch();
@@ -2944,55 +2035,39 @@ public float AdvancePredictedSplineDriveReadOnly(
             PauseExtremePointTracking();
             return;
         }
-
         currentSurface = surface;
         currentSurfaceValid = true;
-        // A single observer for BOTH stair/flat stalls, after actual contact
-        // and guide have been verified, before the ordinary turn-guide guard
-        // and Drive channels take control. No change if velocity is healthy.
-        // The normal observer rejects perpendicular old guides on purpose.
-        // A post-turn orphan gets an independent, target-heading-only route.
+        // A single observer for BOTH stair/flat stalls, after actual contact and guide have been verified, before the ordinary turn-guide guard and Drive channels take control. No
+        // change if velocity is healthy. The normal observer rejects perpendicular old guides on purpose. A post-turn orphan gets an independent, target-heading-only route.
         if (waitingForTurnGuide && ObserveUncapturedTurnGuideStall(guide, grounded))
             return;
         if (ObserveGeneralStallRecovery(guide, surface, grounded, hit))
             return;
-        // ================================================================
-// 旋回後：旋回後Splineへ切り替わるまで待つ
-// ================================================================
+        // 旋回後：旋回後Splineへ切り替わるまで待つ
         if (waitingForTurnGuide)
         {
-            // 前のSplineの接線とたまたま平行な遠距離Guideを採用しない。
-            // 接地 + 方向 + 距離の3条件を満たして初めてDriveを解禁する。
+            // 前のSplineの接線とたまたま平行な遠距離Guideを採用しない。 接地 + 方向 + 距離の3条件を満たして初めてDriveを解禁する。
             float alignment = TurnGuideAxisAlignment(guide);
             bool captured = IsTurnReceivingGuideValid(guide, grounded, hit);
-            if (captured && postBDownhillArmed && guide.isSlope &&
-                !TryResolvePostBDownhill(guide, surface, hit, out _))
+            if (captured && postBDownhillArmed && guide.isSlope && !TryResolvePostBDownhill(guide, surface, hit, out _))
             {
                 captured = false;
                 if (Time.fixedTime >= postBDownhillNextLogTime)
                 {
                     postBDownhillNextLogTime = Time.fixedTime + .25f;
-                    Debug.LogWarning($"[B DOWNHILL GUIDE DEFERRED] " +
-                        $"t={Time.fixedTime:F3} section={guide.sectionIndex} " +
-                        $"distance={guide.distanceToGuide:F2} " +
-                        $"floor={(hit.collider ? hit.collider.name : "-")} " +
-                        $"heading={postBDownhillCommittedHeading:F3}", this);
+                    Debug.LogWarning($"[B DOWNHILL GUIDE DEFERRED] " + $"t={Time.fixedTime:F3} section={guide.sectionIndex} " + $"distance={guide.distanceToGuide:F2} " +
+                        $"floor={(hit.collider ? hit.collider.name : "-")} " + $"heading={postBDownhillCommittedHeading:F3}", this);
                 }
             }
-
             if (!captured)
             {
                 PauseExtremePointTracking();
                 driveState = 0f;
                 GuardUncapturedTurnGuide(guide, grounded);
-
-                // The guide guard only applies bounded support/spin control
-                // when the receiving spline AND real floor are verified.
-                // Otherwise this return preserves inertia and natural fall.
+                // The guide guard only applies bounded support/spin control when the receiving spline AND real floor are verified. Otherwise this return preserves inertia and natural fall.
                 // Never add a second full-strength old-spline Stick here.
                 return;
             }
-
             waitingForTurnGuide = false;
             turnGuideCapturedAt = Time.fixedTime;
             stickState = Mathf.Min(stickState, Mathf.Max(0f, flatStick));
@@ -3006,67 +2081,48 @@ public float AdvancePredictedSplineDriveReadOnly(
                 postAutoHoldNextProbeTime = 0f;
             }
             LogDropAuditTurn("NEW-GUIDE-CAPTURED", rb.velocity);
-            // Preserve the bounded forward Drive scalar across the confirmed
-            // handoff. Old wrong-spline lateral corrections remain inactive.
+            // Preserve the bounded forward Drive scalar across the confirmed handoff. Old wrong-spline lateral corrections remain inactive.
             if (guide.isSlope)
                 driveState = Mathf.Clamp(driveState, 0f, GroundAcceleration);
-            Debug.Log($"[TURN GUIDE CAPTURE HANDOFF] t={Time.fixedTime:F3} " +
-                $"forward={Vector3.Dot(rb.velocity, NormalizeFlat(turnTargetDirection, direction)):F2} " +
-                $"drive={driveState:F1} stick={stickState:F1} " +
-                $"guideDist={guide.distanceToGuide:F2} " +
-                $"hit={(hit.collider ? hit.collider.name : "-")} " +
+            Debug.Log($"[TURN GUIDE CAPTURE HANDOFF] t={Time.fixedTime:F3} " + $"forward={Vector3.Dot(rb.velocity, NormalizeFlat(turnTargetDirection, direction)):F2} " +
+                $"drive={driveState:F1} stick={stickState:F1} " + $"guideDist={guide.distanceToGuide:F2} " + $"hit={(hit.collider ? hit.collider.name : "-")} " +
                 $"dot={alignment:F2}", this);
-
             if (activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
             {
                 capturedTurnLandingIntentValid = false;
                 capturedTurnLandingIntent = default;
             }
         }
-
-        // Only the B-release InCorner's first supported descending section
-        // may replace a backwards nearest-Spline tangent or receive an
-        // anti-uphill correction. All other surfaces use their original basis.
-        bool postBDownhillValid = TryStepPostBDownhill(
-            guide, grounded, hit, ref surface, out Vector3 postBDownhill);
+        // Only the B-release InCorner's first supported descending section may replace a backwards nearest-Spline tangent or receive an anti-uphill correction. All other surfaces use
+        // their original basis.
+        bool postBDownhillValid = TryStepPostBDownhill( guide, grounded, hit, ref surface, out Vector3 postBDownhill);
         if (postBDownhillValid)
         {
             currentSurface = surface;
             currentSurfaceValid = true;
         }
-
         Surface forceSurface = surface;
-        bool forceRouteValid = TryBuildPhysicalForceSurface(
-            guide, grounded, hit, surface, out forceSurface);
-        if (!forceRouteValid && postBDownhillValid &&
-            IsCloseGroundRay(hit, rb.worldCenterOfMass))
+        bool forceRouteValid = TryBuildPhysicalForceSurface( guide, grounded, hit, surface, out forceSurface);
+        if (!forceRouteValid && postBDownhillValid && IsCloseGroundRay(hit, rb.worldCenterOfMass))
         {
             forceSurface = surface;
             forceRouteValid = true;
         }
-
-        // 物理的に安定したFlatの最初のGuideからEntry基準を1回だけ保存する。
-        // Turn中は上部の早期returnで更新しない。旧Flatと新Flatを混ぜない。
+        // 物理的に安定したFlatの最初のGuideからEntry基準を1回だけ保存する。 Turn中は上部の早期returnで更新しない。旧Flatと新Flatを混ぜない。
         UpdateFlatEntryFrame(guide);
-
-        // FiveLineモードではVisual回転とBallVisual POP/Rejoinが終わってから、
-        // 下階段側の5ラインへ短い横補正を開始する。
+        // FiveLineモードではVisual回転とBallVisual POP/Rejoinが終わってから、 下階段側の5ラインへ短い横補正を開始する。
         TryBeginPendingFiveLineCorrection(guide, ref surface);
-
         if (fiveLineCorrectionActive)
         {
             PauseExtremePointTracking();
             StepFiveLineCorrection(ref surface);
-
             stickState = Move(stickState, flatStick, StickJerk);
-            LateralAuditRecordOtherForce("FiveLineSupport",
-                -surface.normal * stickState, ForceMode.Acceleration);
+            LateralAuditRecordOtherForce("FiveLineSupport", -surface.normal * stickState, ForceMode.Acceleration);
             rb.AddForce(-surface.normal * stickState, ForceMode.Acceleration);
             dropAuditStickAppliedLastTick = stickState;
             driveState = 0f;
             return;
         }
-
        /* if (Input.GetMouseButtonDown(0))
         {
             MainGameManager.TopTitle.SetActive(false);
@@ -3074,99 +2130,53 @@ public float AdvancePredictedSplineDriveReadOnly(
             MainGameManager.TopLiteral.SetActive(false);
             MainGameManager.PlayButton.SetActive(false);
             MainGameManager.Userbility.SetActive(true);
-
           BeginCommandOnTouch = true;
         }*/
-        // Build the stable read-only Spline plan used by BallVisual.
-        // This runs only after turn-guide handoff has completed.
+        // Build the stable read-only Spline plan used by BallVisual. This runs only after turn-guide handoff has completed.
         if (BeginCommandOnTouch == true)
         {
-            UpdateBallVisualSplinePlan(
-                guide,
-                surface);
-
+            UpdateBallVisualSplinePlan( guide, surface);
             // 最新の物理Spline進行度で -0 -> +0 の境界を検知する。
             ObserveExtremePoint(guide);
             ObserveTapEdgeGuide(grounded);
-
-            float release = guide.isSlope
-                ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd)
-                : 1f;
-
-            float desiredDrive = DesiredDrive(
-                forceRouteValid ? forceSurface : surface, guide, grace) * release;
+            float release = guide.isSlope ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd) : 1f;
+            float desiredDrive = DesiredDrive( forceRouteValid ? forceSurface : surface, guide, grace) * release;
             driveState = Move(driveState, desiredDrive, AccelerationJerk);
-
             float curvature = SplineCurvature(guide);
-
-            float desiredStick = DesiredStick(
-                forceRouteValid ? forceSurface : surface,
-                guide, driveState, curvature, grace) * release;
+            float desiredStick = DesiredStick( forceRouteValid ? forceSurface : surface, guide, driveState, curvature, grace) * release;
             stickState = Move(stickState, desiredStick, StickJerk);
-            bool gentleNewStair = waitingForTurnGuide == false &&
-                guide.isSlope && grounded && turnGuideCapturedAt >= 0f &&
-                Time.fixedTime - turnGuideCapturedAt < TurnGuideLandingSeconds &&
-                Vector3.Dot(rb.velocity,
-                    NormalizeFlat(turnTargetDirection, direction)) < 6f;
+            bool gentleNewStair = waitingForTurnGuide == false && guide.isSlope && grounded && turnGuideCapturedAt >= 0f &&
+                Time.fixedTime - turnGuideCapturedAt < TurnGuideLandingSeconds && Vector3.Dot(rb.velocity, NormalizeFlat(turnTargetDirection, direction)) < 6f;
             if (gentleNewStair)
                 stickState = Mathf.Min(stickState, TurnGuideLandingStickLimit);
-
-            // A completed approach hands off to a gentle, separately verified
-            // edge-cruise controller. Only the same existing side-force channel
-            // is used; gravity, forward Drive and ordinary fall detection stay.
+            // A completed approach hands off to a gentle, separately verified edge-cruise controller. Only the same existing side-force channel is used; gravity, forward Drive and
+            // ordinary fall detection stay.
             float lateralEarly = StepEarlyFlick(guide, surface, grounded);
             float lateralHold = StepAutoHoldInnerSteering(surface, grounded);
             float lateralPost = StepPostAutoHoldLeftEdge(guide, surface, grounded);
             float lateralCruise = StepEdgeCruise(guide, surface, grounded, hit);
-            float lateralAcceleration = lateralEarly + lateralHold +
-                lateralPost + lateralCruise;
-
-            // Post-turn edge correction may run 100+ ticks BEFORE a new
-            // press. At a near stall, its 220m/s2 sideways request can keep
-            // the body pinned against stair friction. Bound only that phase's
-            // lateral channel while slow; healthy fast lip approach and
-            // intentional B InCorner/OutCorner steering are unchanged.
-            if (postAutoHoldEdgeActive && postAutoHoldNewGuide &&
-                !IsProtectedFlatHold &&
-                Vector3.Dot(rb.velocity,
-                    NormalizeFlat(postAutoHoldHeading, direction)) < 7f)
+            float lateralAcceleration = lateralEarly + lateralHold + lateralPost + lateralCruise;
+            // Post-turn edge correction may run 100+ ticks BEFORE a new press. At a near stall, its 220m/s2 sideways request can keep the body pinned against stair friction. Bound only
+            // that phase's lateral channel while slow; healthy fast lip approach and intentional B InCorner/OutCorner steering are unchanged.
+            if (postAutoHoldEdgeActive && postAutoHoldNewGuide && !IsProtectedFlatHold && Vector3.Dot(rb.velocity, NormalizeFlat(postAutoHoldHeading, direction)) < 7f)
                 lateralAcceleration = Mathf.Clamp(lateralAcceleration, -70f, 70f);
-
-            // DriveはSpline接線、微調整はSideのみ、Stickは法線方向の既存値。
-            // 上から押さえつける計算を弱めたりキャンセルする処理は追加しない。
-            if (postBDownhillValid &&
-                Vector3.Dot(rb.velocity, postBDownhill) < 4f)
-                stickState = Mathf.Min(stickState,
-                    PostBDownhillStickLowSpeedCap);
-
-            acceleration =
-                (forceRouteValid ? forceSurface.tangent : surface.tangent) * driveState
-                + surface.side * lateralAcceleration
+            // DriveはSpline接線、微調整はSideのみ、Stickは法線方向の既存値。 上から押さえつける計算を弱めたりキャンセルする処理は追加しない。
+            if (postBDownhillValid && Vector3.Dot(rb.velocity, postBDownhill) < 4f)
+                stickState = Mathf.Min(stickState, PostBDownhillStickLowSpeedCap);
+            acceleration = (forceRouteValid ? forceSurface.tangent : surface.tangent) * driveState + surface.side * lateralAcceleration
                 - (forceRouteValid ? forceSurface.normal : surface.normal) * stickState;
-
-            if (gentleNewStair &&
-                TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit newFloor) &&
-                IsCloseGroundRay(newFloor, rb.worldCenterOfMass))
+            if (gentleNewStair && TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit newFloor) && IsCloseGroundRay(newFloor, rb.worldCenterOfMass))
                 GuideWaitBalanceSpin(true, newFloor.normal);
-
-            // Route integrity has ONE point of authority. It only removes a
-            // positively powered Spline Drive if a real, near stage proves
-            // the Drive axis points against the last committed route.
-            GuardRouteIntegrityFinalForce(
-                forceRouteValid ? forceSurface : surface,
-                hit, grounded, ref acceleration);
-            // Diagnose the EXACT final acceleration after route protection.
-            // GuardRouteIntegrityFinalForce may remove Drive, so compute its
-            // remaining applied component rather than reporting requested Drive.
-            LateralAuditRecordMainForce(acceleration,
-                surface.side * lateralAcceleration,
-                -(forceRouteValid ? forceSurface.normal : surface.normal) * stickState,
+            // Route integrity has ONE point of authority. It only removes a positively powered Spline Drive if a real, near stage proves the Drive axis points against the last committed
+            // route.
+            GuardRouteIntegrityFinalForce( forceRouteValid ? forceSurface : surface, hit, grounded, ref acceleration);
+            // Diagnose the EXACT final acceleration after route protection. GuardRouteIntegrityFinalForce may remove Drive, so compute its remaining applied component rather than
+            // reporting requested Drive.
+            LateralAuditRecordMainForce(acceleration, surface.side * lateralAcceleration, -(forceRouteValid ? forceSurface.normal : surface.normal) * stickState,
                 lateralEarly, lateralHold, lateralPost, lateralCruise);
             rb.AddForce(acceleration, ForceMode.Acceleration);
             dropAuditStickAppliedLastTick = stickState;
-
             wasSlope = guide.isSlope;
-
             if (logCore)
             {
                 ;
@@ -3178,148 +2188,91 @@ public float AdvancePredictedSplineDriveReadOnly(
             PauseExtremePointTracking();
         }
     }
-
-    // ================================================================
     // Stage collider handoff
-    // ================================================================
-
     void TrySwitchStageCollidersOnSlopeEntry(RaycastHit hit)
     {
         if (!hit.transform || !visualRotationPivot)
             return;
-
         // 初回直進中ではなく、Visual座標系が旋回済みのときだけ次区間へColliderを渡す。
         if (visualRotationPivot.rotation == Quaternion.identity)
             return;
-
-        Match matched = Regex.Match(
-            hit.transform.name,
+        Match matched = Regex.Match( hit.transform.name,
             @"^StairWay(\d+)_(\d+)_Physics$");
-
-        if (!matched.Success ||
-            !int.TryParse(matched.Groups[1].Value, out int stairIndex))
+        if (!matched.Success || !int.TryParse(matched.Groups[1].Value, out int stairIndex))
         {
             return;
         }
-
         string lane = matched.Groups[2].Value;
-
-        SetMeshColliderEnabled(
-            $"StairWay{stairIndex - 1}_{lane}_Render",
-            false);
-
-        SetMeshColliderEnabled(
-            $"ArcSlab{stairIndex}_{lane}_Render",
-            false);
-
-        SetMeshColliderEnabled(
-            $"StairWay{stairIndex}_{lane}_Render",
-            true);
-
-        SetMeshColliderEnabled(
-            $"ArcSlab{stairIndex + 1}_{lane}_Render",
-            true);
+        SetMeshColliderEnabled( $"StairWay{stairIndex - 1}_{lane}_Render", false);
+        SetMeshColliderEnabled( $"ArcSlab{stairIndex}_{lane}_Render", false);
+        SetMeshColliderEnabled( $"StairWay{stairIndex}_{lane}_Render", true);
+        SetMeshColliderEnabled( $"ArcSlab{stairIndex + 1}_{lane}_Render", true);
     }
-
-    static void SetMeshColliderEnabled(
-        string objectName,
-        bool enabled)
+    static void SetMeshColliderEnabled( string objectName, bool enabled)
     {
         GameObject target = GameObject.Find(objectName);
         if (!target)
             return;
-
         MeshCollider meshCollider = target.GetComponent<MeshCollider>();
         if (meshCollider)
             meshCollider.enabled = enabled;
     }
-
-    // ================================================================
     // Collider = Support existence only
-    // ================================================================
-
-    // Used only if the original SphereCast misses (or hits a steep side).
-    // This is NOT an invisible supporting wall: independent stage-surface rays
-    // must agree on one collider near the ball's actual contact footprint.
+    // Used only if the original SphereCast misses (or hits a steep side). This is NOT an invisible supporting wall: independent stage-surface rays must agree on one collider near
+    // the ball's actual contact footprint.
     bool TryGetVerifiedGroundRayFallback(out RaycastHit verified)
     {
         verified = default;
         Vector3 centre = rb.worldCenterOfMass;
-        if (!TryAutoHoldGroundRay(centre, out RaycastHit middle) ||
-            !IsCloseGroundRay(middle, centre))
+        if (!TryAutoHoldGroundRay(centre, out RaycastHit middle) || !IsCloseGroundRay(middle, centre))
             return false;
-
-        Vector3 ahead = NormalizeFlat(
-            waitingForTurnGuide ? turnTargetDirection : direction,
-            travelDirection);
+        Vector3 ahead = NormalizeFlat( waitingForTurnGuide ? turnTargetDirection : direction, travelDirection);
         Vector3 side = Vector3.Cross(Vector3.up, ahead).normalized;
         float d = ProbeRadius * .8f;
         int confirmations = 1;
-
         for (int i = 0; i < 4; ++i)
         {
-            Vector3 offset = i == 0 ? side * d :
-                             i == 1 ? -side * d :
-                             i == 2 ? ahead * d : -ahead * d;
+            Vector3 offset = i == 0 ? side * d : i == 1 ? -side * d : i == 2 ? ahead * d : -ahead * d;
             Vector3 sample = centre + offset;
-            if (TryAutoHoldGroundRay(sample, out RaycastHit candidate) &&
-                candidate.collider == middle.collider &&
-                IsCloseGroundRay(candidate, sample))
-                ++confirmations;
+            if (TryAutoHoldGroundRay(sample, out RaycastHit candidate) && candidate.collider == middle.collider && IsCloseGroundRay(candidate, sample)) ++confirmations;
         }
-
         if (confirmations < 3)
             return false;
-
         verified = middle;
         if (logDropoutInvestigation)
-            Debug.Log($"[DROP SUPPORT RAY-RECOVER] t={Time.fixedTime:F3} " +
-                      $"collider={verified.collider.name} rays={confirmations}/5 " +
+            Debug.Log($"[DROP SUPPORT RAY-RECOVER] t={Time.fixedTime:F3} " + $"collider={verified.collider.name} rays={confirmations}/5 " +
                       $"distance={verified.distance:F3}", this);
         return true;
     }
-
     bool IsCloseGroundRay(RaycastHit hit, Vector3 sample)
     {
         if (!IsAutoHoldStageHit(hit, float.NaN))
             return false;
         // The contact must be near the sphere, not a distant slab below it.
         float normalSeparation = Vector3.Dot(sample - hit.point, hit.normal);
-        return normalSeparation >= -0.10f &&
-               normalSeparation <= ProbeRadius + .30f;
+        return normalSeparation >= -0.10f && normalSeparation <= ProbeRadius + .30f;
     }
-
-    // Records physical support, not just the closest Spline. The short-lived
-    // witness is used ONLY when a new press happens at a flat-to-stair seam.
-    void RememberAutoHoldRecentPhysicalFlat(
-        NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit hit)
+    // Records physical support, not just the closest Spline. The short-lived witness is used ONLY when a new press happens at a flat-to-stair seam.
+    void RememberAutoHoldRecentPhysicalFlat( NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit hit)
     {
-        if (!grounded || !guide.valid || guide.isSlope ||
-            !IsCloseGroundRay(hit, rb.worldCenterOfMass) ||
-            Vector3.Angle(hit.normal, Vector3.up) > 18f ||
-            Mathf.Abs(hit.point.y - guide.point.y) > .35f ||
-            guide.distanceToGuide > Mathf.Max(ProbeRadius * 2f, 1f))
+        if (!grounded || !guide.valid || guide.isSlope || !IsCloseGroundRay(hit, rb.worldCenterOfMass) || Vector3.Angle(hit.normal, Vector3.up) > 18f ||
+            Mathf.Abs(hit.point.y - guide.point.y) > .35f || guide.distanceToGuide > Mathf.Max(ProbeRadius * 2f, 1f))
             return;
-
         autoHoldRecentPressFlatCollider = hit.collider;
         autoHoldRecentPressFlatTime = Time.time;
         autoHoldRecentPressFlatPosition = rb.position;
         autoHoldRecentPressFlatHeading = NormalizeFlat(guide.tangent, direction);
     }
-
     (bool, RaycastHit) HasGroundSupport()
     {
         Vector3 origin = rb.worldCenterOfMass + Vector3.up * .05f;
-        int count = Physics.SphereCastNonAlloc(
-            origin, ProbeRadius, Vector3.down, strictGroundCastHits,
-            probeDistance, groundMask, QueryTriggerInteraction.Ignore);
+        int count = Physics.SphereCastNonAlloc( origin, ProbeRadius, Vector3.down, strictGroundCastHits, probeDistance, groundMask, QueryTriggerInteraction.Ignore);
         float nearest = float.PositiveInfinity;
         RaycastHit stage = default;
         for (int i = 0; i < count; i++)
         {
             RaycastHit hit = strictGroundCastHits[i];
-            if (IsAutoHoldStageHit(hit, float.NaN) &&
-                hit.distance < nearest)
+            if (IsAutoHoldStageHit(hit, float.NaN) && hit.distance < nearest)
             {
                 nearest = hit.distance;
                 stage = hit;
@@ -3330,11 +2283,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             return (true, fallback);
         return (false, default);
     }
-
-    // ================================================================
     // Turn guide reacquisition guard (separate from ordinary Spline Drive)
-    // ================================================================
-
     float TurnGuideAxisAlignment(NearestKnotDetector.GuideFrame guide)
     {
         if (!guide.valid)
@@ -3345,7 +2294,6 @@ public float AdvancePredictedSplineDriveReadOnly(
             return 0f;
         return Mathf.Abs(Vector3.Dot(tangent.normalized, heading.normalized));
     }
-
     bool TryGetTurnForwardFloor(Vector3 heading, out RaycastHit support)
     {
         support = default;
@@ -3354,15 +2302,11 @@ public float AdvancePredictedSplineDriveReadOnly(
         // The turn runs inside FixedUpdate; keep this forward fan allocation-free.
         for (int i = 0; i < 4; ++i)
         {
-            float d = i == 0 ? .28f : i == 1 ? .50f :
-                      i == 2 ? .80f : 1.10f;
+            float d = i == 0 ? .28f : i == 1 ? .50f : i == 2 ? .80f : 1.10f;
             Vector3 point = centre + heading * d;
-            if (!TryAutoHoldGroundRay(point, out RaycastHit floor) ||
-                !IsAutoHoldStageHit(floor, float.NaN) ||
-                Vector3.Angle(floor.normal, Vector3.up) > maxSlopeAngle)
+            if (!TryAutoHoldGroundRay(point, out RaycastHit floor) || !IsAutoHoldStageHit(floor, float.NaN) || Vector3.Angle(floor.normal, Vector3.up) > maxSlopeAngle)
                 continue;
-            // A downhill tread can be below the centre even while reachable.
-            // The ray still has a strict range (probeDistance + radius + .25).
+            // A downhill tread can be below the centre even while reachable. The ray still has a strict range (probeDistance + radius + .25).
             float below = Vector3.Dot(point - floor.point, Vector3.up);
             if (below < -.12f || below > ProbeRadius + 1.10f)
                 continue;
@@ -3371,38 +2315,26 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return false;
     }
-
-    // The detector's knot direction may be reversed. A valid receiving
-    // guide must still be physically close, forward of the body, and share
-    // the floor's actual normal. An axial cosine alone is insufficient.
-    bool IsTurnReceivingGuideValid(
-        NearestKnotDetector.GuideFrame guide,
-        bool grounded, RaycastHit floor)
+    // The detector's knot direction may be reversed. A valid receiving guide must still be physically close, forward of the body, and share the floor's actual normal. An axial
+    // cosine alone is insufficient.
+    bool IsTurnReceivingGuideValid( NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit floor)
     {
-        if (!waitingForTurnGuide || !guide.valid || !grounded ||
-            !floor.collider || !IsCloseGroundRay(floor, rb.worldCenterOfMass) ||
-            TurnGuideAxisAlignment(guide) < TurnGuideAlignmentMin ||
-            guide.distanceToGuide > Mathf.Max(
-                supportGraceMaxGuideDistance, ProbeRadius * 2f))
+        if (!waitingForTurnGuide || !guide.valid || !grounded || !floor.collider || !IsCloseGroundRay(floor, rb.worldCenterOfMass) ||
+            TurnGuideAxisAlignment(guide) < TurnGuideAlignmentMin || guide.distanceToGuide > Mathf.Max( supportGraceMaxGuideDistance, ProbeRadius * 2f))
             return false;
         Vector3 forward = NormalizeFlat(turnTargetDirection, direction);
-        Vector3 delta = Vector3.ProjectOnPlane(
-            guide.point - rb.position, Vector3.up);
+        Vector3 delta = Vector3.ProjectOnPlane( guide.point - rb.position, Vector3.up);
         if (Vector3.Dot(delta, forward) < -ProbeRadius * 2.5f)
             return false;
-        if (guide.normal.sqrMagnitude > Eps &&
-            Vector3.Dot(floor.normal.normalized, guide.normal.normalized) < .35f)
+        if (guide.normal.sqrMagnitude > Eps && Vector3.Dot(floor.normal.normalized, guide.normal.normalized) < .35f)
             return false;
         return true;
     }
-
-    // This state is a *physical route witness*, never an alternate steering
-    // mode. It cannot outlive the first receiving downhill stair.
+    // This state is a *physical route witness*, never an alternate steering mode. It cannot outlive the first receiving downhill stair.
     void ClearPostBDownhillGuard(string reason)
     {
         if (postBDownhillArmed && (logTurnTransition || logDropoutInvestigation))
-            Debug.Log($"[B DOWNHILL END] t={Time.fixedTime:F3} reason={reason} " +
-                $"section={postBDownhillSectionIndex}", this);
+            Debug.Log($"[B DOWNHILL END] t={Time.fixedTime:F3} reason={reason} " + $"section={postBDownhillSectionIndex}", this);
         postBDownhillArmed = false;
         postBDownhillSawSlope = false;
         postBDownhillWrongGuideLogged = false;
@@ -3418,10 +2350,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         postBEdgeReacquireUntil = -1f;
         postBEdgeNextLogTime = 0f;
     }
-
-    // StairWay5_0_Physics -> family 5, StairWay5_4_Physics -> family 5.
-    // Different detector sectionIndex values are permitted ONLY on this
-    // physically shared stair family. Unknown colliders cannot grant it.
+    // StairWay5_0_Physics -> family 5, StairWay5_4_Physics -> family 5. Different detector sectionIndex values are permitted ONLY on this physically shared stair family. Unknown
+    // colliders cannot grant it.
     static bool TryGetPostBStairFamily(Collider floor, out int family)
     {
         family = -1;
@@ -3434,8 +2364,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (index >= name.Length || name[index] < '0' || name[index] > '9')
             return false;
         int value = 0;
-        while (index < name.Length && name[index] >= '0' &&
-            name[index] <= '9')
+        while (index < name.Length && name[index] >= '0' && name[index] <= '9')
         {
             int digit = name[index] - '0';
             if (value > 1000000) return false;
@@ -3446,16 +2375,12 @@ public float AdvancePredictedSplineDriveReadOnly(
         family = value;
         return true;
     }
-
-    // Downhill sign comes from Spline+gravity+the committed turn heading.
-    // Geometry alone is a SHORT guide-gap witness, never permission to push
-    // an unsupported sphere or to call a wrong Spline physically captured.
-    bool TryResolvePostBDownhillGeometry(
-        NearestKnotDetector.GuideFrame guide, out Vector3 downhill)
+    // Downhill sign comes from Spline+gravity+the committed turn heading. Geometry alone is a SHORT guide-gap witness, never permission to push an unsupported sphere or to call a
+    // wrong Spline physically captured.
+    bool TryResolvePostBDownhillGeometry( NearestKnotDetector.GuideFrame guide, out Vector3 downhill)
     {
         downhill = Vector3.zero;
-        if (!postBDownhillArmed || !guide.valid || !guide.isSlope ||
-            guide.normal.sqrMagnitude < Eps)
+        if (!postBDownhillArmed || !guide.valid || !guide.isSlope || guide.normal.sqrMagnitude < Eps)
             return false;
         Vector3 normal = guide.normal.normalized;
         if (Vector3.Angle(normal, Vector3.up) < 9f)
@@ -3474,69 +2399,46 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (horizontal.sqrMagnitude < Eps)
             return false;
         horizontal.Normalize();
-        float headingDot = Vector3.Dot(horizontal,
-            postBDownhillCommittedHeading);
+        float headingDot = Vector3.Dot(horizontal, postBDownhillCommittedHeading);
         if (headingDot < .74f)
         {
             if (!postBDownhillWrongGuideLogged)
             {
                 postBDownhillWrongGuideLogged = true;
-                Debug.LogWarning($"[B DOWNHILL WRONG GUIDE] " +
-                    $"t={Time.fixedTime:F3} headingDot={headingDot:F3} " +
-                    $"slope={guide.slopeAngle:F1} " +
-                    $"guideSection={guide.sectionIndex} " +
-                    $"committed={postBDownhillCommittedHeading:F3} " +
-                    $"computed={candidate:F3}; no reversal", this);
+                Debug.LogWarning($"[B DOWNHILL WRONG GUIDE] " + $"t={Time.fixedTime:F3} headingDot={headingDot:F3} " + $"slope={guide.slopeAngle:F1} " +
+                    $"guideSection={guide.sectionIndex} " + $"committed={postBDownhillCommittedHeading:F3} " + $"computed={candidate:F3}; no reversal", this);
             }
             return false;
         }
         downhill = candidate;
         return true;
     }
-
-    // Three independent physical witnesses before changing movement:
-    // signed downhill geometry, real floor contact, and matching floor normal.
-    bool TryResolvePostBDownhill(
-        NearestKnotDetector.GuideFrame guide, Surface surface,
-        RaycastHit floor, out Vector3 downhill)
+    // Three independent physical witnesses before changing movement: signed downhill geometry, real floor contact, and matching floor normal.
+    bool TryResolvePostBDownhill( NearestKnotDetector.GuideFrame guide, Surface surface, RaycastHit floor, out Vector3 downhill)
     {
         downhill = Vector3.zero;
-        if (!postBDownhillArmed || !surface.Valid || !rb ||
-            !floor.collider || !IsCloseGroundRay(floor, rb.worldCenterOfMass) ||
-            guide.distanceToGuide > Mathf.Max(3.0f,
-                supportGraceMaxGuideDistance + .8f) ||
-            Vector3.Dot(surface.normal,
-                floor.normal.normalized) < .40f)
+        if (!postBDownhillArmed || !surface.Valid || !rb || !floor.collider || !IsCloseGroundRay(floor, rb.worldCenterOfMass) || guide.distanceToGuide > Mathf.Max(3.0f,
+                supportGraceMaxGuideDistance + .8f) || Vector3.Dot(surface.normal, floor.normal.normalized) < .40f)
             return false;
         return TryResolvePostBDownhillGeometry(guide, out downhill);
     }
-
-    // Armed on a real B release, then activated only by first supported slope.
-    // A valid flat on its far end retires the special control permanently.
-    bool TryStepPostBDownhill(
-        NearestKnotDetector.GuideFrame guide, bool grounded,
-        RaycastHit floor, ref Surface surface, out Vector3 downhill)
+    // Armed on a real B release, then activated only by first supported slope. A valid flat on its far end retires the special control permanently.
+    bool TryStepPostBDownhill( NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit floor, ref Surface surface, out Vector3 downhill)
     {
         downhill = Vector3.zero;
         if (!postBDownhillArmed || turnTransitionActive || waitingForTurnGuide)
             return false;
-        // The four-second timeout is only for ACQUIRING the first slope.
-        // Once physically captured, remain protected through its actual end.
-        if (!postBDownhillSawSlope &&
-            Time.fixedTime - postBDownhillArmedAt > PostBDownhillMaxWindow)
+        // The four-second timeout is only for ACQUIRING the first slope. Once physically captured, remain protected through its actual end.
+        if (!postBDownhillSawSlope && Time.fixedTime - postBDownhillArmedAt > PostBDownhillMaxWindow)
         {
             ClearPostBDownhillGuard("first downhill not reached in time");
             return false;
         }
         if (!grounded || !floor.collider)
             return false;
-
         bool physicallyClose = IsCloseGroundRay(floor, rb.worldCenterOfMass);
-        // Confirm the receiving FLAT physically; the detector may still
-        // report the previous slope for one or more seam frames.
-        if (postBDownhillSawSlope && physicallyClose &&
-            Vector3.Angle(floor.normal, Vector3.up) <= 18f &&
-            floor.collider.name.StartsWith("ArcSlab",
+        // Confirm the receiving FLAT physically; the detector may still report the previous slope for one or more seam frames.
+        if (postBDownhillSawSlope && physicallyClose && Vector3.Angle(floor.normal, Vector3.up) <= 18f && floor.collider.name.StartsWith("ArcSlab",
                 System.StringComparison.Ordinal))
         {
             ClearPostBDownhillGuard("actual next flat / downhill complete");
@@ -3544,37 +2446,27 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         if (!guide.valid || !guide.isSlope || !physicallyClose)
             return false;
-
-        bool knownPhysicalFamily =
-            TryGetPostBStairFamily(floor.collider, out int currentFamily);
+        bool knownPhysicalFamily = TryGetPostBStairFamily(floor.collider, out int currentFamily);
         if (postBDownhillSawSlope)
         {
-            // Do not cross into a DIFFERENT stair merely because the
-            // nearest Spline remains parallel. An unknown physical family
-            // cannot authorize an across-section continuation either.
-            // An unknown collider at a joint cannot authorize a force,
-            // but it should not permanently erase the verified stair route.
+            // Do not cross into a DIFFERENT stair merely because the nearest Spline remains parallel. An unknown physical family cannot authorize an across-section continuation either.
+            // An unknown collider at a joint cannot authorize a force, but it should not permanently erase the verified stair route.
             if (!knownPhysicalFamily)
                 return false;
-            if (postBDownhillStairFamily < 0 ||
-                currentFamily != postBDownhillStairFamily)
+            if (postBDownhillStairFamily < 0 || currentFamily != postBDownhillStairFamily)
             {
                 ClearPostBDownhillGuard("different physical stair family");
                 return false;
             }
         }
-        // Same stair family is NOT sufficient on its own: the normal,
-        // nearby guide and gravity-confirmed downhill axis must still pass.
+        // Same stair family is NOT sufficient on its own: the normal, nearby guide and gravity-confirmed downhill axis must still pass.
         if (!TryResolvePostBDownhill(guide, surface, floor, out downhill))
             return false;
-        if (postBDownhillSawSlope &&
-            postBDownhillLastLoggedSection != guide.sectionIndex)
+        if (postBDownhillSawSlope && postBDownhillLastLoggedSection != guide.sectionIndex)
         {
             postBDownhillLastLoggedSection = guide.sectionIndex;
-            Debug.Log($"[B DOWNHILL SAME STAIR SECTION] " +
-                $"t={Time.fixedTime:F3} first={postBDownhillSectionIndex} " +
-                $"now={guide.sectionIndex} family={currentFamily} " +
-                $"floor={floor.collider.name}", this);
+            Debug.Log($"[B DOWNHILL SAME STAIR SECTION] " + $"t={Time.fixedTime:F3} first={postBDownhillSectionIndex} " +
+                $"now={guide.sectionIndex} family={currentFamily} " + $"floor={floor.collider.name}", this);
         }
         if (!postBDownhillSawSlope)
         {
@@ -3584,17 +2476,12 @@ public float AdvancePredictedSplineDriveReadOnly(
             postBDownhillSectionIndex = guide.sectionIndex;
             postBDownhillStairFamily = currentFamily;
             postBDownhillLastLoggedSection = guide.sectionIndex;
-            Debug.Log($"[B DOWNHILL VERIFIED] t={Time.fixedTime:F3} " +
-                $"section={guide.sectionIndex} family={currentFamily} " +
-                $"downhill={downhill:F3} " +
-                $"heading={postBDownhillCommittedHeading:F3} " +
-                $"floor={floor.collider.name}", this);
+            Debug.Log($"[B DOWNHILL VERIFIED] t={Time.fixedTime:F3} " + $"section={guide.sectionIndex} family={currentFamily} " + $"downhill={downhill:F3} " +
+                $"heading={postBDownhillCommittedHeading:F3} " + $"floor={floor.collider.name}", this);
         }
         postBDownhillLastSupportTime = Time.fixedTime;
-
-        // BuildSplineSurface normally follows the horizontal player heading.
-        // Only in this physically proven B-handoff may a reversed spline
-        // tangent be corrected to the gravity-confirmed descending axis.
+        // BuildSplineSurface normally follows the horizontal player heading. Only in this physically proven B-handoff may a reversed spline tangent be corrected to the
+        // gravity-confirmed descending axis.
         if (Vector3.Dot(surface.tangent, downhill) < 0f)
         {
             surface.tangent = downhill;
@@ -3602,48 +2489,30 @@ public float AdvancePredictedSplineDriveReadOnly(
             surface.tangentSpeed = Vector3.Dot(rb.velocity, downhill);
             surface.lateralSpeed = Vector3.Dot(rb.velocity, surface.side);
             surface.gravityAlong = Vector3.Dot(Physics.gravity, downhill);
-            Debug.LogWarning($"[B DOWNHILL TANGENT FLIPPED] " +
-                $"t={Time.fixedTime:F3} section={guide.sectionIndex}", this);
+            Debug.LogWarning($"[B DOWNHILL TANGENT FLIPPED] " + $"t={Time.fixedTime:F3} section={guide.sectionIndex}", this);
         }
         return true;
     }
-
-    // No independent B-handoff velocity snap: the final route constraint
-    // applies to the same AddForce as all other channels.
-
-    // Guide waiting belongs only to an authorized 90-degree turn. If there
-    // is no nearby spline along the new heading, or no actual nearby ground,
-    // preserve the measured velocity and spin and let gravity carry the ball.
-    // Bounded braking/rolling balance is reserved for a verified route.
-    void GuardUncapturedTurnGuide(
-        NearestKnotDetector.GuideFrame guide, bool grounded)
+    // No independent B-handoff velocity snap: the final route constraint applies to the same AddForce as all other channels.
+    // Guide waiting belongs only to an authorized 90-degree turn. If there is no nearby spline along the new heading, or no actual nearby ground, preserve the measured velocity
+    // and spin and let gravity carry the ball. Bounded braking/rolling balance is reserved for a verified route.
+    void GuardUncapturedTurnGuide( NearestKnotDetector.GuideFrame guide, bool grounded)
     {
-        if (!waitingForTurnGuide || !rb || rb.isKinematic ||
-            !BeginCommandOnTouch || MainGameManager.OnDead)
+        if (!waitingForTurnGuide || !rb || rb.isKinematic || !BeginCommandOnTouch || MainGameManager.OnDead)
             return;
-
         Vector3 heading = NormalizeFlat(turnTargetDirection, travelDirection);
         Vector3 planar = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
         float forward = Vector3.Dot(planar, heading);
-        float sinceRelease = turnGuideReleasedAt >= 0f
-            ? Mathf.Max(0f, Time.fixedTime - turnGuideReleasedAt) : 0f;
+        float sinceRelease = turnGuideReleasedAt >= 0f ? Mathf.Max(0f, Time.fixedTime - turnGuideReleasedAt) : 0f;
         float axisAlignment = TurnGuideAxisAlignment(guide);
-
         RaycastHit floorHit = default;
-        bool closeFloor = grounded &&
-            TryAutoHoldGroundRay(rb.worldCenterOfMass, out floorHit) &&
-            IsCloseGroundRay(floorHit, rb.worldCenterOfMass);
-        // Reuse the same physical guide witness as the actual turn capture:
-        // a nearby axial spline alone does not justify braking on old floor.
-        bool matchingGuide = closeFloor &&
-            IsTurnReceivingGuideValid(guide, grounded, floorHit);
-        if (matchingGuide && postBDownhillArmed && guide.isSlope &&
-            !TryResolvePostBDownhillGeometry(guide, out _))
+        bool closeFloor = grounded && TryAutoHoldGroundRay(rb.worldCenterOfMass, out floorHit) && IsCloseGroundRay(floorHit, rb.worldCenterOfMass);
+        // Reuse the same physical guide witness as the actual turn capture: a nearby axial spline alone does not justify braking on old floor.
+        bool matchingGuide = closeFloor && IsTurnReceivingGuideValid(guide, grounded, floorHit);
+        if (matchingGuide && postBDownhillArmed && guide.isSlope && !TryResolvePostBDownhillGeometry(guide, out _))
             matchingGuide = false;
-
-        // Missing receiving route is not a request to stop. In particular,
-        // a stair-to-stair jump across empty space must never drive forward
-        // velocity, lateral velocity or angular velocity toward zero.
+        // Missing receiving route is not a request to stop. In particular, a stair-to-stair jump across empty space must never drive forward velocity, lateral velocity or angular
+        // velocity toward zero.
         if (!matchingGuide || !closeFloor)
         {
             turnGuideGuardBraking = false;
@@ -3651,165 +2520,96 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (Time.fixedTime >= turnHandoffNextAuditTime)
             {
                 turnHandoffNextAuditTime = Time.fixedTime + .20f;
-                Debug.Log($"[TURN GUIDE NATURAL COAST] t={Time.fixedTime:F3} " +
-                    $"matchingSpline={matchingGuide} closeFloor={closeFloor} " +
-                    $"guideValid={guide.valid} alignment={axisAlignment:F2} " +
-                    $"velocity={rb.velocity:F3} omega={rb.angularVelocity.magnitude:F2}", this);
+                Debug.Log($"[TURN GUIDE NATURAL COAST] t={Time.fixedTime:F3} " + $"matchingSpline={matchingGuide} closeFloor={closeFloor} " +
+                    $"guideValid={guide.valid} alignment={axisAlignment:F2} " + $"velocity={rb.velocity:F3} omega={rb.angularVelocity.magnitude:F2}", this);
             }
             return;
         }
-
         Vector3 floorNormal = floorHit.normal;
-        Vector3 receivingSample = rb.worldCenterOfMass +
-            heading * (ProbeRadius * 1.5f);
+        Vector3 receivingSample = rb.worldCenterOfMass + heading * (ProbeRadius * 1.5f);
         RaycastHit aheadHit = default;
-        bool floorAhead = closeFloor &&
-            TryAutoHoldGroundRay(receivingSample, out aheadHit) &&
-            IsCloseGroundRay(aheadHit, receivingSample);
-
-        // The forward floor fan is independent from the flat centre ray.
-        // At a descending lip the first ray often sees air even when the
-        // next stair's tread is physically within the guide-search region.
-        bool forwardFloor = floorAhead ||
-            TryGetTurnForwardFloor(heading, out _);
-        bool nearReceivingSlope = guide.valid && guide.isSlope &&
-            axisAlignment >= TurnGuideAlignmentMin &&
-            guide.distanceToGuide <= Mathf.Max(
-                supportGraceMaxGuideDistance, ProbeRadius * 2f) &&
-            Vector3.Dot(Vector3.ProjectOnPlane(
-                guide.point - rb.position, Vector3.up), heading) >=
+        bool floorAhead = closeFloor && TryAutoHoldGroundRay(receivingSample, out aheadHit) && IsCloseGroundRay(aheadHit, receivingSample);
+        // The forward floor fan is independent from the flat centre ray. At a descending lip the first ray often sees air even when the next stair's tread is physically within the
+        // guide-search region.
+        bool forwardFloor = floorAhead || TryGetTurnForwardFloor(heading, out _);
+        bool nearReceivingSlope = guide.valid && guide.isSlope && axisAlignment >= TurnGuideAlignmentMin && guide.distanceToGuide <= Mathf.Max(
+                supportGraceMaxGuideDistance, ProbeRadius * 2f) && Vector3.Dot(Vector3.ProjectOnPlane( guide.point - rb.position, Vector3.up), heading) >=
                 -ProbeRadius * 2.5f;
-        // B-InCorner only: a valid signed DOWNHILL guide seen within the last
-        // .16s is not immediately discarded if a single frame loses it.
-        // No force or fake ground is created while airborne; just a bounded
-        // forward speed target along the already committed heading.
+        // B-InCorner only: a valid signed DOWNHILL guide seen within the last .16s is not immediately discarded if a single frame loses it. No force or fake ground is created while
+        // airborne; just a bounded forward speed target along the already committed heading.
         bool briefDownhillGuideGap = false;
         if (postBDownhillArmed && !postBDownhillSawSlope)
         {
-            if (nearReceivingSlope &&
-                TryResolvePostBDownhillGeometry(guide, out _))
+            if (nearReceivingSlope && TryResolvePostBDownhillGeometry(guide, out _))
                 postBDownhillRecentNearSlopeTime = Time.fixedTime;
             else
                 nearReceivingSlope = false;
-            briefDownhillGuideGap = postBDownhillRecentNearSlopeTime >= 0f &&
-                Time.fixedTime - postBDownhillRecentNearSlopeTime <= .16f;
+            briefDownhillGuideGap = postBDownhillRecentNearSlopeTime >= 0f && Time.fixedTime - postBDownhillRecentNearSlopeTime <= .16f;
         }
         bool missingFloorAhead = closeFloor && !forwardFloor;
         bool shouldBrake = missingFloorAhead;
-
-        // The matching, supported route keeps its bounded crawl. Unknown
-        // space is handled by the early natural-coast return above.
-        float safeForward = forwardFloor ? TurnGuideSafeCrawlSpeed :
-            (nearReceivingSlope || briefDownhillGuideGap)
-                ? TurnGuideNearSlopeSafeSpeed :
+        // The matching, supported route keeps its bounded crawl. Unknown space is handled by the early natural-coast return above.
+        float safeForward = forwardFloor ? TurnGuideSafeCrawlSpeed : (nearReceivingSlope || briefDownhillGuideGap) ? TurnGuideNearSlopeSafeSpeed :
             TurnGuideMinimumSupportedSpeed;
-        float forwardAfter = shouldBrake
-            ? Mathf.MoveTowards(forward, safeForward,
-                TurnGuideBrakeAcceleration * Time.fixedDeltaTime)
-            : Mathf.Max(0f, forward);
+        float forwardAfter = shouldBrake ? Mathf.MoveTowards(forward, safeForward, TurnGuideBrakeAcceleration * Time.fixedDeltaTime) : Mathf.Max(0f, forward);
         Vector3 sideVelocity = planar - heading * forward;
-        Vector3 remainingSide = Vector3.MoveTowards(
-            sideVelocity, Vector3.zero,
-            (shouldBrake ? BReleaseHandoffSideAcceleration : GroundAcceleration) *
+        Vector3 remainingSide = Vector3.MoveTowards( sideVelocity, Vector3.zero, (shouldBrake ? BReleaseHandoffSideAcceleration : GroundAcceleration) *
             Time.fixedDeltaTime);
         Vector3 corrected = heading * Mathf.Max(0f, forwardAfter) + remainingSide;
-
         if ((corrected - planar).sqrMagnitude > Eps)
         {
             rb.velocity = corrected + Vector3.up * rb.velocity.y;
             LateralAuditMarkVelocityWriter("GuardUncapturedTurnGuide");
         }
-
-        // Stick alone cannot stop a sphere's spin: damping uses a real torque
-        // relative to rolling velocity, NOT an invented zero angularVelocity.
+        // Stick alone cannot stop a sphere's spin: damping uses a real torque relative to rolling velocity, NOT an invented zero angularVelocity.
         GuideWaitBalanceSpin(closeFloor, floorNormal);
         if (closeFloor)
         {
-            // Stale preturn Stick can be hundreds of m/s². Cap it until the
-            // new guide is captured; compensate its reverse XZ projection.
-            stickState = Mathf.Min(
-                Move(Mathf.Max(0f, stickState), flatStick, StickJerk),
-                Mathf.Max(0f, flatStick));
-            Vector3 support = -floorNormal.normalized * Mathf.Min(
-                Mathf.Max(0f, stickState), Mathf.Max(0f, flatStick));
-            float reverseHorizontal = Mathf.Max(0f,
-                -Vector3.Dot(support, heading));
-            LateralAuditRecordOtherForce("TurnGuideSupport",
-                support + heading * reverseHorizontal, ForceMode.Acceleration);
-            rb.AddForce(support + heading * reverseHorizontal,
-                ForceMode.Acceleration);
+            // Stale preturn Stick can be hundreds of m/s². Cap it until the new guide is captured; compensate its reverse XZ projection.
+            stickState = Mathf.Min( Move(Mathf.Max(0f, stickState), flatStick, StickJerk), Mathf.Max(0f, flatStick));
+            Vector3 support = -floorNormal.normalized * Mathf.Min( Mathf.Max(0f, stickState), Mathf.Max(0f, flatStick));
+            float reverseHorizontal = Mathf.Max(0f, -Vector3.Dot(support, heading));
+            LateralAuditRecordOtherForce("TurnGuideSupport", support + heading * reverseHorizontal, ForceMode.Acceleration);
+            rb.AddForce(support + heading * reverseHorizontal, ForceMode.Acceleration);
             dropAuditStickAppliedLastTick = support.magnitude;
         }
-
         if (Time.fixedTime >= turnHandoffNextAuditTime)
         {
             turnHandoffNextAuditTime = Time.fixedTime + .10f;
-            Debug.Log($"[TURN GUIDE HANDOFF STEP] t={Time.fixedTime:F3} " +
-                $"forwardBefore={forward:F2} forwardAfter={Vector3.Dot(corrected, heading):F2} " +
-                $"side={sideVelocity.magnitude:F2}->{remainingSide.magnitude:F2} " +
-                $"target={safeForward:F2} brake={shouldBrake} " +
-                $"floor={closeFloor} ahead={forwardFloor} " +
-                $"nearSlope={nearReceivingSlope} recentGap={briefDownhillGuideGap} " +
-                $"alignment={axisAlignment:F2} " +
+            Debug.Log($"[TURN GUIDE HANDOFF STEP] t={Time.fixedTime:F3} " + $"forwardBefore={forward:F2} forwardAfter={Vector3.Dot(corrected, heading):F2} " +
+                $"side={sideVelocity.magnitude:F2}->{remainingSide.magnitude:F2} " + $"target={safeForward:F2} brake={shouldBrake} " +
+                $"floor={closeFloor} ahead={forwardFloor} " + $"nearSlope={nearReceivingSlope} recentGap={briefDownhillGuideGap} " + $"alignment={axisAlignment:F2} " +
                 $"stick={stickState:F1} omega={rb.angularVelocity.magnitude:F2}", this);
         }
         if (shouldBrake && !turnGuideGuardBraking)
         {
             turnGuideGuardBraking = true;
-            Debug.LogWarning($"[TURN GUIDE BALANCED BRAKE] t={Time.fixedTime:F3} " +
-                $"afterRelease={sinceRelease:F3}s target={heading:F3} " +
-                $"beforeForward={forward:F3} afterForward={Vector3.Dot(corrected, heading):F3} " +
-                $"beforeSide={(planar - heading * forward).magnitude:F3} " +
-                $"omega={rb.angularVelocity.magnitude:F3} " +
-                $"stick={stickState:F1} closeFloor={closeFloor} floorAhead={floorAhead} " +
+            Debug.LogWarning($"[TURN GUIDE BALANCED BRAKE] t={Time.fixedTime:F3} " + $"afterRelease={sinceRelease:F3}s target={heading:F3} " +
+                $"beforeForward={forward:F3} afterForward={Vector3.Dot(corrected, heading):F3} " + $"beforeSide={(planar - heading * forward).magnitude:F3} " +
+                $"omega={rb.angularVelocity.magnitude:F3} " + $"stick={stickState:F1} closeFloor={closeFloor} floorAhead={floorAhead} " +
                 $"alignment={axisAlignment:F3}", this);
         }
-        if (shouldBrake && floorAhead &&
-            Vector3.Dot(corrected, heading) <= TurnGuideSafeCrawlSpeed + .25f &&
-            !turnGuideCrawlLogged)
+        if (shouldBrake && floorAhead && Vector3.Dot(corrected, heading) <= TurnGuideSafeCrawlSpeed + .25f && !turnGuideCrawlLogged)
         {
             turnGuideCrawlLogged = true;
-            Debug.Log($"[TURN GUIDE SAFE-CRAWL] t={Time.fixedTime:F3} " +
-                $"forward={Vector3.Dot(corrected, heading):F2} " +
-                $"floor={aheadHit.collider.name}", this);
+            Debug.Log($"[TURN GUIDE SAFE-CRAWL] t={Time.fixedTime:F3} " + $"forward={Vector3.Dot(corrected, heading):F2} " + $"floor={aheadHit.collider.name}", this);
         }
     }
-
     void GuideWaitBalanceSpin(bool floorSupported, Vector3 normal)
     {
         if (!rb || rb.isKinematic) return;
         Vector3 n = normal.sqrMagnitude > Eps ? normal.normalized : Vector3.up;
         Vector3 tangentVelocity = Vector3.ProjectOnPlane(rb.velocity, n);
-        Vector3 rollingAngular = floorSupported
-            ? Vector3.Cross(n, tangentVelocity) / Mathf.Max(.05f, ProbeRadius)
-            : Vector3.zero;
-        rollingAngular = Vector3.ClampMagnitude(rollingAngular,
-            Mathf.Max(0f, rb.maxAngularVelocity));
+        Vector3 rollingAngular = floorSupported ? Vector3.Cross(n, tangentVelocity) / Mathf.Max(.05f, ProbeRadius) : Vector3.zero;
+        rollingAngular = Vector3.ClampMagnitude(rollingAngular, Mathf.Max(0f, rb.maxAngularVelocity));
         Vector3 angularError = rollingAngular - rb.angularVelocity;
-        Vector3 angularAcceleration = Vector3.ClampMagnitude(
-            angularError * (floorSupported ? TurnGuideSpinResponse : 3f),
-            TurnGuideMaxAngularAcceleration);
+        Vector3 angularAcceleration = Vector3.ClampMagnitude( angularError * (floorSupported ? TurnGuideSpinResponse : 3f), TurnGuideMaxAngularAcceleration);
         rb.AddTorque(angularAcceleration, ForceMode.Acceleration);
     }
-
-
-    // On the ordinary route the player's confirmed heading is authoritative.
-    // NearestKnotDetector may select a perpendicular branch at a junction even
-    // when the player NEVER held/tapped/flicked for a turn. That geometric
-    // discontinuity is not permission to brake or freeze the Rigidbody.
-    // Leave its velocity intact and coast on the real stage. If there is no
-    // floor ahead it may naturally fall: do not silently rescue a missed turn.
-    // Explicitly accepted turns and the slope-release hold handoff have their
-    // own independent, input-authorized stop/escape paths.
-    // Flat A -> stair -> flat B has ONE owner until pointer release. This is
-    // deliberately not a permanent gameplay mode and adds no serialized state.
-    // Accepted turns, stair-start holds and release handoffs retain priority.
-    bool IsProtectedFlatHold =>
-        BeginCommandOnTouch && autoHoldEligible && !slopeReleaseHoldArmed &&
-        trackingFlick && !flickConsumed && !flatStartReleaseCommitInProgress &&
-        !HasPendingTurnIntent && !turnTransitionActive &&
-        !waitingForTurnGuide && !MainGameManager.OnDead;
-
+    // On the ordinary route the player's confirmed heading is authoritative. when the player NEVER held/tapped/flicked for a turn. That geometric discontinuity is not permission
+    // to brake or freeze the Rigidbody. Leave its velocity intact and coast on the real stage. If there is no own independent, input-authorized stop/escape paths.
+    bool IsProtectedFlatHold => BeginCommandOnTouch && autoHoldEligible && !slopeReleaseHoldArmed && trackingFlick && !flickConsumed && !flatStartReleaseCommitInProgress &&
+        !HasPendingTurnIntent && !turnTransitionActive && !waitingForTurnGuide && !MainGameManager.OnDead;
     void ClearVerifiedStairCorrection()
     {
         verifiedRouteStair = -1;
@@ -3825,10 +2625,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         verifiedRouteCommitted = false;
         routeLastNearTime = -1f;
     }
-
-    // ================================================================
     // Route Integrity Supervisor: COMMON to B, slope-release and ordinary turn.
-    // ================================================================
     void ResetRouteIntegritySupervisor(string why)
     {
         routeRecognitionState = RouteRecognitionState.Confirmed;
@@ -3846,97 +2643,68 @@ public float AdvancePredictedSplineDriveReadOnly(
         routeEpochAt = -1f;
         routeIntegrityNextLogAt = 0f;
     }
-
     bool TryGetRouteContact(out RaycastHit closeFloor)
     {
         closeFloor = default;
         if (!rb || rb.isKinematic) return false;
         Vector3 centre = rb.worldCenterOfMass;
-        return TryAutoHoldGroundRay(centre, out closeFloor) &&
-            IsCloseGroundRay(closeFloor, centre);
+        return TryAutoHoldGroundRay(centre, out closeFloor) && IsCloseGroundRay(closeFloor, centre);
     }
-
-    // A route witness must be associated with the actual physical slab/stair.
-    // In particular, an OLD stair is not permission to undo a prior turn.
+    // A route witness must be associated with the actual physical slab/stair. In particular, an OLD stair is not permission to undo a prior turn.
     bool IsFormerStairAfterCommittedTurn(Collider floor)
     {
-        if (!routeEpochActive || routePreviousStair < 0 || !floor ||
-            !TryGetStageFamily(floor, "StairWay", out int family) ||
-            family != routePreviousStair) return false;
+        if (!routeEpochActive || routePreviousStair < 0 || !floor || !TryGetStageFamily(floor, "StairWay", out int family) || family != routePreviousStair) return false;
         return true;
     }
-
-    // Before any legal turn, restore the correct old leg if the cached
-    // direction has become 90 degrees out of phase with the *verified* stage.
-    // Never resolve from raw velocity alone: an impact can reverse velocity.
-    Vector3 ResolveAuthoritativeTurnBasis(Vector3 proposed,
-        bool verifiedB, RaycastHit closeFloor)
+    // Before any legal turn, restore the correct old leg if the cached direction has become 90 degrees out of phase with the *verified* stage. Never resolve from raw velocity
+    // alone: an impact can reverse velocity.
+    Vector3 ResolveAuthoritativeTurnBasis(Vector3 proposed, bool verifiedB, RaycastHit closeFloor)
     {
         Vector3 observed = Vector3.zero;
         string source = "-";
         Vector3 planar = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
         if (!closeFloor.collider || planar.magnitude < 5f)
             return proposed;
-        if (verifiedB && bReleaseOriginalHeading.sqrMagnitude > Eps &&
-            closeFloor.collider == bReleaseHandoffFlat)
+        if (verifiedB && bReleaseOriginalHeading.sqrMagnitude > Eps && closeFloor.collider == bReleaseHandoffFlat)
         {
             observed = NormalizeFlat(bReleaseOriginalHeading, proposed);
             source = "B-RECEIVING-FLAT";
         }
-        else if (verifiedRouteCommitted &&
-            routeLastNearTime >= 0f &&
-            Time.fixedTime - routeLastNearTime <= .24f &&
-            ((TryGetStageFamily(closeFloor.collider, "StairWay", out int f) &&
-                f == verifiedRouteStair) ||
-             (TryGetStageFamily(closeFloor.collider, "ArcSlab", out int a) &&
+        else if (verifiedRouteCommitted && routeLastNearTime >= 0f && Time.fixedTime - routeLastNearTime <= .24f &&
+            ((TryGetStageFamily(closeFloor.collider, "StairWay", out int f) && f == verifiedRouteStair) || (TryGetStageFamily(closeFloor.collider, "ArcSlab", out int a) &&
                 a == verifiedRouteFlat)))
         {
             observed = NormalizeFlat(verifiedRouteHeading, proposed);
             source = "VERIFIED-DOWNHILL";
         }
-        else if (TryGetStageFamily(closeFloor.collider, "StairWay", out _) &&
-            Vector3.Angle(closeFloor.normal, Vector3.up) >= 25f &&
+        else if (TryGetStageFamily(closeFloor.collider, "StairWay", out _) && Vector3.Angle(closeFloor.normal, Vector3.up) >= 25f &&
             Vector3.Angle(closeFloor.normal, Vector3.up) <= 65f)
         {
-            Vector3 physicalDownhill = Vector3.ProjectOnPlane(
-                Physics.gravity, closeFloor.normal);
-            if (physicalDownhill.sqrMagnitude > Eps &&
-                Vector3.Dot(rb.velocity, physicalDownhill.normalized) >
+            Vector3 physicalDownhill = Vector3.ProjectOnPlane( Physics.gravity, closeFloor.normal);
+            if (physicalDownhill.sqrMagnitude > Eps && Vector3.Dot(rb.velocity, physicalDownhill.normalized) >
                     RouteWitnessMinimumSpeed)
             {
                 observed = NormalizeFlat(physicalDownhill, proposed);
                 source = "PHYSICAL-STAIR";
             }
         }
-        else if (TryGetStageFamily(closeFloor.collider, "ArcSlab", out _) &&
-            currentGuideValid && currentGuide.valid &&
-            !currentGuide.isSlope &&
-            currentGuide.distanceToGuide < .85f &&
-            Mathf.Abs(currentGuide.point.y - closeFloor.point.y) < .50f)
+        else if (TryGetStageFamily(closeFloor.collider, "ArcSlab", out _) && currentGuideValid && currentGuide.valid && !currentGuide.isSlope &&
+            currentGuide.distanceToGuide < .85f && Mathf.Abs(currentGuide.point.y - closeFloor.point.y) < .50f)
         {
-            // Only a near, physically supported flat can corroborate the
-            // cached guide; nearest Spline on its own is never authoritative.
+            // Only a near, physically supported flat can corroborate the cached guide; nearest Spline on its own is never authoritative.
             observed = NormalizeFlat(currentGuide.tangent, proposed);
             source = "CLOSE-PHYSICAL-FLAT";
         }
-        if (observed.sqrMagnitude <= Eps ||
-            Vector3.Dot(planar.normalized, observed) < .85f ||
-            Vector3.Dot(proposed, observed) >= RouteBasisDisagreementDot)
+        if (observed.sqrMagnitude <= Eps || Vector3.Dot(planar.normalized, observed) < .85f || Vector3.Dot(proposed, observed) >= RouteBasisDisagreementDot)
             return proposed;
-        // If the currently verified motion is opposite the already committed
-        // new leg, never repair it back toward the rejected former stair.
-        if (routeEpochActive &&
-            Vector3.Dot(observed, routeAuthorizedHeading) < -.50f)
+        // If the currently verified motion is opposite the already committed new leg, never repair it back toward the rejected former stair.
+        if (routeEpochActive && Vector3.Dot(observed, routeAuthorizedHeading) < -.50f)
             return proposed;
-        Debug.LogWarning($"[ROUTE TURN BASIS REPAIRED] " +
-            $"t={Time.fixedTime:F3} from={proposed:F3} to={observed:F3} " +
-            $"floor={closeFloor.collider.name} source={source} " +
-            $"planarSpeed={planar.magnitude:F2}; no unrequested turn", this);
+        Debug.LogWarning($"[ROUTE TURN BASIS REPAIRED] " + $"t={Time.fixedTime:F3} from={proposed:F3} to={observed:F3} " +
+            $"floor={closeFloor.collider.name} source={source} " + $"planarSpeed={planar.magnitude:F2}; no unrequested turn", this);
         return observed;
     }
-
-    void ArmRouteIntegrityForTurn(Vector3 target,
-        int previousStair, int expectedNextStair)
+    void ArmRouteIntegrityForTurn(Vector3 target, int previousStair, int expectedNextStair)
     {
         entryShockActive = false; // the new player-approved leg supersedes it
         ++routeTurnEpoch;
@@ -3946,71 +2714,42 @@ public float AdvancePredictedSplineDriveReadOnly(
         routeExpectedNextStair = expectedNextStair;
         routeEpochAt = Time.fixedTime;
         routeIntegrityNextLogAt = 0f;
-        Debug.LogWarning($"[ROUTE EPOCH ARMED] t={Time.fixedTime:F3} " +
-            $"epoch={routeTurnEpoch} previousStair={routePreviousStair} " +
-            $"expectedStair={routeExpectedNextStair} " +
-            $"heading={routeAuthorizedHeading:F3} mode={activeTurnMode}; " +
-            "turn command only", this);
+        Debug.LogWarning($"[ROUTE EPOCH ARMED] t={Time.fixedTime:F3} " + $"epoch={routeTurnEpoch} previousStair={routePreviousStair} " +
+            $"expectedStair={routeExpectedNextStair} " + $"heading={routeAuthorizedHeading:F3} mode={activeTurnMode}; " + "turn command only", this);
     }
-
-    // Geometry is not a command. When the ball touches its former descent
-    // stair after a committed 90-degree turn, NEVER re-register it or drive
-    // against the approved leg. Coast with real inertia/gravity, without a
-    // fictitious sideways correction, velocity snap or airborne motor.
+    // Geometry is not a command. When the ball touches its former descent stair after a committed 90-degree turn, NEVER re-register it or drive against the approved leg. Coast
+    // with real inertia/gravity, without a fictitious sideways correction, velocity snap or airborne motor.
     bool GuardFormerStairGuideAfterTurn()
     {
-        if (!routeEpochActive || !BeginCommandOnTouch ||
-            turnTransitionActive || waitingForTurnGuide ||
-            HasPendingTurnIntent || generalStallRecovering ||
-            !TryGetRouteContact(out RaycastHit floor) ||
-            !IsFormerStairAfterCommittedTurn(floor.collider))
+        if (!routeEpochActive || !BeginCommandOnTouch || turnTransitionActive || waitingForTurnGuide || HasPendingTurnIntent || generalStallRecovering ||
+            !TryGetRouteContact(out RaycastHit floor) || !IsFormerStairAfterCommittedTurn(floor.collider))
             return false;
         if (Time.fixedTime >= routeIntegrityNextLogAt)
         {
             routeIntegrityNextLogAt = Time.fixedTime + .25f;
-            Debug.LogWarning($"[ROUTE EPOCH OLD STAIR COAST] " +
-                $"t={Time.fixedTime:F3} epoch={routeTurnEpoch} " +
-                $"age={Time.fixedTime - routeEpochAt:F2}s " +
-                $"oldStair={floor.collider.name} " +
-                $"heading={routeAuthorizedHeading:F3} " +
-                $"velocity={rb.velocity:F3}; no old-route force", this);
+            Debug.LogWarning($"[ROUTE EPOCH OLD STAIR COAST] " + $"t={Time.fixedTime:F3} epoch={routeTurnEpoch} " + $"age={Time.fixedTime - routeEpochAt:F2}s " +
+                $"oldStair={floor.collider.name} " + $"heading={routeAuthorizedHeading:F3} " + $"velocity={rb.velocity:F3}; no old-route force", this);
         }
         return true;
     }
-
-    // One common actuator gate at the final force-composition point. Unlike
-    // the retired QP, it does not try to infer direction from acceleration;
-    // it removes ONLY the demonstrably wrong Spline Drive request, leaving
-    // Stick, side control and gravity untouched on a confirmed real floor.
-    void GuardRouteIntegrityFinalForce(Surface driveBasis,
-        RaycastHit floor, bool grounded, ref Vector3 totalAcceleration)
+    // One common actuator gate at the final force-composition point. Unlike the retired QP, it does not try to infer direction from acceleration; it removes ONLY the demonstrably
+    // wrong Spline Drive request, leaving Stick, side control and gravity untouched on a confirmed real floor.
+    void GuardRouteIntegrityFinalForce(Surface driveBasis, RaycastHit floor, bool grounded, ref Vector3 totalAcceleration)
     {
-        if (!grounded || !IsCloseGroundRay(floor, rb.worldCenterOfMass) ||
-            !BeginCommandOnTouch || rb.isKinematic ||
-            turnTransitionActive || waitingForTurnGuide ||
-            (HasPendingTurnIntent && !slopeReleaseHoldTurnPending) ||
-            generalStallRecovering ||
-            fiveLineCorrectionActive || slopeReleaseEscapeActive)
+        if (!grounded || !IsCloseGroundRay(floor, rb.worldCenterOfMass) || !BeginCommandOnTouch || rb.isKinematic || turnTransitionActive || waitingForTurnGuide ||
+            (HasPendingTurnIntent && !slopeReleaseHoldTurnPending) || generalStallRecovering || fiveLineCorrectionActive || slopeReleaseEscapeActive)
             return;
         Vector3 expected = Vector3.zero;
-        // The CURRENT physically supported stair, rather than an old route
-        // epoch or a reverse nearest spline, controls Drive during a held /
-        // released B turn. This never changes velocity, gravity or the
-        // 90-degree turn authorization; it only rejects wrong Spline Drive.
-        bool heldSlopeFloor = slopeReleaseHoldArmed &&
-            slopeReleaseOriginStairFamily >= 0 &&
-            TryGetStageFamily(floor.collider, "StairWay", out int holdStair) &&
+        // The CURRENT physically supported stair, rather than an old route epoch or a reverse nearest spline, controls Drive during a held / released B turn. This never changes
+        // velocity, gravity or the 90-degree turn authorization; it only rejects wrong Spline Drive.
+        bool heldSlopeFloor = slopeReleaseHoldArmed && slopeReleaseOriginStairFamily >= 0 && TryGetStageFamily(floor.collider, "StairWay", out int holdStair) &&
             holdStair == slopeReleaseOriginStairFamily;
-        bool committedTerminalFloor = slopeReleaseHoldTurnPending &&
-            slopeReleaseTerminalStairCollider &&
-            IsSameSlopeTerminalFamily(floor.collider);
+        bool committedTerminalFloor = slopeReleaseHoldTurnPending && slopeReleaseTerminalStairCollider && IsSameSlopeTerminalFamily(floor.collider);
         if (heldSlopeFloor || committedTerminalFloor)
         {
             Vector3 heldHeading = NormalizeFlat(autoHoldLastForward, direction);
-            Vector3 gravityDown = Vector3.ProjectOnPlane(
-                Physics.gravity, floor.normal);
-            if (gravityDown.sqrMagnitude > Eps &&
-                Vector3.Angle(floor.normal, Vector3.up) >= 18f)
+            Vector3 gravityDown = Vector3.ProjectOnPlane( Physics.gravity, floor.normal);
+            if (gravityDown.sqrMagnitude > Eps && Vector3.Angle(floor.normal, Vector3.up) >= 18f)
             {
                 Vector3 downhill = NormalizeFlat(gravityDown, heldHeading);
                 if (Vector3.Dot(downhill, heldHeading) > .65f)
@@ -4020,42 +2759,27 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         else if (routeEpochActive)
         {
-            // On the former stair we already coast in the early guard; a
-            // stale Spline direction must never be legitimized here.
+            // On the former stair we already coast in the early guard; a stale Spline direction must never be legitimized here.
             if (IsFormerStairAfterCommittedTurn(floor.collider)) return;
             expected = routeAuthorizedHeading;
         }
-        else if (entryShockActive &&
-            Time.fixedTime - entryShockDetectedAt <= EntryShockRouteProtectionSeconds &&
-            TryGetStageFamily(floor.collider, "StairWay", out int shockStair) &&
-            shockStair == entryShockStairFamily)
+        else if (entryShockActive && Time.fixedTime - entryShockDetectedAt <= EntryShockRouteProtectionSeconds &&
+            TryGetStageFamily(floor.collider, "StairWay", out int shockStair) && shockStair == entryShockStairFamily)
         {
-            // This is only the physically proven entry stair. Never infer
-            // a quarter turn from the ball's bounced velocity.
+            // This is only the physically proven entry stair. Never infer a quarter turn from the ball's bounced velocity.
             expected = entryShockAuthorizedHeading;
         }
-        else if (verifiedRouteCommitted &&
-            ((TryGetStageFamily(floor.collider, "StairWay", out int stair) &&
-                (stair == verifiedRouteStair ||
-                 // The immediately following stair must not silently become
-                 // an opposite route in the absence of a committed turn.
-                 stair == verifiedRouteFlat)) ||
-             (TryGetStageFamily(floor.collider, "ArcSlab", out int flat) &&
-                flat == verifiedRouteFlat)))
+        else if (verifiedRouteCommitted && ((TryGetStageFamily(floor.collider, "StairWay", out int stair) && (stair == verifiedRouteStair ||
+                 // The immediately following stair must not silently become an opposite route in the absence of a committed turn.
+                 stair == verifiedRouteFlat)) || (TryGetStageFamily(floor.collider, "ArcSlab", out int flat) && flat == verifiedRouteFlat)))
             expected = verifiedRouteHeading;
         if (expected.sqrMagnitude <= Eps) return;
-        float alignment = Vector3.Dot(
-            NormalizeFlat(driveBasis.tangent, expected), expected);
-        // Primary repair is TryBuildPhysicalForceSurface, which recalculates
-        // signed tangentSpeed on the last real downhill corridor. If a branch
-        // prevented that repair, do not feed an opposite/sideways motor into
-        // the same floor. Never cancel ordinary braking just for its sign.
+        float alignment = Vector3.Dot( NormalizeFlat(driveBasis.tangent, expected), expected);
+        // Primary repair is TryBuildPhysicalForceSurface, which recalculates signed tangentSpeed on the last real downhill corridor. If a branch prevented that repair, do not feed an
+        // opposite/sideways motor into the same floor. Never cancel ordinary braking just for its sign.
         float realForward = Vector3.Dot(rb.velocity, expected);
-        bool wrongPositiveDrive = driveState > .01f &&
-            alignment < RouteHeadingMinimumDot;
-        bool falseBrakingUnderLimit = driveState < -.01f &&
-            Vector3.Dot(driveBasis.tangent, expected) > .80f &&
-            realForward > 4f && realForward < maxGroundSpeed * .85f &&
+        bool wrongPositiveDrive = driveState > .01f && alignment < RouteHeadingMinimumDot;
+        bool falseBrakingUnderLimit = driveState < -.01f && Vector3.Dot(driveBasis.tangent, expected) > .80f && realForward > 4f && realForward < maxGroundSpeed * .85f &&
             TryGetStageFamily(floor.collider, "ArcSlab", out _);
         if (!wrongPositiveDrive && !falseBrakingUnderLimit)
             return;
@@ -4063,79 +2787,55 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (Time.fixedTime >= routeIntegrityNextLogAt)
         {
             routeIntegrityNextLogAt = Time.fixedTime + .20f;
-            Debug.LogWarning($"[ROUTE INTEGRITY DRIVE BLOCKED] " +
-                $"t={Time.fixedTime:F3} epoch={routeTurnEpoch} " +
-                $"floor={floor.collider.name} " +
-                $"alignment={alignment:F2} drive={driveState:F2} " +
-                $"realForward={realForward:F2} " +
-                $"reason={(wrongPositiveDrive ? "wrong-signed-drive" : "false-brake")} " +
-                $"expected={expected:F3}; gravity/Stick/side retained", this);
+            Debug.LogWarning($"[ROUTE INTEGRITY DRIVE BLOCKED] " + $"t={Time.fixedTime:F3} epoch={routeTurnEpoch} " + $"floor={floor.collider.name} " +
+                $"alignment={alignment:F2} drive={driveState:F2} " + $"realForward={realForward:F2} " +
+                $"reason={(wrongPositiveDrive ? "wrong-signed-drive" : "false-brake")} " + $"expected={expected:F3}; gravity/Stick/side retained", this);
         }
     }
-
-    // Called exclusively when a held flat-start B release did NOT authorize
-    // a turn. This is a route lock, not an automatic B turn or a new Guide.
+    // Called exclusively when a held flat-start B release did NOT authorize a turn. This is a route lock, not an automatic B turn or a new Guide.
     void ArmUncommittedRouteGuard(string reason)
     {
-        if (!rb || rb.isKinematic || MainGameManager.OnDead ||
-            HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide ||
-            !autoHoldSawSlope || !autoHoldEligible)
+        if (!rb || rb.isKinematic || MainGameManager.OnDead || HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide || !autoHoldSawSlope || !autoHoldEligible)
             return;
-        Vector3 recorded = autoHoldPressConfirmedHeading.sqrMagnitude > Eps
-            ? autoHoldPressConfirmedHeading : autoHoldLastForward;
+        Vector3 recorded = autoHoldPressConfirmedHeading.sqrMagnitude > Eps ? autoHoldPressConfirmedHeading : autoHoldLastForward;
         if (recorded.sqrMagnitude <= Eps)
             return;
         Vector3 centre = rb.worldCenterOfMass;
-        if (!TryAutoHoldGroundRay(centre, out RaycastHit witness) ||
-            !IsCloseGroundRay(witness, centre) ||
-            !TryGetStageFamily(witness.collider, "ArcSlab", out _))
+        if (!TryAutoHoldGroundRay(centre, out RaycastHit witness) || !IsCloseGroundRay(witness, centre) || !TryGetStageFamily(witness.collider, "ArcSlab", out _))
         {
-            // A missed B release on the following STAIR is NOT a turn
-            // authorization and must not arm a horizontal motor/route lock
-            // against the real downhill contact. Leave physical inertia and
-            // gravity to continue; Guide jumps are still separately gated.
+            // A missed B release on the following STAIR is NOT a turn authorization and must not arm a horizontal motor/route lock against the real downhill contact. Leave physical
+            // inertia and gravity to continue; Guide jumps are still separately gated.
             if (logTurnTransition)
-                Debug.LogWarning($"[B MISSED FLAT COAST] " +
-                    $"t={Time.fixedTime:F3} floor={(witness.collider ? witness.collider.name : "-")} " +
+                Debug.LogWarning($"[B MISSED FLAT COAST] " + $"t={Time.fixedTime:F3} floor={(witness.collider ? witness.collider.name : "-")} " +
                     $"reason={reason}; no invented turn / old-heading brake", this);
             return;
         }
         uncommittedRouteHeading = NormalizeFlat(recorded, direction);
         uncommittedRouteStart = rb.position;
-        uncommittedRouteExpiresAt = Time.fixedTime +
-            UncommittedRouteProtectSeconds;
+        uncommittedRouteExpiresAt = Time.fixedTime + UncommittedRouteProtectSeconds;
         uncommittedRouteLogAt = Time.fixedTime;
         uncommittedRouteGuardActive = true;
         ClearVerifiedStairCorrection();
         if (logTurnTransition)
-            Debug.Log($"[UNCOMMITTED ROUTE ARMED] t={Time.fixedTime:F3} " +
-                $"heading={uncommittedRouteHeading:F2} floor={witness.collider.name} " +
+            Debug.Log($"[UNCOMMITTED ROUTE ARMED] t={Time.fixedTime:F3} " + $"heading={uncommittedRouteHeading:F2} floor={witness.collider.name} " +
                 $"expires={uncommittedRouteExpiresAt:F3} reason={reason}", this);
     }
-
     void ClearUncommittedRouteGuard(string reason)
     {
         if (uncommittedRouteGuardActive && logTurnTransition)
-            Debug.Log($"[UNCOMMITTED ROUTE CLEARED] t={Time.fixedTime:F3} " +
-                $"reason={reason}", this);
+            Debug.Log($"[UNCOMMITTED ROUTE CLEARED] t={Time.fixedTime:F3} " + $"reason={reason}", this);
         uncommittedRouteGuardActive = false;
         uncommittedRouteHeading = Vector3.zero;
         uncommittedRouteStart = Vector3.zero;
         uncommittedRouteExpiresAt = -1f;
     }
-
     bool HasValidUncommittedRouteGuard()
     {
         if (!uncommittedRouteGuardActive)
             return false;
-        if (!rb || rb.isKinematic || MainGameManager.OnDead ||
-            !BeginCommandOnTouch || turnTransitionActive || turnBodyFrozen ||
-            waitingForTurnGuide || HasPendingTurnIntent ||
-            generalStallRecovering || fiveLineCorrectionActive ||
-            bReleaseHandoffActive || postAutoHoldEdgeActive ||
-            slopeReleaseEscapeActive || trackingFlick ||
-            Time.fixedTime > uncommittedRouteExpiresAt ||
-            Vector3.ProjectOnPlane(rb.position - uncommittedRouteStart,
+        if (!rb || rb.isKinematic || MainGameManager.OnDead || !BeginCommandOnTouch || turnTransitionActive || turnBodyFrozen ||
+            waitingForTurnGuide || HasPendingTurnIntent || generalStallRecovering || fiveLineCorrectionActive || bReleaseHandoffActive || postAutoHoldEdgeActive ||
+            slopeReleaseEscapeActive || trackingFlick || Time.fixedTime > uncommittedRouteExpiresAt || Vector3.ProjectOnPlane(rb.position - uncommittedRouteStart,
                 Vector3.up).magnitude > UncommittedRouteMaxTravel)
         {
             ClearUncommittedRouteGuard("new input/turn, expired, or beyond verified range");
@@ -4143,57 +2843,39 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return true;
     }
-
-    // A later nearest spline is not a new turn command. This check remains
-    // effective after the first bad candidate, even if currentGuide itself
-    // has become perpendicular. Safe old-guide reuse requires close contact
-    // AND matching floor type; otherwise coast with the edge guard only.
-    bool BlockUncommittedRouteGuide(
-        ref NearestKnotDetector.GuideFrame candidate)
+    // A later nearest spline is not a new turn command. This check remains effective after the first bad candidate, even if currentGuide itself has become perpendicular. Safe
+    // old-guide reuse requires close contact AND matching floor type; otherwise coast with the edge guard only.
+    bool BlockUncommittedRouteGuide( ref NearestKnotDetector.GuideFrame candidate)
     {
         if (!HasValidUncommittedRouteGuard() || !candidate.valid)
             return false;
         Vector3 expected = uncommittedRouteHeading;
-        float alignment = Vector3.Dot(
-            NormalizeFlat(candidate.tangent, expected), expected);
+        float alignment = Vector3.Dot( NormalizeFlat(candidate.tangent, expected), expected);
         if (alignment >= UncommittedRouteHeadingDot)
             return false;
         Vector3 centre = rb.worldCenterOfMass;
-        if (!TryAutoHoldGroundRay(centre, out RaycastHit floor) ||
-            !IsCloseGroundRay(floor, centre))
+        if (!TryAutoHoldGroundRay(centre, out RaycastHit floor) || !IsCloseGroundRay(floor, centre))
         {
-            // When physically airborne, restore the ordinary dropout and
-            // gravity path; do not preserve an obsolete physical route.
+            // When physically airborne, restore the ordinary dropout and gravity path; do not preserve an obsolete physical route.
             ClearUncommittedRouteGuard("no close physical floor");
             return false;
         }
         if (!TryGetStageFamily(floor.collider, "ArcSlab", out _))
         {
-            // After a missed receiving slab the following real stair is
-            // not the flat that justified this direction lock.
+            // After a missed receiving slab the following real stair is not the flat that justified this direction lock.
             ClearUncommittedRouteGuard("physically entered a stair; no false flat lock");
             return true; // coast for this frame, not a new 90-degree turn
         }
         bool floorSlope = false;
-        bool oldGuideMatches = currentGuideValid && currentGuide.valid &&
-            currentSurfaceValid &&
-            Vector3.Distance(rb.position, currentGuide.point) <=
-                UncommittedRouteGuideDistance &&
-            Vector3.Dot(NormalizeFlat(currentGuide.tangent, expected),
-                expected) >= UncommittedRouteHeadingDot &&
-            (floorSlope
-                ? currentGuide.isSlope &&
-                  TryGetPostBStairFamily(floor.collider, out int stairFamily) &&
-                  currentGuide.sectionIndex == stairFamily
-                : !currentGuide.isSlope &&
+        bool oldGuideMatches = currentGuideValid && currentGuide.valid && currentSurfaceValid && Vector3.Distance(rb.position, currentGuide.point) <=
+                UncommittedRouteGuideDistance && Vector3.Dot(NormalizeFlat(currentGuide.tangent, expected), expected) >= UncommittedRouteHeadingDot && (floorSlope
+                ? currentGuide.isSlope && TryGetPostBStairFamily(floor.collider, out int stairFamily) && currentGuide.sectionIndex == stairFamily : !currentGuide.isSlope &&
                   Mathf.Abs(currentGuide.point.y - floor.point.y) < 1.0f);
         if (Time.fixedTime >= uncommittedRouteLogAt)
         {
             uncommittedRouteLogAt = Time.fixedTime + .30f;
-            Debug.LogWarning($"[UNCOMMITTED ROUTE SPLINE BLOCKED] " +
-                $"t={Time.fixedTime:F3} oldSpline={currentGuide.splineIndex} " +
-                $"candidateSpline={candidate.splineIndex} " +
-                $"alignment={alignment:F2} reuseOld={oldGuideMatches} " +
+            Debug.LogWarning($"[UNCOMMITTED ROUTE SPLINE BLOCKED] " + $"t={Time.fixedTime:F3} oldSpline={currentGuide.splineIndex} " +
+                $"candidateSpline={candidate.splineIndex} " + $"alignment={alignment:F2} reuseOld={oldGuideMatches} " +
                 $"floor={floor.collider.name} heading={expected:F2}", this);
         }
         if (oldGuideMatches)
@@ -4201,114 +2883,74 @@ public float AdvancePredictedSplineDriveReadOnly(
             candidate = currentGuide;
             return false;
         }
-        // Return before Spline state replacement. Never promote a rejected
-        // perpendicular candidate to currentGuide and then accept its next
-        // neighbor on the following physics tick.
+        // Return before Spline state replacement. Never promote a rejected perpendicular candidate to currentGuide and then accept its next neighbor on the following physics tick.
         return true;
     }
-
     bool GuardUncommandedGuideJump(NearestKnotDetector.GuideFrame candidate)
     {
-        if (!rb || rb.isKinematic || !BeginCommandOnTouch ||
-            turnTransitionActive || waitingForTurnGuide || HasPendingTurnIntent ||
+        if (!rb || rb.isKinematic || !BeginCommandOnTouch || turnTransitionActive || waitingForTurnGuide || HasPendingTurnIntent ||
             !candidate.valid || !currentGuideValid || !currentGuide.valid)
         {
             uncommandedGuideGuardLogged = false;
             return false;
         }
-
-        Vector3 heading = IsProtectedFlatHold &&
-            autoHoldPressConfirmedHeading.sqrMagnitude > Eps
-            ? NormalizeFlat(autoHoldPressConfirmedHeading, direction)
+        Vector3 heading = IsProtectedFlatHold && autoHoldPressConfirmedHeading.sqrMagnitude > Eps ? NormalizeFlat(autoHoldPressConfirmedHeading, direction)
             : NormalizeFlat(direction, travelDirection);
         Vector3 oldTangent = NormalizeFlat(currentGuide.tangent, heading);
         Vector3 nextTangent = NormalizeFlat(candidate.tangent, heading);
-        // Flat projection permits ordinary slope-to-flat handoffs but
-        // rejects a genuinely perpendicular branch selection.
+        // Flat projection permits ordinary slope-to-flat handoffs but rejects a genuinely perpendicular branch selection.
         float oldAlignment = Mathf.Abs(Vector3.Dot(heading, oldTangent));
         float newAlignment = Mathf.Abs(Vector3.Dot(heading, nextTangent));
         float segmentAlignment = Mathf.Abs(Vector3.Dot(oldTangent, nextTangent));
-        // Ordinary guard retains its original abs-alignment rules. Only an
-        // active FLAT-start hold also refuses reversed/diagonal candidate
-        // tangents. Abs(dot) would otherwise admit an unrequested 180 turn.
-        bool heldWrongDirection = IsProtectedFlatHold &&
-            Vector3.Dot(heading, nextTangent) < .75f;
-        // The press-authorized heading still wins if last tick's currentGuide
-        // had ALREADY become perpendicular. Never use the oldSpline as an
-        // authorization for a second unexpected guide transition.
-        if (!heldWrongDirection && (oldAlignment < 0.8f ||
-            newAlignment >= UncommandedGuideAlignmentMin ||
-            segmentAlignment >= UncommandedGuideAlignmentMin))
+        // Ordinary guard retains its original abs-alignment rules. Only an active FLAT-start hold also refuses reversed/diagonal candidate tangents. Abs(dot) would otherwise admit an
+        // unrequested 180 turn.
+        bool heldWrongDirection = IsProtectedFlatHold && Vector3.Dot(heading, nextTangent) < .75f;
+        // The press-authorized heading still wins if last tick's currentGuide had ALREADY become perpendicular. Never use the oldSpline as an authorization for a second unexpected
+        // guide transition.
+        if (!heldWrongDirection && (oldAlignment < 0.8f || newAlignment >= UncommandedGuideAlignmentMin || segmentAlignment >= UncommandedGuideAlignmentMin))
         {
             uncommandedGuideGuardLogged = false;
             return false;
         }
-
-        // ProbeDistance can be very large in the scene (e.g. 28m).
-        // Require a *close* genuine stage surface, not merely a distant cast.
+        // ProbeDistance can be very large in the scene (e.g. 28m). Require a *close* genuine stage surface, not merely a distant cast.
         Vector3 centre = rb.worldCenterOfMass;
-        if (!TryAutoHoldGroundRay(centre, out RaycastHit floor) ||
-            !IsCloseGroundRay(floor, centre))
+        if (!TryAutoHoldGroundRay(centre, out RaycastHit floor) || !IsCloseGroundRay(floor, centre))
         {
             uncommandedGuideGuardLogged = false;
             return false;  // Normal support/dropout pipeline remains authoritative.
         }
-
-        // Important: this is NOT a player-authorized stop. In particular, do
-        // not call MoveTowards(velocity, zero) here. Doing so used to remove
-        // ~7.6 m/s *per FixedUpdate* (380 m/s2 at 0.02 s), causing the ball
-        // to halt on the flat even when no slope hold was ever committed.
-        // Returning true still rejects the unrelated 90-degree spline basis
-        // for this tick, avoiding false lateral drive into the wrong lane.
-        // Rigidbody velocity, angular velocity, and gravity are untouched.
+        // Important: this is NOT a player-authorized stop. In particular, do not call MoveTowards(velocity, zero) here. Doing so used to remove ~7.6 m/s *per FixedUpdate* (380 m/s2
+        // at 0.02 s), causing the ball to halt on the flat even when no slope hold was ever committed. Rigidbody velocity, angular velocity, and gravity are untouched.
         Vector3 planar = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
         // Wrong nearest spline does not invalidate ordinary flat drive.
         currentSupported = true;
         if (!uncommandedGuideGuardLogged)
         {
             uncommandedGuideGuardLogged = true;
-            Debug.LogWarning($"[SPLINE UNCOMMANDED TURN COAST] " +
-                $"t={Time.fixedTime:F3} oldAlign={oldAlignment:F3} " +
-                $"newAlign={newAlignment:F3} segmentAlign={segmentAlignment:F3} " +
-                $"oldSpline={currentGuide.splineIndex} " +
-                $"candidateSpline={candidate.splineIndex} " +
-                $"floor={floor.collider.name} preservedSpeed={planar.magnitude:F2} " +
-                $"holdArmed={slopeReleaseHoldArmed} " +
-                $"holdTurnPending={slopeReleaseHoldTurnPending} " +
-                $"gestureActive={trackingFlick}; no automatic brake", this);
+            Debug.LogWarning($"[SPLINE UNCOMMANDED TURN COAST] " + $"t={Time.fixedTime:F3} oldAlign={oldAlignment:F3} " +
+                $"newAlign={newAlignment:F3} segmentAlign={segmentAlignment:F3} " + $"oldSpline={currentGuide.splineIndex} " + $"candidateSpline={candidate.splineIndex} " +
+                $"floor={floor.collider.name} preservedSpeed={planar.magnitude:F2} " + $"holdArmed={slopeReleaseHoldArmed} " +
+                $"holdTurnPending={slopeReleaseHoldTurnPending} " + $"gestureActive={trackingFlick}; no automatic brake", this);
         }
         return true;
     }
-
-    // This is a route OBSERVATION, never authorization for a new 90-degree
-    // turn. A 45-degree mesh can yield flat normals on each individual step,
-    // so the old 25..65 degree normal-only rule never locked in some runs.
-    // Require actual support PLUS three coherent position changes descending
-    // on the same physical StairWay family. An impulse or reversal in one
-    // physics step cannot become a new route.
-    bool TryGetNearPhysicalRouteWitness(bool grounded, RaycastHit support,
-        out RaycastHit nearby)
+    // This is a route OBSERVATION, never authorization for a new 90-degree turn. A 45-degree mesh can yield flat normals on each individual step, so the old 25..65 degree
+    // normal-only rule never locked in some runs. on the same physical StairWay family. An impulse or reversal in one physics step cannot become a new route.
+    bool TryGetNearPhysicalRouteWitness(bool grounded, RaycastHit support, out RaycastHit nearby)
     {
         nearby = default;
-        if (!grounded || !rb || rb.isKinematic ||
-            !IsGeneratedStageFloor(support.collider)) return false;
+        if (!grounded || !rb || rb.isKinematic || !IsGeneratedStageFloor(support.collider)) return false;
         Vector3 centre = rb.worldCenterOfMass;
         if (IsCloseGroundRay(support, centre))
         {
             nearby = support;
             return true;
         }
-        // This slightly wider range is for READ-ONLY route evidence, not
-        // Rigidbody support or force. Never use a far-downward cast alone.
+        // This slightly wider range is for READ-ONLY route evidence, not Rigidbody support or force. Never use a far-downward cast alone.
         if (!TryAutoHoldGroundRay(centre, out RaycastHit ray)) return false;
-        bool sameStair = TryGetStageFamily(support.collider,
-                "StairWay", out int oldStair) &&
-            TryGetStageFamily(ray.collider, "StairWay", out int rayStair) &&
+        bool sameStair = TryGetStageFamily(support.collider, "StairWay", out int oldStair) && TryGetStageFamily(ray.collider, "StairWay", out int rayStair) &&
             oldStair == rayStair;
-        bool sameFlat = TryGetStageFamily(support.collider,
-                "ArcSlab", out int oldFlat) &&
-            TryGetStageFamily(ray.collider, "ArcSlab", out int rayFlat) &&
-            oldFlat == rayFlat;
+        bool sameFlat = TryGetStageFamily(support.collider, "ArcSlab", out int oldFlat) && TryGetStageFamily(ray.collider, "ArcSlab", out int rayFlat) && oldFlat == rayFlat;
         if (!sameStair && !sameFlat) return false;
         float planeGap = Vector3.Dot(centre - ray.point, ray.normal);
         if (planeGap < -.12f || planeGap > ProbeRadius + .65f)
@@ -4316,70 +2958,48 @@ public float AdvancePredictedSplineDriveReadOnly(
         nearby = ray;
         return true;
     }
-
     void ObservePhysicalRouteWitness(bool grounded, RaycastHit support)
     {
-        if (turnTransitionActive || waitingForTurnGuide ||
-            HasPendingTurnIntent || rb.isKinematic || MainGameManager.OnDead ||
-            !TryGetNearPhysicalRouteWitness(grounded, support,
-                out RaycastHit floor))
+        if (turnTransitionActive || waitingForTurnGuide || HasPendingTurnIntent || rb.isKinematic || MainGameManager.OnDead ||
+            !TryGetNearPhysicalRouteWitness(grounded, support, out RaycastHit floor))
         {
-            // A brief airborne lip does not destroy the completed descent
-            // witness, but it must not count as another proof sample.
+            // A brief airborne lip does not destroy the completed descent witness, but it must not count as another proof sample.
             routeObservationPositionFamily = -1;
             routeObservationPositionAt = -1f;
-            if (routeLastNearTime >= 0f &&
-                Time.fixedTime - routeLastNearTime <= .35f)
-                SetRouteRecognitionState(RouteRecognitionState.TemporarilyLost,
-                    verifiedRouteStair, "Physical stair temporarily lost");
-            else if (routeLastNearTime >= 0f &&
-                     Time.fixedTime - routeLastNearTime > .35f)
+            if (routeLastNearTime >= 0f && Time.fixedTime - routeLastNearTime <= .35f)
+                SetRouteRecognitionState(RouteRecognitionState.TemporarilyLost, verifiedRouteStair, "Physical stair temporarily lost");
+            else if (routeLastNearTime >= 0f && Time.fixedTime - routeLastNearTime > .35f)
             {
-                SetRouteRecognitionState(RouteRecognitionState.Unverified,
-                    verifiedRouteStair, "Waiting for a real stair contact");
+                SetRouteRecognitionState(RouteRecognitionState.Unverified, verifiedRouteStair, "Waiting for a real stair contact");
                 ClearVerifiedStairCorrection();
             }
             return;
         }
-
         if (TryGetStageFamily(floor.collider, "StairWay", out int family))
         {
-            if (IsFormerStairAfterCommittedTurn(floor.collider) ||
-                (routeEpochActive && routeExpectedNextStair >= 0 &&
-                 family < routeExpectedNextStair))
+            if (IsFormerStairAfterCommittedTurn(floor.collider) || (routeEpochActive && routeExpectedNextStair >= 0 && family < routeExpectedNextStair))
             {
-                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
-                    family, "Former stair is not the authorized new route");
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting, family, "Former stair is not the authorized new route");
                 routeObservationCount = 0;
                 routeObservationPositionFamily = -1;
                 return;
             }
-
             float dt = Time.fixedTime - routeObservationPositionAt;
-            bool continuous = routeObservationPositionFamily == family &&
-                routeObservationPositionAt >= 0f && dt > .001f && dt <= .065f;
-            Vector3 step = continuous ? rb.position - routeObservationPosition :
-                Vector3.zero;
+            bool continuous = routeObservationPositionFamily == family && routeObservationPositionAt >= 0f && dt > .001f && dt <= .065f;
+            Vector3 step = continuous ? rb.position - routeObservationPosition : Vector3.zero;
             Vector3 horizontalStep = Vector3.ProjectOnPlane(step, Vector3.up);
-            Vector3 horizontalVelocity = Vector3.ProjectOnPlane(
-                rb.velocity, Vector3.up);
+            Vector3 horizontalVelocity = Vector3.ProjectOnPlane( rb.velocity, Vector3.up);
             routeObservationPositionFamily = family;
             routeObservationPositionAt = Time.fixedTime;
             routeObservationPosition = rb.position;
-
-            // Continuous DOWNWARD movement on a real stair is crucial:
-            // a horizontal bounce, reverse contact, or a single collision
-            // impulse is not evidence for changing a signed forward axis.
-            bool descending = continuous && step.y < -Mathf.Max(.055f, dt * 2f) &&
-                rb.velocity.y < -2f && horizontalStep.magnitude > dt * 4f &&
-                horizontalVelocity.magnitude > 4f &&
-                Vector3.Dot(horizontalStep.normalized,
-                    horizontalVelocity.normalized) > .92f;
+            // Continuous DOWNWARD movement on a real stair is crucial: a horizontal bounce, reverse contact, or a single collision impulse is not evidence for changing a signed forward
+            // axis.
+            bool descending = continuous && step.y < -Mathf.Max(.055f, dt * 2f) && rb.velocity.y < -2f && horizontalStep.magnitude > dt * 4f &&
+                horizontalVelocity.magnitude > 4f && Vector3.Dot(horizontalStep.normalized, horizontalVelocity.normalized) > .92f;
             if (!descending)
             {
                 if (!verifiedRouteCommitted) routeObservationCount = 0;
-                // Do not paint a normal newly entered stair as a failure.
-                // Only a sustained unresolved observation becomes a HOLD.
+                // Do not paint a normal newly entered stair as a failure. Only a sustained unresolved observation becomes a HOLD.
                 if (!verifiedRouteCommitted && !routeEpochActive)
                 {
                     if (routeUnverifiedFamily != family)
@@ -4387,10 +3007,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                         routeUnverifiedFamily = family;
                         routeUnverifiedSince = Time.fixedTime;
                     }
-                    else if (routeUnverifiedSince >= 0f &&
-                             Time.fixedTime - routeUnverifiedSince >= .12f)
-                        SetRouteRecognitionState(RouteRecognitionState.Unverified,
-                            family, "Checking consecutive downhill movement");
+                    else if (routeUnverifiedSince >= 0f && Time.fixedTime - routeUnverifiedSince >= .12f)
+                        SetRouteRecognitionState(RouteRecognitionState.Unverified, family, "Checking consecutive downhill movement");
                 }
                 routeLastNearTime = Time.fixedTime;
                 return;
@@ -4401,8 +3019,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             float incline = Vector3.Angle(normal, Vector3.up);
             if (incline >= 25f && incline <= 65f)
             {
-                Vector3 gravityDown = Vector3.ProjectOnPlane(
-                    Physics.gravity, normal);
+                Vector3 gravityDown = Vector3.ProjectOnPlane( Physics.gravity, normal);
                 if (gravityDown.sqrMagnitude > Eps)
                 {
                     Vector3 gravityHeading = NormalizeFlat(gravityDown, heading);
@@ -4413,41 +3030,29 @@ public float AdvancePredictedSplineDriveReadOnly(
                     }
                 }
             }
-            if (routeEpochActive &&
-                Vector3.Dot(heading, routeAuthorizedHeading) <
+            if (routeEpochActive && Vector3.Dot(heading, routeAuthorizedHeading) <
                     RouteHeadingMinimumDot)
             {
-                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
-                    family, "Detected direction conflicts with accepted turn");
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting, family, "Detected direction conflicts with accepted turn");
                 routeObservationCount = 0;
                 return;
             }
-            // After a verified StairWay N -> ArcSlab N+1 transition,
-            // StairWay N+1 may be a 90/180-degree *different* branch.
-            // Its geometry is not permission to accept an uncommanded turn.
+            // After a verified StairWay N -> ArcSlab N+1 transition, StairWay N+1 may be a 90/180-degree *different* branch. Its geometry is not permission to accept an uncommanded turn.
             // Keep the old signed witness until the player authorizes it.
-            if (verifiedRouteCommitted && !routeEpochActive &&
-                family == verifiedRouteFlat &&
-                Vector3.Dot(verifiedRouteHeading, heading) < .70f)
+            if (verifiedRouteCommitted && !routeEpochActive && family == verifiedRouteFlat && Vector3.Dot(verifiedRouteHeading, heading) < .70f)
             {
-                SetRouteRecognitionState(RouteRecognitionState.Conflicting,
-                    family, "New stair direction is not player-authorized");
+                SetRouteRecognitionState(RouteRecognitionState.Conflicting, family, "New stair direction is not player-authorized");
                 routeObservationCount = 0;
                 routeLastNearTime = Time.fixedTime;
                 if (Time.fixedTime >= routeIntegrityNextLogAt)
                 {
                     routeIntegrityNextLogAt = Time.fixedTime + .35f;
-                    Debug.LogWarning($"[ROUTE SEAM REVERSE REJECT] " +
-                        $"t={Time.fixedTime:F3} stair={family} " +
-                        $"oldDownhill={verifiedRouteHeading:F3} " +
-                        $"newDownhill={heading:F3}; " +
-                        "no new player-authorized turn", this);
+                    Debug.LogWarning($"[ROUTE SEAM REVERSE REJECT] " + $"t={Time.fixedTime:F3} stair={family} " + $"oldDownhill={verifiedRouteHeading:F3} " +
+                        $"newDownhill={heading:F3}; " + "no new player-authorized turn", this);
                 }
                 return;
             }
-            if (routeObservationFamily != family ||
-                (routeObservationCount > 0 &&
-                 Vector3.Dot(routeObservationCandidateHeading, heading) < .94f))
+            if (routeObservationFamily != family || (routeObservationCount > 0 && Vector3.Dot(routeObservationCandidateHeading, heading) < .94f))
             {
                 routeObservationFamily = family;
                 routeObservationCount = 0;
@@ -4458,20 +3063,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (routeObservationCount >= 3)
             {
                 if (!verifiedRouteCommitted || verifiedRouteStair != family)
-                    Debug.LogWarning($"[ROUTE WITNESS LOCKED] " +
-                        $"t={Time.fixedTime:F3} stair={family} " +
-                        $"nextFlat={family + 1} heading={heading:F3} " +
-                        $"source={evidence} dy={step.y:F3} " +
-                        $"speed={horizontalVelocity.magnitude:F2}; " +
-                        "not a turn command", this);
+                    Debug.LogWarning($"[ROUTE WITNESS LOCKED] " + $"t={Time.fixedTime:F3} stair={family} " + $"nextFlat={family + 1} heading={heading:F3} " +
+                        $"source={evidence} dy={step.y:F3} " + $"speed={horizontalVelocity.magnitude:F2}; " + "not a turn command", this);
                 verifiedRouteStair = family;
                 verifiedRouteFlat = family + 1;
                 verifiedRouteHeading = heading;
                 verifiedRouteCommitted = true;
                 routeUnverifiedFamily = -1;
                 routeUnverifiedSince = -1f;
-                SetRouteRecognitionState(RouteRecognitionState.Confirmed,
-                    family, "consecutive verified descent");
+                SetRouteRecognitionState(RouteRecognitionState.Confirmed, family, "consecutive verified descent");
             }
             routeLastNearTime = Time.fixedTime;
         }
@@ -4485,42 +3085,25 @@ public float AdvancePredictedSplineDriveReadOnly(
                 routeLastNearTime = Time.fixedTime;
         }
     }
-
-    bool TryBuildPhysicalForceSurface(
-        NearestKnotDetector.GuideFrame guide, bool grounded,
-        RaycastHit hit, Surface source, out Surface force)
+    bool TryBuildPhysicalForceSurface( NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit hit, Surface source, out Surface force)
     {
         force = source;
-        if (!verifiedRouteCommitted || !grounded || !source.Valid ||
-            (routeEpochActive &&
-             (IsFormerStairAfterCommittedTurn(hit.collider) ||
-              Vector3.Dot(verifiedRouteHeading,
-                  routeAuthorizedHeading) < RouteHeadingMinimumDot)) ||
-            !IsCloseGroundRay(hit, rb.worldCenterOfMass) ||
-            !BeginCommandOnTouch || turnTransitionActive ||
-            waitingForTurnGuide || HasPendingTurnIntent ||
-            fiveLineCorrectionActive || generalStallRecovering ||
-            slopeReleaseEscapeActive || flatStartReleaseCommitInProgress ||
-            bReleaseHandoffActive || postBDownhillArmed)
+        if (!verifiedRouteCommitted || !grounded || !source.Valid || (routeEpochActive && (IsFormerStairAfterCommittedTurn(hit.collider) || Vector3.Dot(verifiedRouteHeading,
+                  routeAuthorizedHeading) < RouteHeadingMinimumDot)) || !IsCloseGroundRay(hit, rb.worldCenterOfMass) || !BeginCommandOnTouch || turnTransitionActive ||
+            waitingForTurnGuide || HasPendingTurnIntent || fiveLineCorrectionActive || generalStallRecovering ||
+            slopeReleaseEscapeActive || flatStartReleaseCommitInProgress || bReleaseHandoffActive || postBDownhillArmed)
             return false;
-        bool onStair = TryGetStageFamily(hit.collider, "StairWay",
-            out int stair) && stair == verifiedRouteStair;
-        bool onFlat = TryGetStageFamily(hit.collider, "ArcSlab",
-            out int flat) && flat == verifiedRouteFlat;
+        bool onStair = TryGetStageFamily(hit.collider, "StairWay", out int stair) && stair == verifiedRouteStair;
+        bool onFlat = TryGetStageFamily(hit.collider, "ArcSlab", out int flat) && flat == verifiedRouteFlat;
         if (!onStair && !onFlat) return false;
         Vector3 normal = hit.normal.normalized;
-        Vector3 tangent = Vector3.ProjectOnPlane(
-            verifiedRouteHeading, normal);
-        // On a true inclined contact, a geometric downhill tangent can
-        // refine the witness. On horizontal step treads, gravity projects to
-        // zero; never throw away a verified corridor because of that.
+        Vector3 tangent = Vector3.ProjectOnPlane( verifiedRouteHeading, normal);
+        // On a true inclined contact, a geometric downhill tangent can refine the witness. On horizontal step treads, gravity projects to zero; never throw away a verified corridor
+        // because of that.
         if (onStair && Vector3.Angle(normal, Vector3.up) >= 25f)
         {
-            Vector3 downhill = Vector3.ProjectOnPlane(
-                Physics.gravity, normal);
-            if (downhill.sqrMagnitude > Eps &&
-                Vector3.Dot(NormalizeFlat(downhill, verifiedRouteHeading),
-                    verifiedRouteHeading) >= .90f)
+            Vector3 downhill = Vector3.ProjectOnPlane( Physics.gravity, normal);
+            if (downhill.sqrMagnitude > Eps && Vector3.Dot(NormalizeFlat(downhill, verifiedRouteHeading), verifiedRouteHeading) >= .90f)
                 tangent = downhill;
         }
         if (tangent.sqrMagnitude <= Eps) return false;
@@ -4536,8 +3119,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         force.tangent = tangent;
         force.normal = normal;
-        // The original side channel is only projected onto the real plane;
-        // its screen-left/right sign is never replaced by the route lock.
+        // The original side channel is only projected onto the real plane; its screen-left/right sign is never replaced by the route lock.
         Vector3 side = Vector3.ProjectOnPlane(source.side, normal);
         if (side.sqrMagnitude < Eps) side = Vector3.Cross(normal, tangent);
         force.side = side.normalized;
@@ -4545,321 +3127,184 @@ public float AdvancePredictedSplineDriveReadOnly(
         force.lateralSpeed = Vector3.Dot(rb.velocity, force.side);
         force.outwardSpeed = Mathf.Max(0f, Vector3.Dot(rb.velocity, normal));
         force.gravityAlong = Vector3.Dot(Physics.gravity, tangent);
-        force.gravitySupport = Mathf.Max(0f,
-            Vector3.Dot(Physics.gravity, -normal));
-        if (Vector3.Dot(NormalizeFlat(source.tangent, verifiedRouteHeading),
-                verifiedRouteHeading) < -.65f &&
-            Time.fixedTime - verifiedRouteLastPoweredLogAt >= .20f)
+        force.gravitySupport = Mathf.Max(0f, Vector3.Dot(Physics.gravity, -normal));
+        if (Vector3.Dot(NormalizeFlat(source.tangent, verifiedRouteHeading), verifiedRouteHeading) < -.65f && Time.fixedTime - verifiedRouteLastPoweredLogAt >= .20f)
         {
             verifiedRouteLastPoweredLogAt = Time.fixedTime;
-            Debug.LogWarning($"[SIGNED ROUTE FORCE BASIS] " +
-                $"t={Time.fixedTime:F3} floor={hit.collider.name} " +
-                $"splineAxis={source.tangent:F3} realAxis={tangent:F3} " +
-                $"actualForward={force.tangentSpeed:F2} " +
+            Debug.LogWarning($"[SIGNED ROUTE FORCE BASIS] " + $"t={Time.fixedTime:F3} floor={hit.collider.name} " +
+                $"splineAxis={source.tangent:F3} realAxis={tangent:F3} " + $"actualForward={force.tangentSpeed:F2} " +
                 "reused ordinary Drive/Stick; no velocity snap", this);
         }
         return true;
     }
-
-    // ================================================================
     // Spline basis
-    // ================================================================
-
     Surface BuildSplineSurface(NearestKnotDetector.GuideFrame g)
     {
-        Vector3 normal = g.normal.sqrMagnitude > Eps
-            ? g.normal.normalized :
-            (!g.isSlope ? Vector3.up :
-                (currentSurfaceValid && currentSurface.normal.sqrMagnitude > Eps
+        Vector3 normal = g.normal.sqrMagnitude > Eps ? g.normal.normalized : (!g.isSlope ? Vector3.up : (currentSurfaceValid && currentSurface.normal.sqrMagnitude > Eps
                     ? currentSurface.normal.normalized : Vector3.up));
         Vector3 tangent = Vector3.ProjectOnPlane(g.tangent, normal);
         if (tangent.sqrMagnitude <= Eps && !g.isSlope && currentSurfaceValid)
             tangent = Vector3.ProjectOnPlane(currentSurface.tangent, normal);
-
         if (tangent.sqrMagnitude <= Eps)
             tangent = Vector3.ProjectOnPlane(direction, normal);
-
         if (tangent.sqrMagnitude <= Eps)
             return default;
-
         tangent.Normalize();
-
         if (Vector3.Dot(tangent, direction) < 0f)
             tangent = -tangent;
-
         Vector3 side = Vector3.Cross(normal, tangent);
-
         if (side.sqrMagnitude <= Eps)
             return default;
-
         side.Normalize();
         tangent = Vector3.Cross(side, normal).normalized;
-
         Vector3 velocity = rb.velocity;
-
         return new Surface
         {
-            tangent = tangent,
-            side = side,
-            normal = normal,
-
-            tangentSpeed = Vector3.Dot(velocity, tangent),
-            lateralSpeed = Vector3.Dot(velocity, side),
-            outwardSpeed = Mathf.Max(0f, Vector3.Dot(velocity, normal)),
-
-            gravityAlong = Vector3.Dot(Physics.gravity, tangent),
+            tangent = tangent, side = side, normal = normal, tangentSpeed = Vector3.Dot(velocity, tangent), lateralSpeed = Vector3.Dot(velocity, side),
+            outwardSpeed = Mathf.Max(0f, Vector3.Dot(velocity, normal)), gravityAlong = Vector3.Dot(Physics.gravity, tangent),
             gravitySupport = Mathf.Max(0f, Vector3.Dot(Physics.gravity, -normal))
         };
     }
-
     float SplineCurvature(NearestKnotDetector.GuideFrame g)
     {
         float entry = Mathf.Max(0f, g.entryCurvature) *
                       (1f - SmoothRange01(g.sectionProgress01, 0f, .25f));
-
         return Mathf.Max(0f, Mathf.Max(g.curvature, entry));
     }
-
-    // ================================================================
-    // Ordinary straight flat: preserve freefall and normal momentum.
-    // This is based on XZ heading, so a vertical 45-degree slope transition
-    // is NOT misclassified as a horizontal 90-degree curve.
-    // ================================================================
+    // Ordinary straight flat: preserve freefall and normal momentum. This is based on XZ heading, so a vertical 45-degree slope transition is NOT misclassified as a horizontal
+    // 90-degree curve.
     bool IsUncommandedStraightFlat(NearestKnotDetector.GuideFrame flat)
     {
-        if (!flat.valid || flat.isSlope || turnTransitionActive ||
-            waitingForTurnGuide || HasPendingTurnIntent ||
-            fiveLineCorrectionActive || autoHoldTurnPending ||
+        if (!flat.valid || flat.isSlope || turnTransitionActive || waitingForTurnGuide || HasPendingTurnIntent || fiveLineCorrectionActive || autoHoldTurnPending ||
             slopeReleaseHoldTurnPending)
             return false;
-
         Vector3 ahead = NormalizeFlat(flat.tangent, direction);
         Vector3 commanded = NormalizeFlat(direction, ahead);
-        Vector3 after = flat.nextTangent.sqrMagnitude > Eps
-            ? NormalizeFlat(flat.nextTangent, ahead) : ahead;
-        return Vector3.Dot(ahead, commanded) > .985f &&
-               Vector3.Dot(ahead, after) > .985f;
+        Vector3 after = flat.nextTangent.sqrMagnitude > Eps ? NormalizeFlat(flat.nextTangent, ahead) : ahead;
+        return Vector3.Dot(ahead, commanded) > .985f && Vector3.Dot(ahead, after) > .985f;
     }
-
-    bool IsUncommandedStraightSlopeEntry(
-        NearestKnotDetector.GuideFrame previousFlat,
-        NearestKnotDetector.GuideFrame nextSlope)
+    bool IsUncommandedStraightSlopeEntry( NearestKnotDetector.GuideFrame previousFlat, NearestKnotDetector.GuideFrame nextSlope)
     {
-        if (!IsUncommandedStraightFlat(previousFlat) ||
-            !nextSlope.valid || !nextSlope.isSlope)
+        if (!IsUncommandedStraightFlat(previousFlat) || !nextSlope.valid || !nextSlope.isSlope)
             return false;
-        return Vector3.Dot(
-            NormalizeFlat(previousFlat.tangent, direction),
-            NormalizeFlat(nextSlope.tangent, direction)) > .985f;
+        return Vector3.Dot( NormalizeFlat(previousFlat.tangent, direction), NormalizeFlat(nextSlope.tangent, direction)) > .985f;
     }
-
-    // ================================================================
     // Spline Grace
-    // ================================================================
-
     float SupportLoad(NearestKnotDetector.GuideFrame g)
     {
-        float time = supportGraceSeconds > Eps
-            ? 1f - Mathf.Clamp01(graceTimer / supportGraceSeconds)
-            : float.PositiveInfinity;
-
+        float time = supportGraceSeconds > Eps ? 1f - Mathf.Clamp01(graceTimer / supportGraceSeconds) : float.PositiveInfinity;
         float distance = Ratio(g.distanceToGuide, supportGraceMaxGuideDistance);
         float outward = Ratio(Outward(g), maxGraceOutwardSpeed);
-
         return Mathf.Max(time, Mathf.Max(distance, outward));
     }
-
     bool CanGrace(NearestKnotDetector.GuideFrame g)
     {
         if (g.isSlope)
             return g.sectionProgress01 < ReleaseEnd;
-
         return g.nextIsSlope;
     }
-
     float Outward(NearestKnotDetector.GuideFrame g)
     {
         Vector3 normal = g.normal.sqrMagnitude > Eps ? g.normal.normalized : Vector3.up;
         return Mathf.Max(0f, Vector3.Dot(rb.velocity, normal));
     }
-
     static float Ratio(float value, float limit)
     {
         value = Mathf.Max(0f, value);
-
         if (limit <= Eps)
             return value <= Eps ? 0f : float.PositiveInfinity;
-
         return value / limit;
     }
-
-    // ================================================================
     // Spline Drive
-    // ================================================================
-
-    float DesiredDrive(
-        Surface s,
-        NearestKnotDetector.GuideFrame g,
-        bool grace)
+    float DesiredDrive( Surface s, NearestKnotDetector.GuideFrame g, bool grace)
     {
         float target;
-
         if (!g.isSlope)
         {
             target = SpeedDrive(s.tangentSpeed);
         }
         else if (g.sectionProgress01 < TargetProgress)
         {
-            float remaining = Mathf.Max(
-                TargetMinDistance,
-                (TargetProgress - g.sectionProgress01) *
+            float remaining = Mathf.Max( TargetMinDistance, (TargetProgress - g.sectionProgress01) *
                 Mathf.Max(TargetMinDistance, g.sectionLength));
-
-            target =
-                (maxGroundSpeed * maxGroundSpeed - s.tangentSpeed * s.tangentSpeed) /
+            target = (maxGroundSpeed * maxGroundSpeed - s.tangentSpeed * s.tangentSpeed) /
                 (2f * Mathf.Max(Eps, remaining))
                 - s.gravityAlong;
-
             target = Mathf.Clamp(target, -TargetAccelerationLimit, TargetAccelerationLimit);
         }
         else
         {
             target = SpeedDrive(s.tangentSpeed);
-
-            float blend = SmoothRange01(
-                g.sectionProgress01,
-                TargetProgress,
-                Mathf.Clamp01(TargetProgress + PostTargetBlendWidth));
-
+            float blend = SmoothRange01( g.sectionProgress01, TargetProgress, Mathf.Clamp01(TargetProgress + PostTargetBlendWidth));
             target -= Mathf.Max(0f, s.gravityAlong) * PostTargetGravityRatio * blend;
             target = Mathf.Min(0f, target);
         }
-
         if (grace)
             target = Mathf.Min(0f, target);
-
         return Mathf.Max(-MaxDeceleration, target);
     }
-
     float SpeedDrive(float speed)
     {
-        return Mathf.Clamp(
-            (maxGroundSpeed - speed) * ResponseInverse,
-            -MaxDeceleration,
-            GroundAcceleration);
+        return Mathf.Clamp( (maxGroundSpeed - speed) * ResponseInverse, -MaxDeceleration, GroundAcceleration);
     }
-
-    // ================================================================
     // Unified Spline Stick
-    // ================================================================
-
-    float DesiredStick(
-        Surface s,
-        NearestKnotDetector.GuideFrame g,
-        float tangentialAcceleration,
-        float curvature,
-        bool grace)
+    float DesiredStick( Surface s, NearestKnotDetector.GuideFrame g, float tangentialAcceleration, float curvature, bool grace)
     {
         // Spline曲率から必要な法線加速度を求める。
-        float forecast = Mathf.Max(
-            0f,
-            s.tangentSpeed +
-            Mathf.Max(0f, tangentialAcceleration) * supportGraceSeconds * .5f);
-
-        float curveNeed = Mathf.Max(
-            0f,
-            forecast * forecast * curvature * stickSafety - s.gravitySupport);
-
+        float forecast = Mathf.Max( 0f, s.tangentSpeed + Mathf.Max(0f, tangentialAcceleration) * supportGraceSeconds * .5f);
+        float curveNeed = Mathf.Max( 0f, forecast * forecast * curvature * stickSafety - s.gravitySupport);
         float graceNeed = 0f;
-
         if (grace && s.outwardSpeed > Eps)
         {
             float remainingTime = Mathf.Max(Time.fixedDeltaTime, graceTimer);
-
-            float remainingDistance = Mathf.Max(
-                .001f,
-                supportGraceMaxGuideDistance - Mathf.Max(0f, g.distanceToGuide));
-
+            float remainingDistance = Mathf.Max( .001f, supportGraceMaxGuideDistance - Mathf.Max(0f, g.distanceToGuide));
             float timeBrake = s.outwardSpeed / remainingTime;
             float distanceBrake = s.outwardSpeed * s.outwardSpeed / (2f * remainingDistance);
-
-            graceNeed = Mathf.Max(
-                0f,
-                Mathf.Max(timeBrake, distanceBrake) - s.gravitySupport);
+            graceNeed = Mathf.Max( 0f, Mathf.Max(timeBrake, distanceBrake) - s.gravitySupport);
         }
-
         // Flat / Curve / Graceを加算せず最大要求だけ採用。
-        return Mathf.Clamp(
-            Mathf.Max(flatStick, Mathf.Max(curveNeed, graceNeed)),
-            0f,
-            maxStick);
+        return Mathf.Clamp( Mathf.Max(flatStick, Mathf.Max(curveNeed, graceNeed)), 0f, maxStick);
     }
-
-    // ================================================================
     // Entry
-    // ================================================================
-
     void TransportToSpline(NearestKnotDetector.GuideFrame g)
     {
         Vector3 before = rb.velocity;
-
         if (before.sqrMagnitude <= Eps || g.normal.sqrMagnitude <= Eps)
             return;
-
         Vector3 normal = g.normal.normalized;
-
         if (Vector3.Dot(before, normal) <= .01f)
             return;
-
         Vector3 projected = Vector3.ProjectOnPlane(before, normal);
-
         if (projected.sqrMagnitude <= Eps)
             return;
-
-        LateralAuditRecordOtherForce("TransportToSpline",
-            projected.normalized * before.magnitude - before,
-            ForceMode.VelocityChange);
-        rb.AddForce(
-            projected.normalized * before.magnitude - before,
-            ForceMode.VelocityChange);
+        LateralAuditRecordOtherForce("TransportToSpline", projected.normalized * before.magnitude - before, ForceMode.VelocityChange);
+        rb.AddForce( projected.normalized * before.magnitude - before, ForceMode.VelocityChange);
     }
-
     void LoseSupport()
     {
-        if (postBDownhillArmed && postBDownhillSawSlope &&
-            postBDownhillLastSupportTime >= 0f &&
-            Time.fixedTime - postBDownhillLastSupportTime > .25f)
+        if (postBDownhillArmed && postBDownhillSawSlope && postBDownhillLastSupportTime >= 0f && Time.fixedTime - postBDownhillLastSupportTime > .25f)
             ClearPostBDownhillGuard("physical slope support lost");
-        if (postAutoHoldEdgeActive && postAutoHoldNewGuide &&
-            postAutoHoldSawSlope)
+        if (postAutoHoldEdgeActive && postAutoHoldNewGuide && postAutoHoldSawSlope)
             FinishPostAutoHoldLeftEdge("support lost", false);
-        // Do not apply an invisible force while airborne. A short seam can
-        // regain support; the cruise controller re-verifies before any force.
+        // Do not apply an invisible force while airborne. A short seam can regain support; the cruise controller re-verifies before any force.
         edgeCruiseSampleValid = false;
         ClearEarlyFlick();
         PauseExtremePointTracking();
         bool lastWasFlat = currentGuideValid && !currentGuide.isSlope;
         wasSlope = false;
-        // An uncommanded seam/freefall never zeroes remembered flat
-        // acceleration scalars, even though no support force is applied.
+        // An uncommanded seam/freefall never zeroes remembered flat acceleration scalars, even though no support force is applied.
         if (!lastWasFlat)
         {
             driveState = 0f;
             stickState = 0f;
         }
-
         currentSupported = false;
         currentGuideValid = false;
         currentSurfaceValid = false;
         flatEntryFrame = default;
-
         ResetBallVisualSplineSession();
     }
-
-    // ================================================================
     // Initial Visual Frame Restore
-    // ================================================================
-
     /// <summary>
     /// まだ旋回していないScene初期状態のVisualPlayerRoot / Pivot Poseを保存します。
     /// Awake() と Start() から呼び、未取得の参照だけを補完します。
@@ -4867,75 +3312,50 @@ public float AdvancePredictedSplineDriveReadOnly(
     void CaptureInitialVisualFramePose()
     {
         FindMapFrameReferences();
-
-        // CorrespondSubjectがVisualPlayerRoot/StageRootの正式な所有者。
-        // Bind済みならここで初期Poseを保存させる。
+        // CorrespondSubjectがVisualPlayerRoot/StageRootの正式な所有者。 Bind済みならここで初期Poseを保存させる。
         correspondSubject?.CaptureInitialFramePose();
-
-        // CorrespondSubjectが無いSceneでもDirect fallbackを戻せるように、
-        // VisualPlayerRootだけはCore側にも初期world Poseを保存する。
+        // CorrespondSubjectが無いSceneでもDirect fallbackを戻せるように、 VisualPlayerRootだけはCore側にも初期world Poseを保存する。
         if (!hasInitialVisualPlayerRootPose && visualPlayerRoot)
         {
-            initialVisualPlayerRootPosition =
-                visualPlayerRoot.position;
-
-            initialVisualPlayerRootRotation =
-                visualPlayerRoot.rotation;
-
+            initialVisualPlayerRootPosition = visualPlayerRoot.position;
+            initialVisualPlayerRootRotation = visualPlayerRoot.rotation;
             hasInitialVisualPlayerRootPose = true;
         }
-
         if (logCore && hasInitialVisualPlayerRootPose)
         {
             ;
         }
     }
-
     /// <summary>
     /// VisualPlayerRoot と Pivot をScene初期Poseへ復元します。
     /// rotationだけでなくpositionも戻すことで、PhysicsRootとの座標対応を復旧します。
     /// </summary>
-    public bool RestoreInitialVisualFrame(
-        bool synchronizeImmediately = true)
+    public bool RestoreInitialVisualFrame( bool synchronizeImmediately = true)
     {
         FindMapFrameReferences();
         BindCoordinateFrames();
         CaptureInitialVisualFramePose();
-
         bool restored = false;
-
         // 正式経路。Tween停止 + VisualPlayerRoot + StageRootをまとめて復元。
         if (correspondSubject)
         {
-            restored =
-                correspondSubject.RestoreInitialFramePose(false);
+            restored = correspondSubject.RestoreInitialFramePose(false);
         }
-
         // CorrespondSubjectが無い場合の互換Fallback。
-        if (!restored &&
-            hasInitialVisualPlayerRootPose &&
-            visualPlayerRoot)
+        if (!restored && hasInitialVisualPlayerRootPose && visualPlayerRoot)
         {
-            visualPlayerRoot.SetPositionAndRotation(
-                initialVisualPlayerRootPosition,
-                initialVisualPlayerRootRotation);
-
+            visualPlayerRoot.SetPositionAndRotation( initialVisualPlayerRootPosition, initialVisualPlayerRootRotation);
             restored = true;
         }
-
         Physics.SyncTransforms();
-
         if (synchronizeImmediately)
             correspondSubject?.SynchronizeNow(true);
-
         if (logCore && visualPlayerRoot)
         {
             ;
         }
-
         return restored;
     }
-
     /// <summary>
     /// Stage/Spline再生成の直前に呼ぶリセットです。
     /// 古い旋回TweenとCore内部の旋回待ち状態を破棄し、
@@ -4945,31 +3365,20 @@ public float AdvancePredictedSplineDriveReadOnly(
     {
         // Tween途中・HardFreeze途中の状態を再生成へ持ち越さない。
         ClearSmoothTurnStateForStageRebuild();
-
         FindMapFrameReferences();
         BindCoordinateFrames();
         CaptureInitialVisualFramePose();
-
-        // Root復元はStage/Spline生成「前」に1回だけ行う。
-        // RestoreInitialVisualFrame -> CorrespondSubject.RestoreInitialFramePose
-        // の中で古いTweenも停止されるため、ここで二重Killはしない。
-        bool restored =
-            RestoreInitialVisualFrame(false);
-
-        // delayStart()へ「これは死亡復帰である」とだけ渡す。
-        // 通常のStart()から来たdelayStart()はこのフラグが立たない。
+        // Root復元はStage/Spline生成「前」に1回だけ行う。 RestoreInitialVisualFrame -> CorrespondSubject.RestoreInitialFramePose の中で古いTweenも停止されるため、ここで二重Killはしない。
+        bool restored = RestoreInitialVisualFrame(false);
+        // delayStart()へ「これは死亡復帰である」とだけ渡す。 通常のStart()から来たdelayStart()はこのフラグが立たない。
         restartFramePrepared = true;
-
         Physics.SyncTransforms();
-
         if (logCore)
         {
             ;
         }
-
         return restored;
     }
-
     /// <summary>
     /// 復帰時に物理位置/velocityを確定した瞬間だけ行う最小リセット。
     /// 古いSpline/旋回状態は捨てるが、通常起動には一切適用しない。
@@ -4977,6 +3386,7 @@ public float AdvancePredictedSplineDriveReadOnly(
     void ResetRestartTransientStateSoft()
     {
         stairMicroFlatTapLeftEdgeStage = -1;
+        postExtremeNoLeftEdgeStage = -1;
         ResetRouteIntegritySupervisor("restart");
         ClearVerifiedStairCorrection();
         ClearPostBDownhillGuard("lifecycle reset");
@@ -4996,17 +3406,13 @@ public float AdvancePredictedSplineDriveReadOnly(
         ResetFlickGesture();
         correspondSubject?.ResetTurnGestureTracking();
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
-
         turnTransitionActive = false;
         turnBodyFrozen = false;
         turnTransitionStartTime = -1f;
         activeTurnDegrees = 0f;
         turnTransitionSnapshot = default;
-
         if (rb && rb.isKinematic)
             rb.isKinematic = false;
-
-
         activeTurnMode = TurnResolutionMode.None;
         autoHoldTurnPending = false;
         slopeReleaseHoldTurnPending = false;
@@ -5022,35 +3428,27 @@ public float AdvancePredictedSplineDriveReadOnly(
         lastFlatTurnLimitProgress = float.NaN;
         flatEntryFrame = default;
         ClearPendingTurnSnapshot();
-
         uncommandedGuideGuardLogged = false;
         ClearUncommittedRouteGuard("turn/stage reset");
         waitingForTurnGuide = false;
         turnGuideReleasedAt = -1f;
         turnGuideGuardBraking = false;
         turnGuideCrawlLogged = false;
-
-        // rb.velocityを0へした同じタイミングでController蓄積も0へ揃える。
-        // これにより「Stage再生成時点で先にdrive/stickだけ0になる」時間差を作らない。
+        // rb.velocityを0へした同じタイミングでController蓄積も0へ揃える。 これにより「Stage再生成時点で先にdrive/stickだけ0になる」時間差を作らない。
         driveState = 0f;
         stickState = 0f;
         graceTimer = 0f;
         wasSlope = false;
-
         // 再生成前のGuide/Surfaceは再生成後Splineでは無効なので破棄する。
         currentSupported = false;
         currentGuideValid = false;
         currentSurfaceValid = false;
         currentGuide = default;
         currentSurface = default;
-
-        // FiveLineGroup自体は強制Centerへ書き換えない。
-        // 復帰以外の後続旋回挙動へ余計なバイアスを残さない。
-
+        // FiveLineGroup自体は強制Centerへ書き換えない。 復帰以外の後続旋回挙動へ余計なバイアスを残さない。
         // BallVisualに再生成前Spline sessionを持ち越させない。
         ResetBallVisualSplineSession();
     }
-
     /// <summary>
     /// 復帰開始方向の応急処置版。
     /// KnotDetector.Evaluate()には依存せず、実体Physics板のforwardだけを見る。
@@ -5059,32 +3457,18 @@ public float AdvancePredictedSplineDriveReadOnly(
     {
         if (startSlab)
         {
-            Vector3 slabForward =
-                Vector3.ProjectOnPlane(
-                    startSlab.forward,
-                    Vector3.up);
-
+            Vector3 slabForward = Vector3.ProjectOnPlane( startSlab.forward, Vector3.up);
             if (slabForward.sqrMagnitude > Eps)
                 return slabForward.normalized;
         }
-
         // 板forwardが取れない時だけ既存のtravelDirectionへフォールバック。
-        return NormalizeFlat(
-            travelDirection,
-            direction);
+        return NormalizeFlat( travelDirection, direction);
     }
-
     public void SetTravelDirection(Vector3 worldDirection)
     {
         direction = NormalizeFlat(worldDirection, direction);
     }
-
-    // ================================================================
-    // Map coordinate direction turn
-    // SlopeStick3Dから移植。
-    // 物理方向変更はCore、Visual座標変換とSubject同期はCorrespondSubjectが担当。
-    // ================================================================
-
+    // Map coordinate direction turn SlopeStick3Dから移植。 物理方向変更はCore、Visual座標変換とSubject同期はCorrespondSubjectが担当。
     void FindMapFrameReferences()
     {
         if (!physicsRoot)
@@ -5093,76 +3477,57 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (physics)
                 physicsRoot = physics.transform;
         }
-
         if (!visualPlayerRoot)
         {
             GameObject visualRoot = GameObject.Find("VisualPlayerRoot");
             if (visualRoot)
                 visualPlayerRoot = visualRoot.transform;
         }
-
         if (!visualRotationPivot)
         {
             GameObject center = GameObject.Find("Center1");
             if (center)
                 visualRotationPivot = center.transform;
         }
-
         if (!correspondSubject)
             correspondSubject = FindFirstObjectByType<CorrespondSubject>();
     }
-
     void BindCoordinateFrames()
     {
         if (!correspondSubject)
             return;
-
-        correspondSubject.Bind(
-            rb,
-            physicsRoot,
-            visualPlayerRoot);
+        correspondSubject.Bind( rb, physicsRoot, visualPlayerRoot);
     }
-
-    // The gauge owns which touch started on its UI. The core consumes only
-    // game-originated gestures; the CorrespondSubject remains responsible for
-    // the visual-frame turn itself. No cooldown timer is introduced.
+    // The gauge owns which touch started on its UI. The core consumes only game-originated gestures; the CorrespondSubject remains responsible for the visual-frame turn itself.
+    // No cooldown timer is introduced.
     void ReadTurnFlick()
     {
-        // Input.GetTouch works on both Android and iOS. On mobile never also
-        // consume the simulated mouse events, which could double-trigger turns.
+        // Input.GetTouch works on both Android and iOS. On mobile never also consume the simulated mouse events, which could double-trigger turns.
         if (Application.isMobilePlatform || Input.touchCount > 0)
         {
             ReadTouchTurnFlick();
             return;
         }
-
         ReadMouseTurnFlick();
     }
-
     void ReadTouchTurnFlick()
     {
         int currentTouchIndex = -1;
         int newGameTouchIndex = -1;
         bool currentTouchBlocked = false;
-
-        // Every touch must be forwarded to CockpitGauge (via CorrespondSubject),
-        // including UI touches and Ended/Canceled phases.
+        // Every touch must be forwarded to CockpitGauge (via CorrespondSubject), including UI touches and Ended/Canceled phases.
         for (int i = 0; i < Input.touchCount; i++)
         {
             Touch touch = Input.GetTouch(i);
-            bool blocked = correspondSubject &&
-                           correspondSubject.ShouldIgnoreTurnTouch(touch);
-
+            bool blocked = correspondSubject && correspondSubject.ShouldIgnoreTurnTouch(touch);
             if (trackingFlick && touch.fingerId == activeFlickFingerId)
             {
                 currentTouchIndex = i;
                 currentTouchBlocked = blocked;
             }
-
             if (touch.phase == TouchPhase.Began && !blocked && newGameTouchIndex < 0)
                 newGameTouchIndex = i;
         }
-
         if (trackingFlick)
         {
             if (currentTouchIndex < 0 || currentTouchBlocked)
@@ -5182,17 +3547,13 @@ public float AdvancePredictedSplineDriveReadOnly(
                 ObserveAdaptiveFlickPointer(current.position);
                 // While pressed, collect samples only; no 90-degree commit.
                 bool consumedBeforeRelease = flickConsumed;
-
-                // Normal turns still finalize on release; an already accepted
-                // same-flat tap turn cannot be queued a second time.
+                // Normal turns still finalize on release; an already accepted same-flat tap turn cannot be queued a second time.
                 if (current.phase == TouchPhase.Ended)
                 {
                     TryQueueFlickFromPosition(current.position);
                     LogFlickRelease("touch", current.position, consumedBeforeRelease, false);
                 }
-
-                if (current.phase == TouchPhase.Ended ||
-                    current.phase == TouchPhase.Canceled)
+                if (current.phase == TouchPhase.Ended || current.phase == TouchPhase.Canceled)
                 {
                     ResetFlickGesture();
                 }
@@ -5202,23 +3563,18 @@ public float AdvancePredictedSplineDriveReadOnly(
                 }
             }
         }
-
-        // A newly started game touch is accepted immediately, including if
-        // an older touch ends during the same frame.
+        // A newly started game touch is accepted immediately, including if an older touch ends during the same frame.
         if (!trackingFlick && newGameTouchIndex >= 0)
         {
             Touch next = Input.GetTouch(newGameTouchIndex);
             BeginFlickGesture(next.position, next.fingerId);
         }
     }
-
     void ReadMouseTurnFlick()
     {
         bool down = Input.GetMouseButtonDown(0);
         bool up = Input.GetMouseButtonUp(0);
-        bool blocked = correspondSubject &&
-                       correspondSubject.ShouldIgnoreTurnMouse(Input.mousePosition, down, up);
-
+        bool blocked = correspondSubject && correspondSubject.ShouldIgnoreTurnMouse(Input.mousePosition, down, up);
         if (down)
         {
             if (blocked)
@@ -5226,30 +3582,23 @@ public float AdvancePredictedSplineDriveReadOnly(
             else
                 BeginFlickGesture(Input.mousePosition, -1);
         }
-
         if (trackingFlick && !blocked && Input.GetMouseButton(0))
         {
             ObserveAdaptiveFlickPointer(Input.mousePosition);
             // Commit only on MouseUp.
         }
-
         bool consumedBeforeRelease = flickConsumed;
-        // Ordinary mouse flicks still execute on MouseUp, while a qualified
-        // same-flat tap flick can already have been accepted during the hold.
+        // Ordinary mouse flicks still execute on MouseUp, while a qualified same-flat tap flick can already have been accepted during the hold.
         if (trackingFlick && !blocked && up)
             TryQueueFlickFromPosition(Input.mousePosition);
-
         // 判定前の消費状態と、離した瞬間のGuide/Hitを同時に記録する。
         if (up && trackingFlick)
             LogFlickRelease("mouse", Input.mousePosition, consumedBeforeRelease, blocked);
-
         if (up || blocked)
             ResetFlickGesture();
     }
-
-    // Gesture samples are collected every frame. The tap+same-flat route alone
-    // may confirm early when time-to-slope and a coherent finger motion agree.
-    // Physical millimeters make the threshold independent of device pixel density.
+    // Gesture samples are collected every frame. The tap+same-flat route alone may confirm early when time-to-slope and a coherent finger motion agree. Physical millimeters make
+    // the threshold independent of device pixel density.
     Vector2 adaptiveLastPosition;
     float adaptiveLastTime;
     float adaptivePeakHorizontalMm;
@@ -5258,8 +3607,7 @@ public float AdvancePredictedSplineDriveReadOnly(
     float adaptivePeakSlideMmPerSecond;
     float adaptivePeakSlideMm;
     float adaptiveTotalSlideMm;
-    // Total sideways travel detects prolonged left/right dithering during a drag.
-    // It does NOT impose a new time delay on a short purposeful flick.
+    // Total sideways travel detects prolonged left/right dithering during a drag. It does NOT impose a new time delay on a short purposeful flick.
     float adaptiveTotalHorizontalTravelMm;
     Vector2 adaptiveLastStepDirection;
     int adaptiveMovingSamples;
@@ -5270,18 +3618,15 @@ public float AdvancePredictedSplineDriveReadOnly(
     float adaptiveTimeToSlope = float.PositiveInfinity;
     float adaptiveDistanceToSlope = float.PositiveInfinity;
     float adaptiveForwardSpeed;
-
     float GesturePixelsPerMm()
     {
-        // Unity may report 0 DPI. In that case use a conservative mobile baseline;
-        // mouse input uses screen coordinates and should not trust desktop monitor DPI.
+        // Unity may report 0 DPI. In that case use a conservative mobile baseline; mouse input uses screen coordinates and should not trust desktop monitor DPI.
         if (!Application.isMobilePlatform && Input.touchCount == 0)
             return Mathf.Max(1f, minimumFlickPixels / 1.5f) *
                 Mathf.Clamp(Screen.height / 1080f, 0.75f, 2f);
         float dpi = Screen.dpi;
         return (dpi >= 100f && dpi <= 800f ? dpi : 160f) / 25.4f;
     }
-
     void BeginAdaptiveFlick(Vector2 position)
     {
         adaptivePixelsPerMm = GesturePixelsPerMm();
@@ -5301,7 +3646,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         adaptiveDistanceToSlope = float.PositiveInfinity;
         adaptiveForwardSpeed = 0f;
     }
-
     void ObserveAdaptiveFlickPointer(Vector2 position)
     {
         if (!trackingFlick) return;
@@ -5313,22 +3657,16 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             adaptiveTotalSlideMm += stepMm;
             adaptiveTotalHorizontalTravelMm += Mathf.Abs(step.x) / ppm;
-            // Detect purposeful straight motion on ANY axis. Small jitter
-            // does not contribute to the directional sample count.
+            // Detect purposeful straight motion on ANY axis. Small jitter does not contribute to the directional sample count.
             if (stepMm >= .12f)
             {
                 Vector2 stepDirection = step.normalized;
                 adaptiveMovingSamples++;
-                adaptiveConsistentSamples =
-                    adaptiveLastStepDirection != Vector2.zero &&
-                    Vector2.Dot(stepDirection, adaptiveLastStepDirection) >= .65f
+                adaptiveConsistentSamples = adaptiveLastStepDirection != Vector2.zero && Vector2.Dot(stepDirection, adaptiveLastStepDirection) >= .65f
                         ? adaptiveConsistentSamples + 1 : 1;
                 adaptiveLastStepDirection = stepDirection;
-
                 // The peak must be based on segment time, not hold duration.
-                adaptivePeakSlideMmPerSecond = Mathf.Max(
-                    adaptivePeakSlideMmPerSecond,
-                    Mathf.Min(1000f, stepMm / elapsed));
+                adaptivePeakSlideMmPerSecond = Mathf.Max( adaptivePeakSlideMmPerSecond, Mathf.Min(1000f, stepMm / elapsed));
             }
         }
         Vector2 delta = (position - flickStart) / ppm;
@@ -5338,113 +3676,72 @@ public float AdvancePredictedSplineDriveReadOnly(
         adaptiveLastPosition = position;
         adaptiveLastTime = Time.unscaledTime;
     }
-
-    // Return the time until the current physically supported flat reaches the
-    // next slope. Never reduce the threshold using an unverified spline or
-    // off-surface position. Infinity means "use the ordinary flick threshold".
-    float GetAdaptiveTimeToNextSlope(out float remainingMeters,
-        out float forwardMetersPerSecond)
+    // Return the time until the current physically supported flat reaches the next slope. Never reduce the threshold using an unverified spline or off-surface position. Infinity
+    // means "use the ordinary flick threshold".
+    float GetAdaptiveTimeToNextSlope(out float remainingMeters, out float forwardMetersPerSecond)
     {
         remainingMeters = float.PositiveInfinity;
         forwardMetersPerSecond = 0f;
-        if (!rb || tapEdgeState != TapEdgeState.Armed ||
-            !tapEdgeFlatCollider || flickPressFlatCollider != tapEdgeFlatCollider)
+        if (!rb || tapEdgeState != TapEdgeState.Armed || !tapEdgeFlatCollider || flickPressFlatCollider != tapEdgeFlatCollider)
             return float.PositiveInfinity;
-
         var contact = HasGroundSupport();
-        if (!contact.Item1 || contact.Item2.collider != tapEdgeFlatCollider ||
-            !IsTapEdgeSupportedFlat(contact.Item1, contact.Item2))
+        if (!contact.Item1 || contact.Item2.collider != tapEdgeFlatCollider || !IsTapEdgeSupportedFlat(contact.Item1, contact.Item2))
             return float.PositiveInfinity;
-
-        Vector3 heading = NormalizeFlat(
-            currentGuideValid && !currentGuide.isSlope
-                ? currentGuide.tangent
-                : (flatEntryFrame.valid ? flatEntryFrame.direction : direction),
+        Vector3 heading = NormalizeFlat( currentGuideValid && !currentGuide.isSlope ? currentGuide.tangent : (flatEntryFrame.valid ? flatEntryFrame.direction : direction),
             direction);
         forwardMetersPerSecond = Mathf.Max(0f, Vector3.Dot(rb.velocity, heading));
-
-        // NearestKnotDetector supplies distance to the next slope. Near a
-        // seam it may momentarily switch guides, so keep the already captured
-        // entry frame as a geometrically projected fallback (same spline only).
-        if (currentGuideValid && !currentGuide.isSlope &&
-            currentGuide.nextIsSlope &&
-            IsFiniteFloat(currentGuide.distanceToNextSlope) &&
+        // NearestKnotDetector supplies distance to the next slope. Near a seam it may momentarily switch guides, so keep the already captured entry frame as a geometrically projected
+        // fallback (same spline only).
+        if (currentGuideValid && !currentGuide.isSlope && currentGuide.nextIsSlope && IsFiniteFloat(currentGuide.distanceToNextSlope) &&
             currentGuide.distanceToNextSlope >= 0f)
             remainingMeters = currentGuide.distanceToNextSlope;
-
-        if (flatEntryFrame.valid &&
-            (!currentGuideValid || currentGuide.splineIndex == flatEntryFrame.splineIndex ||
-             currentGuide.isSlope))
+        if (flatEntryFrame.valid && (!currentGuideValid || currentGuide.splineIndex == flatEntryFrame.splineIndex || currentGuide.isSlope))
         {
             float entryRemaining = flatEntryFrame.distanceToNextSlope -
-                Vector3.Dot(rb.position - flatEntryFrame.position,
-                    flatEntryFrame.direction);
-            if (IsFiniteFloat(entryRemaining) &&
-                entryRemaining >= -ProbeRadius * 2f)
-                remainingMeters = Mathf.Min(remainingMeters,
-                    Mathf.Max(0f, entryRemaining));
+                Vector3.Dot(rb.position - flatEntryFrame.position, flatEntryFrame.direction);
+            if (IsFiniteFloat(entryRemaining) && entryRemaining >= -ProbeRadius * 2f)
+                remainingMeters = Mathf.Min(remainingMeters, Mathf.Max(0f, entryRemaining));
         }
-
-        // A generated flat may be split into separate physical slabs even
-        // where the guide does not yet expose nextIsSlope. The forward AABB
-        // extent is a conservative positional estimate of when the current
-        // *same collider* may end; it never authorizes a turn without contact.
+        // A generated flat may be split into separate physical slabs even where the guide does not yet expose nextIsSlope. The forward AABB extent is a conservative positional
+        // estimate of when the current *same collider* may end; it never authorizes a turn without contact.
         Bounds slabBounds = contact.Item2.collider.bounds;
-        float boundingHalfLength =
-            Mathf.Abs(heading.x) * slabBounds.extents.x +
-            Mathf.Abs(heading.z) * slabBounds.extents.z;
+        float boundingHalfLength = Mathf.Abs(heading.x) * slabBounds.extents.x + Mathf.Abs(heading.z) * slabBounds.extents.z;
         float toSlabBounds = boundingHalfLength -
             Vector3.Dot(rb.position - slabBounds.center, heading);
         if (IsFiniteFloat(toSlabBounds) && toSlabBounds >= -ProbeRadius)
-            remainingMeters = Mathf.Min(remainingMeters,
-                Mathf.Max(0f, toSlabBounds));
-
+            remainingMeters = Mathf.Min(remainingMeters, Mathf.Max(0f, toSlabBounds));
         if (float.IsInfinity(remainingMeters) || forwardMetersPerSecond <= 0.5f)
             return float.PositiveInfinity;
-
-        // Stay ahead of the flat lip by the ball radius and up to two physics
-        // frames of travel. This is a recognition budget, NOT authorization
-        // to turn after contact with the original flat has been lost.
-        float safetyDistance = ProbeRadius * 1.25f +
-            forwardMetersPerSecond * Mathf.Clamp(2f * Time.fixedDeltaTime,
-                .015f, .04f);
+        // Stay ahead of the flat lip by the ball radius and up to two physics frames of travel. This is a recognition budget, NOT authorization to turn after contact with the
+        // original flat has been lost.
+        float safetyDistance = ProbeRadius * 1.25f + forwardMetersPerSecond * Mathf.Clamp(2f * Time.fixedDeltaTime, .015f, .04f);
         return Mathf.Max(0f, remainingMeters - safetyDistance) /
             forwardMetersPerSecond;
     }
-
-    // Only a clear sideways component may request a signed 90-degree turn.
-    // Do NOT infer left/right from a vertical swipe or the sign of delta.y.
-    // The ordinary adaptive travel/speed thresholds remain unchanged.
+    // Only a clear sideways component may request a signed 90-degree turn. Do NOT infer left/right from a vertical swipe or the sign of delta.y. The ordinary adaptive
+    // travel/speed thresholds remain unchanged.
     const float FlickMinimumHorizontalIntentMm = .45f;
     const float FlickMinimumHorizontalToVerticalRatio = .45f;
     const float FlickLongDragMinPathMm = 4f;
     const float FlickLongDragSideCoherence = .60f;
-
     bool HasClearHorizontalTurnIntent(Vector2 deltaMm)
     {
         float sideways = Mathf.Abs(deltaMm.x);
         float vertical = Mathf.Abs(deltaMm.y);
-        if (sideways < FlickMinimumHorizontalIntentMm ||
-            sideways < vertical * FlickMinimumHorizontalToVerticalRatio)
+        if (sideways < FlickMinimumHorizontalIntentMm || sideways < vertical * FlickMinimumHorizontalToVerticalRatio)
             return false;
-
-        // A long held drag may wander sideways in both directions while
-        // moving mainly up/down. Require only mild NET sideways coherence;
-        // short, fast diagonal flicks are unaffected by this extra check.
-        if (adaptiveTotalSlideMm >= FlickLongDragMinPathMm &&
-            adaptiveMovingSamples >= 3 &&
-            adaptiveTotalHorizontalTravelMm > .001f &&
+        // A long held drag may wander sideways in both directions while moving mainly up/down. Require only mild NET sideways coherence; short, fast diagonal flicks are unaffected by
+        // this extra check.
+        if (adaptiveTotalSlideMm >= FlickLongDragMinPathMm && adaptiveMovingSamples >= 3 && adaptiveTotalHorizontalTravelMm > .001f &&
             sideways < adaptiveTotalHorizontalTravelMm * FlickLongDragSideCoherence)
             return false;
         return true;
     }
-
     float SlideTurnSign(Vector2 deltaMm)
     {
         // Called only after HasClearHorizontalTurnIntent succeeds.
         return Mathf.Sign(deltaMm.x);
     }
-
     bool TryGetAdaptiveFlick(Vector2 position, out float signedTurnPixels)
     {
         ObserveAdaptiveFlickPointer(position);
@@ -5453,48 +3750,38 @@ public float AdvancePredictedSplineDriveReadOnly(
         float slideMm = deltaMm.magnitude;
         float coherence = slideMm /
             Mathf.Max(slideMm, adaptiveTotalSlideMm);
-
-        bool consistent = adaptiveMovingSamples >= 2 &&
-            adaptiveConsistentSamples >= 2;
-        // A deliberate 1.2 mm / ~26 mm/s gesture was previously rejected
-        // solely because it did not reach the 30 mm/s 'fast' threshold.
-        // Keep true taps (no coherent samples) separate from slide turns.
+        bool consistent = adaptiveMovingSamples >= 2 && adaptiveConsistentSamples >= 2;
+        // A deliberate 1.2 mm / ~26 mm/s gesture was previously rejected solely because it did not reach the 30 mm/s 'fast' threshold. Keep true taps (no coherent samples) separate
+        // from slide turns.
         bool quick = consistent && adaptivePeakSlideMmPerSecond >= 30f;
-        bool deliberateShort = consistent &&
-            adaptivePeakSlideMmPerSecond >= 20f;
+        bool deliberateShort = consistent && adaptivePeakSlideMmPerSecond >= 20f;
         float requiredMm = quick ? .7f : deliberateShort ? .95f : 1.5f;
-
-        adaptiveTimeToSlope = GetAdaptiveTimeToNextSlope(
-            out adaptiveDistanceToSlope, out adaptiveForwardSpeed);
+        adaptiveTimeToSlope = GetAdaptiveTimeToNextSlope( out adaptiveDistanceToSlope, out adaptiveForwardSpeed);
         if (!float.IsInfinity(adaptiveTimeToSlope))
         {
-            // Approaching a verified flat lip allows a shorter intentional
-            // slide regardless of its angle; support checks are unchanged.
-            float urgency = Mathf.InverseLerp(.06f, .30f,
-                adaptiveTimeToSlope);
+            // Approaching a verified flat lip allows a shorter intentional slide regardless of its angle; support checks are unchanged.
+            float urgency = Mathf.InverseLerp(.06f, .30f, adaptiveTimeToSlope);
             urgency = urgency * urgency * (3f - 2f * urgency);
             requiredMm = Mathf.Min(requiredMm, Mathf.Lerp(.35f, 1.5f, urgency));
         }
         adaptiveRequiredMm = requiredMm;
-
         bool reduced = requiredMm < 1.5f - .001f;
-        bool intentionalShort = !reduced ||
-            (consistent && adaptivePeakSlideMmPerSecond >= 10f);
-        bool validSlide = slideMm >= requiredMm &&
-                          coherence >= .65f && intentionalShort &&
-                          adaptivePeakSlideMm <=
-                              Mathf.Max(1.7f * slideMm, 1.5f) &&
+        bool intentionalShort = !reduced || (consistent && adaptivePeakSlideMmPerSecond >= 10f);
+        bool validSlide = slideMm >= requiredMm && coherence >= .65f && intentionalShort && adaptivePeakSlideMm <= Mathf.Max(1.7f * slideMm, 1.5f) &&
                           HasClearHorizontalTurnIntent(deltaMm);
-
-        // QueueQuarterTurn and QueueEarlyFlick both read only the sign.
-        // Never assign a sign based on Y when the horizontal intent is weak.
-        signedTurnPixels = validSlide
-            ? SlideTurnSign(deltaMm) * pixelDelta.magnitude : 0f;
+        // QueueQuarterTurn and QueueEarlyFlick both read only the sign. Never assign a sign based on Y when the horizontal intent is weak.
+        signedTurnPixels = validSlide ? SlideTurnSign(deltaMm) * pixelDelta.magnitude : 0f;
         return validSlide;
     }
-
     // Same-flat tap flicks are queued only by their pointer release.
-
+    // The policy is stage-scoped: it covers the pressed stair and its immediately receiving flat/stair, not an unrelated later curve.
+    bool IsPostExtremeNoLeftEdgeActive(Collider physicalFloor)
+    {
+        if (postExtremeNoLeftEdgeStage >= 0 && physicalFloor && (TryGetStageFamily(physicalFloor, "StairWay", out int family) ||
+             TryGetStageFamily(physicalFloor, "ArcSlab", out family)) && family > postExtremeNoLeftEdgeStage + 1)
+            postExtremeNoLeftEdgeStage = -1;
+        return postExtremeNoLeftEdgeStage != -1;
+    }
     void BeginFlickGesture(Vector2 position, int fingerId)
     {
         ClearUncommittedRouteGuard("new gesture");
@@ -5512,140 +3799,92 @@ public float AdvancePredictedSplineDriveReadOnly(
         // 通常フリック方法Aの開始地形記録は従来どおり保持する。
         flickStartedOnFlat = BallVisualIsOnFlat;
         flickPressFlatCollider = null;
-        flickStartedBeforeExtreme = currentGuideValid && currentGuide.isSlope &&
-            !extremePointFiredInSection && currentGuide.sectionProgress01 < TargetProgress;
-
-        // 自動InCornerの受付開始は「平面で押した瞬間」だけ。
-        // Updateの入力フレームで物理座標を直接Evaluateし、現在の接地状態や
-        // 平面→階段の境界通過イベントを受付条件に使わない。
+        flickStartedBeforeExtreme = currentGuideValid && currentGuide.isSlope && !extremePointFiredInSection && currentGuide.sectionProgress01 < TargetProgress;
+        // 自動InCornerの受付開始は「平面で押した瞬間」だけ。 Updateの入力フレームで物理座標を直接Evaluateし、現在の接地状態や 平面→階段の境界通過イベントを受付条件に使わない。
         NearestKnotDetector.GuideFrame pressGuide = default;
         if (knotDetector && rb)
             pressGuide = knotDetector.Evaluate(rb.position);
         bool guideSaysFlat = pressGuide.valid && !pressGuide.isSlope;
-        // A press close to the outgoing physical flat is still a FLAT-start
-        // hold even when Evaluate() has already selected the first stair knot.
-        // A late press on a stair is never upgraded to flat-start AutoHold.
+        // A press close to the outgoing physical flat is still a FLAT-start hold even when Evaluate() has already selected the first stair knot. A late press on a stair is never
+        // upgraded to flat-start AutoHold.
         var pressSupport = HasGroundSupport();
-        bool nearPressFloor = pressSupport.Item1 &&
-            IsCloseGroundRay(pressSupport.Item2, rb.worldCenterOfMass);
+        bool nearPressFloor = pressSupport.Item1 && IsCloseGroundRay(pressSupport.Item2, rb.worldCenterOfMass);
         float sinceLastPhysicalFlat = Time.time - autoHoldRecentPressFlatTime;
         Vector3 pressOffsetFromFlat = rb.position - autoHoldRecentPressFlatPosition;
-        float pressForwardTravel = Vector3.Dot(pressOffsetFromFlat,
-            autoHoldRecentPressFlatHeading);
-        float pressSideTravel = Vector3.ProjectOnPlane(pressOffsetFromFlat,
-            Vector3.up).magnitude;
-        float maximumGraceTravel = ProbeRadius +
-            Mathf.Max(0f, Vector3.Dot(rb.velocity,
-                autoHoldRecentPressFlatHeading)) * AutoHoldFlatPressGraceSeconds;
-        bool recentFlatWitness = autoHoldRecentPressFlatCollider &&
-            autoHoldRecentPressFlatTime >= 0f &&
-            sinceLastPhysicalFlat >= 0f &&
-            sinceLastPhysicalFlat <= AutoHoldFlatPressGraceSeconds &&
-            pressForwardTravel >= -ProbeRadius &&
-            pressForwardTravel <= maximumGraceTravel &&
+        float pressForwardTravel = Vector3.Dot(pressOffsetFromFlat, autoHoldRecentPressFlatHeading);
+        float pressSideTravel = Vector3.ProjectOnPlane(pressOffsetFromFlat, Vector3.up).magnitude;
+        float maximumGraceTravel = ProbeRadius + Mathf.Max(0f, Vector3.Dot(rb.velocity, autoHoldRecentPressFlatHeading)) * AutoHoldFlatPressGraceSeconds;
+        bool recentFlatWitness = autoHoldRecentPressFlatCollider && autoHoldRecentPressFlatTime >= 0f && sinceLastPhysicalFlat >= 0f &&
+            sinceLastPhysicalFlat <= AutoHoldFlatPressGraceSeconds && pressForwardTravel >= -ProbeRadius && pressForwardTravel <= maximumGraceTravel &&
             pressSideTravel <= maximumGraceTravel + ProbeRadius;
-        bool sameRealFlat = recentFlatWitness && nearPressFloor &&
-            pressSupport.Item2.collider == autoHoldRecentPressFlatCollider &&
-            Vector3.Angle(pressSupport.Item2.normal, Vector3.up) <= 18f &&
-            (!pressGuide.valid || !pressGuide.isSlope ||
+        bool sameRealFlat = recentFlatWitness && nearPressFloor && pressSupport.Item2.collider == autoHoldRecentPressFlatCollider &&
+            Vector3.Angle(pressSupport.Item2.normal, Vector3.up) <= 18f && (!pressGuide.valid || !pressGuide.isSlope ||
              pressGuide.sectionProgress01 <= AutoHoldFlatPressGraceSlopeProgress);
-        bool justExitedFlat = recentFlatWitness && nearPressFloor &&
-            pressGuide.valid && pressGuide.isSlope &&
-            pressGuide.sectionProgress01 <= AutoHoldFlatPressGraceSlopeProgress &&
-            Vector3.Dot(NormalizeFlat(pressGuide.tangent, direction),
+        bool justExitedFlat = recentFlatWitness && nearPressFloor && pressGuide.valid && pressGuide.isSlope &&
+            pressGuide.sectionProgress01 <= AutoHoldFlatPressGraceSlopeProgress && Vector3.Dot(NormalizeFlat(pressGuide.tangent, direction),
                 autoHoldRecentPressFlatHeading) > .65f;
         bool autoHoldPressOnFlat = guideSaysFlat || sameRealFlat || justExitedFlat;
-        string autoHoldPressSource = guideSaysFlat ? "flat spline" :
-            sameRealFlat ? "same physical flat" :
-            justExitedFlat ? "0.08s flat-exit grace" : "not a flat press";
-        // Right AFTER the extreme point, the nearest guide may jump to the
-        // next flat while the actual collider is still a slope. Preserve the
-        // last verified slope frame only in this physically confirmed case.
-        if (slopeReleaseAllowPostExtremePress &&
-            pressGuide.valid && !pressGuide.isSlope &&
-            currentGuideValid && currentGuide.isSlope &&
-            extremePointFiredInSection && pressSupport.Item1 &&
-            Vector3.Angle(pressSupport.Item2.normal, Vector3.up) > 18f &&
-            IsAutoHoldStageHit(pressSupport.Item2, float.NaN) &&
-            currentGuide.distanceToGuide <=
-                Mathf.Max(ProbeRadius * 2f, supportGraceMaxGuideDistance))
+        string autoHoldPressSource = guideSaysFlat ? "flat spline" : sameRealFlat ? "same physical flat" : justExitedFlat ? "0.08s flat-exit grace" : "not a flat press";
+        // Right AFTER the extreme point, the nearest guide may jump to the next flat while the actual collider is still a slope. Preserve the last verified slope frame only in this
+        // physically confirmed case.
+        if (slopeReleaseAllowPostExtremePress && pressGuide.valid && !pressGuide.isSlope && currentGuideValid && currentGuide.isSlope &&
+            extremePointFiredInSection && pressSupport.Item1 && Vector3.Angle(pressSupport.Item2.normal, Vector3.up) > 18f &&
+            IsAutoHoldStageHit(pressSupport.Item2, float.NaN) && currentGuide.distanceToGuide <= Mathf.Max(ProbeRadius * 2f, supportGraceMaxGuideDistance))
         {
             pressGuide = currentGuide;
-            // The physically verified stair owns this press. Do not let the
-            // earlier (misleading) flat spline classification steal it.
+            // The physically verified stair owns this press. Do not let the earlier (misleading) flat spline classification steal it.
             autoHoldPressOnFlat = false;
             autoHoldPressSource = "post-extreme physical stair";
-            SlopeReleaseHoldLog("POST-EXTREME LIP",
-                "using last slope guide; physical slope collider is still supporting");
+            SlopeReleaseHoldLog("POST-EXTREME LIP", "using last slope guide; physical slope collider is still supporting");
         }
-        // Each STAIR TREAD also has a horizontal collider normal. Therefore
-        // a horizontal hit alone must not turn an actual slope press into a
-        // flat tap. Preserve the old lip fallback only near the slope ENTRY
-        // when the previous physics guide was really on a flat.
-        bool verifiedSlopeSection = pressGuide.valid && pressGuide.isSlope &&
-            pressSupport.Item1 &&
-            IsAutoHoldStageHit(pressSupport.Item2, float.NaN) &&
-            !sameRealFlat && !justExitedFlat &&
-            (pressGuide.sectionProgress01 > .035f ||
-             (currentGuideValid && currentGuide.isSlope));
-        bool supportedPressFlat = !verifiedSlopeSection &&
-            !justExitedFlat && // slope-exit grace must not create a TAP
+        // Each STAIR TREAD also has a horizontal collider normal. Therefore a horizontal hit alone must not turn an actual slope press into a flat tap. Preserve the old lip fallback
+        // only near the slope ENTRY when the previous physics guide was really on a flat.
+        bool verifiedSlopeSection = pressGuide.valid && pressGuide.isSlope && pressSupport.Item1 && IsAutoHoldStageHit(pressSupport.Item2, float.NaN) &&
+            !sameRealFlat && !justExitedFlat && (pressGuide.sectionProgress01 > .035f || (currentGuideValid && currentGuide.isSlope));
+        bool supportedPressFlat = !verifiedSlopeSection && !justExitedFlat && // slope-exit grace must not create a TAP
             IsTapEdgeSupportedFlat(pressSupport.Item1, pressSupport.Item2);
         tapEdgePressOnFlat = supportedPressFlat;
         if (verifiedSlopeSection)
             flickStartedOnFlat = false;
         else
             flickStartedOnFlat |= supportedPressFlat || autoHoldPressOnFlat;
-        flickPressFlatCollider = supportedPressFlat
-            ? pressSupport.Item2.collider : null;
-
-        // A fresh gesture after the extreme point cancels the spent tap;
-        // it cannot become a delayed flat turn through the old micro route.
-        if (tapEdgeState == TapEdgeState.TurnQueued ||
-            (tapEdgeState == TapEdgeState.Armed &&
-             pressGuide.valid && pressGuide.isSlope &&
-             (pressGuide.sectionProgress01 >= TargetProgress ||
-              (currentGuideValid && extremePointFiredInSection))))
+        flickPressFlatCollider = supportedPressFlat ? pressSupport.Item2.collider : null;
+        // A fresh gesture after the extreme point cancels the spent tap; it cannot become a delayed flat turn through the old micro route.
+        if (tapEdgeState == TapEdgeState.TurnQueued || (tapEdgeState == TapEdgeState.Armed && pressGuide.valid && pressGuide.isSlope &&
+             (pressGuide.sectionProgress01 >= TargetProgress || (currentGuideValid && extremePointFiredInSection))))
         {
             CancelTapEdge("new input after extreme point");
-            // This same post-target tap must NOT immediately re-arm a new
-            // left-edge route when released on the next flat.
+            // This same post-target tap must NOT immediately re-arm a new left-edge route when released on the next flat.
             tapEdgePressOnFlat = false;
         }
-
-        if (flatStartReleaseCommitInProgress && autoHoldEligible &&
-            !HasPendingTurnIntent)
+        if (flatStartReleaseCommitInProgress && autoHoldEligible && !HasPendingTurnIntent)
             CancelAutoHold("new press interrupted B release recheck");
         flatStartReleaseCommitInProgress = false;
         ResetAutoHoldObservation(false);
-        // B release-only retains its flat-press arming policy,
-        // but both lateral halves and both geometric turn directions are valid.
-        // A slope-start release is a separate, release-triggered gesture.
-        bool slopePressSupported = pressGuide.valid && pressGuide.isSlope &&
-            !autoHoldPressOnFlat &&
-            pressSupport.Item1 && IsAutoHoldStageHit(pressSupport.Item2, float.NaN);
-        // Explicit post-extreme route. The event flag can be reset at the
-        // next flat, so latch it HERE while the original slope is identifiable.
-        bool pressAfterExtreme = slopePressSupported &&
-            (pressGuide.sectionProgress01 >= TargetProgress ||
-             (currentGuideValid && currentGuide.isSlope &&
-              knotDetector.IsSameSection(currentGuide, pressGuide) &&
-              extremePointFiredInSection));
-        bool slopePressAllowed = autoInCornerHoldEnabled && slopePressSupported &&
-            tapEdgeState == TapEdgeState.None && // already armed TapEdge owns the next touch
-            (!pressAfterExtreme || slopeReleaseAllowPostExtremePress) &&
-            !flickStartedOnFlat && BeginCommandOnTouch && Earliest &&
-            AcceleFirstTurn && !MainGameManager.OnDead &&
-            !HasPendingTurnIntent && !turnTransitionActive &&
-            !waitingForTurnGuide && !slopeReleaseEscapeActive &&
+        // B release-only retains its flat-press arming policy, but both lateral halves and both geometric turn directions are valid. A slope-start release is a separate,
+        // release-triggered gesture.
+        bool slopePressSupported = pressGuide.valid && pressGuide.isSlope && !autoHoldPressOnFlat && pressSupport.Item1 && IsAutoHoldStageHit(pressSupport.Item2, float.NaN);
+        // Explicit post-extreme route. The event flag can be reset at the next flat, so latch it HERE while the original slope is identifiable.
+        bool pressAfterExtreme = slopePressSupported && (pressGuide.sectionProgress01 >= TargetProgress || (currentGuideValid && currentGuide.isSlope &&
+              knotDetector.IsSameSection(currentGuide, pressGuide) && extremePointFiredInSection));
+        IsPostExtremeNoLeftEdgeActive(pressSupport.Item2.collider);
+        if (pressAfterExtreme || (currentGuideValid && currentGuide.isSlope && extremePointFiredInSection))
+        {
+            // Even a one-frame TAP invalidates LEFT assistance for this corner. It does not queue a turn or consume the existing B.
+            postExtremeNoLeftEdgeStage = TryGetStageFamily(pressSupport.Item2.collider, "StairWay", out int pressedFamily) || TryGetStageFamily(pressSupport.Item2.collider,
+                    "ArcSlab", out pressedFamily) ? pressedFamily : -2;
+            ClearPostAutoHoldLeftEdge();
+            StopEdgeCruise("post-extreme tap cancels left edge");
+            AutoHoldLog("POST-EXTREME LEFT CANCELED", $"stage={postExtremeNoLeftEdgeStage}; tap duration not required");
+        }
+        bool slopePressAllowed = autoInCornerHoldEnabled && slopePressSupported && tapEdgeState == TapEdgeState.None && // already armed TapEdge owns the next touch
+            (!pressAfterExtreme || slopeReleaseAllowPostExtremePress) && !flickStartedOnFlat && BeginCommandOnTouch && Earliest &&
+            AcceleFirstTurn && !MainGameManager.OnDead && !HasPendingTurnIntent && !turnTransitionActive && !waitingForTurnGuide && !slopeReleaseEscapeActive &&
             rb && !rb.isKinematic;
         slopeReleaseHoldArmed = slopePressAllowed;
         if (slopeReleaseHoldArmed)
         {
-            slopeReleaseOriginStairFamily =
-                TryGetStageFamily(pressSupport.Item2.collider,
-                    "StairWay", out int heldStairFamily)
-                    ? heldStairFamily : -1;
+            slopeReleaseOriginStairFamily = TryGetStageFamily(pressSupport.Item2.collider, "StairWay", out int heldStairFamily) ? heldStairFamily : -1;
             slopeReleaseFirstStairFamily = slopeReleaseOriginStairFamily;
             slopeReleaseTerminalReleaseAt = -1f;
             slopeReleaseTerminalStairCollider = null;
@@ -5655,157 +3894,95 @@ public float AdvancePredictedSplineDriveReadOnly(
             slopeReleaseStartedAfterExtreme = pressAfterExtreme;
             slopeReleaseExtremeReachedWhileHeld = pressAfterExtreme;
         }
-        autoHoldEligible = autoInCornerHoldEnabled &&
-            (autoHoldPressOnFlat || slopeReleaseHoldArmed) &&
-            tapEdgeState == TapEdgeState.None &&
-            !HasPendingTurnIntent && !turnTransitionActive &&
-            !waitingForTurnGuide && !generalStallRecovering &&
-            BeginCommandOnTouch && Earliest && !MainGameManager.OnDead;
+        autoHoldEligible = autoInCornerHoldEnabled && (autoHoldPressOnFlat || slopeReleaseHoldArmed) && tapEdgeState == TapEdgeState.None &&
+            !HasPendingTurnIntent && !turnTransitionActive && !waitingForTurnGuide && !generalStallRecovering && BeginCommandOnTouch && Earliest && !MainGameManager.OnDead;
         if (autoHoldEligible && slopeReleaseHoldArmed)
             bHoldOriginFlatFamily = slopeReleaseOriginStairFamily;
         if (autoHoldEligible && !slopeReleaseHoldArmed)
         {
-            // The physical stage at PRESS owns the B reservation. Near a
-            // seam, Evaluate() may still report a flat while the supporting
-            // collider has already changed from ArcSlab(N) to StairWay(N).
-            // Both carry the same stage family N; the next phase is N+1.
-            // Do not infer a stage number from a later spline sectionIndex.
-            Collider pressCollider = pressSupport.Item1
-                ? pressSupport.Item2.collider : null;
+            // The physical stage at PRESS owns the B reservation. Near a seam, Evaluate() may still report a flat while the supporting collider has already changed from ArcSlab(N) to
+            // StairWay(N). Both carry the same stage family N; the next phase is N+1. Do not infer a stage number from a later spline sectionIndex.
+            Collider pressCollider = pressSupport.Item1 ? pressSupport.Item2.collider : null;
             int pressPhaseFamily = -1;
-            bool foundPressPhase =
-                TryGetStageFamily(pressCollider, "ArcSlab", out pressPhaseFamily) ||
-                TryGetStageFamily(pressCollider, "StairWay", out pressPhaseFamily);
-            // Keep the existing short flat-contact grace only when the
-            // current support cannot identify a real generated stage.
-            if (!foundPressPhase && autoHoldRecentPressFlatTime >= 0f &&
-                Time.time - autoHoldRecentPressFlatTime <=
-                          AutoHoldFlatPressGraceSeconds)
-                foundPressPhase = TryGetStageFamily(
-                    autoHoldRecentPressFlatCollider, "ArcSlab",
-                    out pressPhaseFamily);
+            bool foundPressPhase = TryGetStageFamily(pressCollider, "ArcSlab", out pressPhaseFamily) || TryGetStageFamily(pressCollider, "StairWay", out pressPhaseFamily);
+            // Keep the existing short flat-contact grace only when the current support cannot identify a real generated stage.
+            if (!foundPressPhase && autoHoldRecentPressFlatTime >= 0f && Time.time - autoHoldRecentPressFlatTime <= AutoHoldFlatPressGraceSeconds)
+                foundPressPhase = TryGetStageFamily( autoHoldRecentPressFlatCollider, "ArcSlab", out pressPhaseFamily);
             bHoldOriginFlatFamily = foundPressPhase ? pressPhaseFamily : -1;
-            // Capture the already accepted route at the PRESS, not the
-            // nearest spline on a later stair. This is a signed heading.
-            Vector3 pressHeading = pressGuide.valid
-                ? NormalizeFlat(pressGuide.tangent, direction)
-                : NormalizeFlat(autoHoldRecentPressFlatHeading, direction);
+            // Capture the already accepted route at the PRESS, not the nearest spline on a later stair. This is a signed heading.
+            Vector3 pressHeading = pressGuide.valid ? NormalizeFlat(pressGuide.tangent, direction) : NormalizeFlat(autoHoldRecentPressFlatHeading, direction);
             Vector3 authoritative = NormalizeFlat(direction, travelDirection);
-            autoHoldPressConfirmedHeading =
-                Vector3.Dot(pressHeading, authoritative) >= .80f
-                    ? pressHeading : authoritative;
+            autoHoldPressConfirmedHeading = Vector3.Dot(pressHeading, authoritative) >= .80f ? pressHeading : authoritative;
         }
         if (slopeReleaseHoldArmed)
         {
-            // Capture the very first slope frame NOW. At high speed there may
-            // be no further FixedUpdate on this particular section.
+            // Capture the very first slope frame NOW. At high speed there may be no further FixedUpdate on this particular section.
             ObserveAutoHoldSlope(pressGuide);
-            SlopeReleaseHoldLog(pressAfterExtreme ? "POST-EXTREME ARMED" : "ARMED",
-                $"section={pressGuide.sectionIndex} spline={pressGuide.splineIndex} " +
-                $"progress={pressGuide.sectionProgress01:F3} target={TargetProgress:F3} " +
-                $"speed={rb.velocity.magnitude:F2} finger={fingerId}");
+            SlopeReleaseHoldLog(pressAfterExtreme ? "POST-EXTREME ARMED" : "ARMED", $"section={pressGuide.sectionIndex} spline={pressGuide.splineIndex} " +
+                $"progress={pressGuide.sectionProgress01:F3} target={TargetProgress:F3} " + $"speed={rb.velocity.magnitude:F2} finger={fingerId}");
         }
         else if (autoHoldEligible)
-            AutoHoldLog("START", $"flat press started now; finger={fingerId} " +
-                        $"source={autoHoldPressSource} guide={pressGuide.splineIndex} " +
-                        $"progress={pressGuide.sectionProgress01:F3} " +
-                        $"phase=ArcSlab{bHoldOriginFlatFamily} " +
-                        $"support={(pressSupport.Item2.collider ? pressSupport.Item2.collider.name : "-")} " +
-                        $"pos={rb.position:F3}");
+            AutoHoldLog("START", $"flat press started now; finger={fingerId} " + $"source={autoHoldPressSource} guide={pressGuide.splineIndex} " +
+                        $"progress={pressGuide.sectionProgress01:F3} " + $"phase=ArcSlab{bHoldOriginFlatFamily} " +
+                        $"support={(pressSupport.Item2.collider ? pressSupport.Item2.collider.name : "-")} " + $"pos={rb.position:F3}");
         else if (autoInCornerHoldEnabled)
-            AutoHoldLog("NOT ARMED", $"pressFlat={autoHoldPressOnFlat} " +
-                        $"source={autoHoldPressSource} " +
-                        $"guideValid={pressGuide.valid} slope={pressGuide.isSlope} " +
-                        $"progress={pressGuide.sectionProgress01:F3} " +
-                        $"support={(pressSupport.Item2.collider ? pressSupport.Item2.collider.name : "-")} " +
-                        $"nearFloor={nearPressFloor} lastFlatAge={sinceLastPhysicalFlat:F3}s " +
-                        $"tapEdge={tapEdgeState} " +
-                        $"started={BeginCommandOnTouch} earliest={Earliest} " +
-                        $"dead={MainGameManager.OnDead}");
-
+            AutoHoldLog("NOT ARMED", $"pressFlat={autoHoldPressOnFlat} " + $"source={autoHoldPressSource} " + $"guideValid={pressGuide.valid} slope={pressGuide.isSlope} " +
+                        $"progress={pressGuide.sectionProgress01:F3} " + $"support={(pressSupport.Item2.collider ? pressSupport.Item2.collider.name : "-")} " +
+                        $"nearFloor={nearPressFloor} lastFlatAge={sinceLastPhysicalFlat:F3}s " + $"tapEdge={tapEdgeState} " +
+                        $"started={BeginCommandOnTouch} earliest={Earliest} " + $"dead={MainGameManager.OnDead}");
         if (logTurnTransition)
             Debug.Log($"[FLICK PRESS] t={Time.time:F3} input={(fingerId < 0 ? "mouse" : "touch")} " +
                       $"finger={fingerId} slope={currentGuideValid && currentGuide.isSlope} " +
                       $"flat={BallVisualIsOnFlat} progress={(currentGuideValid ? currentGuide.sectionProgress01 : -1f):F3} " +
                       $"pressOnFlat={flickStartedOnFlat} pressBeforeExtreme={flickStartedBeforeExtreme}", this);
     }
-
     // MouseUp/Touch Endedの入力分類・実行結果と、その瞬間の地形を同時に記録。
     void LogFlickRelease(string input, Vector2 position, bool consumedBeforeRelease, bool blocked)
     {
         if (!logTurnTransition)
             return;
-
         Vector2 delta = position - flickStart;
         bool slide = TryGetAdaptiveFlick(position, out float signedTurnPixels);
         bool horizontal = Mathf.Abs(delta.x) > Mathf.Abs(delta.y) * 1.10f;
-        bool horizontalIntent = HasClearHorizontalTurnIntent(
-            delta / Mathf.Max(1f, adaptivePixelsPerMm));
+        bool horizontalIntent = HasClearHorizontalTurnIntent( delta / Mathf.Max(1f, adaptivePixelsPerMm));
         string hitName = currentHit.collider ? currentHit.collider.name : "none";
-        Debug.Log($"[FLICK RELEASE] t={Time.time:F3} input={input} " +
-                  $"dx={delta.x:F1}px dy={delta.y:F1}px horizontal={horizontal} " +
-                  $"horizontalIntent={horizontalIntent} " +
-                  $"slide={slide} turnSign={(signedTurnPixels > 0f ? 1 : signedTurnPixels < 0f ? -1 : 0):+0;-0;0} " +
-                  $"adaptiveMm={delta.magnitude / Mathf.Max(1f, adaptivePixelsPerMm):F2} " +
-                  $"peakSpeedMmS={adaptivePeakSlideMmPerSecond:F1} " +
-                  $"samples={adaptiveMovingSamples} coherent={adaptiveConsistentSamples} " +
-                  $"requiredMm={adaptiveRequiredMm:F2} " +
-                  $"timeToSlope={(float.IsInfinity(adaptiveTimeToSlope) ? -1f : adaptiveTimeToSlope):F3}s " +
-                  $"commit=release tapEdge={tapEdgeState} " +
+        Debug.Log($"[FLICK RELEASE] t={Time.time:F3} input={input} " + $"dx={delta.x:F1}px dy={delta.y:F1}px horizontal={horizontal} " +
+                  $"horizontalIntent={horizontalIntent} " + $"slide={slide} turnSign={(signedTurnPixels > 0f ? 1 : signedTurnPixels < 0f ? -1 : 0):+0;-0;0} " +
+                  $"adaptiveMm={delta.magnitude / Mathf.Max(1f, adaptivePixelsPerMm):F2} " + $"peakSpeedMmS={adaptivePeakSlideMmPerSecond:F1} " +
+                  $"samples={adaptiveMovingSamples} coherent={adaptiveConsistentSamples} " + $"requiredMm={adaptiveRequiredMm:F2} " +
+                  $"timeToSlope={(float.IsInfinity(adaptiveTimeToSlope) ? -1f : adaptiveTimeToSlope):F3}s " + $"commit=release tapEdge={tapEdgeState} " +
                   $"pressOnFlat={flickStartedOnFlat} pressBeforeExtreme={flickStartedBeforeExtreme} " +
-                  $"consumedBefore={consumedBeforeRelease} consumedAfter={flickConsumed} " +
-                  $"blocked={blocked} guideValid={currentGuideValid} " +
+                  $"consumedBefore={consumedBeforeRelease} consumedAfter={flickConsumed} " + $"blocked={blocked} guideValid={currentGuideValid} " +
                   $"slope={currentGuideValid && currentGuide.isSlope} flat={BallVisualIsOnFlat} " +
                   $"progress={(currentGuideValid ? currentGuide.sectionProgress01 : -1f):F3} " +
-                  $"supported={currentSupported} extremePassed={extremePointFiredInSection} " +
-                  $"hit={hitName} pendingTurn={HasPendingTurnIntent}", this);
+                  $"supported={currentSupported} extremePassed={extremePointFiredInSection} " + $"hit={hitName} pendingTurn={HasPendingTurnIntent}", this);
     }
-
-    // The single B authorization: MouseUp was recorded AND the actual next
-    // physical stage phase was entered. A stair-start B can use StairWay(N+1)
-    // without ArcSlab(N+1). No extra floor-search or terminal ray is needed.
+    // One released gesture + one verified next-stage floor authorizes one turn. Flat-tap LEFT micro may use ArcSlab; other stair micro uses StairWay.
     bool TryCommitBReleaseOnObservedPhase()
     {
-        if (!flatStartReleaseCommitInProgress || !autoHoldEligible ||
-            bHoldOriginFlatFamily < 0 ||
-            !autoHoldNextFlatReady || !autoHoldNextFlatCollider ||
-            !BeginCommandOnTouch || !Earliest || !AcceleFirstTurn ||
-            MainGameManager.OnDead || !rb || rb.isKinematic ||
-            turnTransitionActive || waitingForTurnGuide ||
+        if (!flatStartReleaseCommitInProgress || !autoHoldEligible || bHoldOriginFlatFamily < 0 || !autoHoldNextFlatReady || !autoHoldNextFlatCollider ||
+            !BeginCommandOnTouch || !Earliest || !AcceleFirstTurn || MainGameManager.OnDead || !rb || rb.isKinematic || turnTransitionActive || waitingForTurnGuide ||
             HasPendingTurnIntent || generalStallRecovering)
             return false;
-
         int nextFamily = -1;
-        bool receivingFlat = !stairMicroPhaseTurnPending &&
-            TryGetStageFamily(autoHoldNextFlatCollider,
-                "ArcSlab", out nextFamily);
-        bool receivingStair = stairMicroPhaseTurnPending &&
-            TryGetStageFamily(autoHoldNextFlatCollider, "StairWay",
-                out nextFamily);
-        if ((!receivingFlat && !receivingStair) ||
-            nextFamily != bHoldOriginFlatFamily + 1)
+        bool receivingFlat = TryGetStageFamily(autoHoldNextFlatCollider, "ArcSlab", out nextFamily) &&
+            (!stairMicroPhaseTurnPending || stairMicroFlatTapLeftEdgeStage == nextFamily);
+        bool receivingStair = stairMicroPhaseTurnPending && TryGetStageFamily(autoHoldNextFlatCollider, "StairWay", out nextFamily);
+        if ((!receivingFlat && !receivingStair) || nextFamily != bHoldOriginFlatFamily + 1)
             return false;
-
-        // If the intermediate stair was jumped, no slope sample exists.
-        // Build the lateral frame from the saved PRESS direction instead.
+        // If the intermediate stair was jumped, no slope sample exists. Build the lateral frame from the saved PRESS direction instead.
         if (!autoHoldLastHalfValid)
         {
-            autoHoldLastForward = NormalizeFlat(
-                autoHoldPressConfirmedHeading, direction);
-            autoHoldLastLeft = Vector3.Cross(
-                autoHoldLastForward, Vector3.up).normalized;
+            autoHoldLastForward = NormalizeFlat( autoHoldPressConfirmedHeading, direction);
+            autoHoldLastLeft = Vector3.Cross( autoHoldLastForward, Vector3.up).normalized;
             autoHoldLastCenter = rb.position;
             autoHoldLastInnerLinePoint = rb.position;
             autoHoldLastHalfValid = true;
         }
-        float lateral = Vector3.Dot(
-            rb.position - autoHoldLastCenter, autoHoldLastLeft);
+        float lateral = Vector3.Dot( rb.position - autoHoldLastCenter, autoHoldLastLeft);
         autoHoldLeftHalf = lateral > autoHoldLeftHalfMarginMeters;
-
-        // Mark the phase route before queueing; the shared turn motor will
-        // keep this fact across the visual handoff and avoid another ray veto.
-        // QueueAutoHoldHeldTurn consumes the gesture and clears observation.
-        // Keep the verified receiving collider for the commit log.
+        // Mark the phase route before queueing; the shared turn motor will keep this fact across the visual handoff and avoid another ray veto. QueueAutoHoldHeldTurn consumes the
+        // gesture and clears observation. Keep the verified receiving collider for the commit log.
         Collider receivingStage = autoHoldNextFlatCollider;
         bReleasePhaseTurnCommitted = true;
         QueueAutoHoldHeldTurn(lateral);
@@ -5815,146 +3992,111 @@ public float AdvancePredictedSplineDriveReadOnly(
             bReleasePhaseTurnCommitted = false;
             return false;
         }
-        ShowRouteGameSign("TURN QUEUED", "B release + next stage phase",
-            new Color(.20f, 1f, .48f), 1.6f);
-        AutoHoldLog("B PHASE RELEASE COMMIT",
-            $"from=Stage{nextFamily - 1} to={receivingStage.name} " +
-            $"sign={autoHoldTurnSign:+0;-0} " +
+        ShowRouteGameSign("TURN QUEUED", "B release + next stage phase", new Color(.20f, 1f, .48f), 1.6f);
+        AutoHoldLog("B PHASE RELEASE COMMIT", $"from=Stage{nextFamily - 1} to={receivingStage.name} " + $"sign={autoHoldTurnSign:+0;-0} " +
             $"pos={rb.position:F3}; no receiving-floor ray check");
         return true;
     }
-
-    // The three accepted pre-extreme stair-micro origins share one release
-    // transaction. The existing physical StairWay(N+1) observer owns the turn;
-    // the flick itself performs lateral steering only until that stage arrives.
-    void QueueStairMicroPhaseTurn(float signedPixels,
-        Vector2 pointerPosition, string origin)
+    // All early micro origins share one release; flat-tap LEFT may commit on the next flat, otherwise on the next real stair.
+    void QueueStairMicroPhaseTurn(float signedPixels, Vector2 pointerPosition, string origin)
     {
         bool fromFlatTap = origin == "flat-tap";
         QueueEarlyFlick(signedPixels);
-        stairMicroFlatTapLeftEdgeStage = fromFlatTap && signedPixels < 0f &&
-            bHoldOriginFlatFamily >= 0 ? bHoldOriginFlatFamily + 1 : -1;
+        stairMicroFlatTapLeftEdgeStage = fromFlatTap && signedPixels < 0f && bHoldOriginFlatFamily >= 0 ? bHoldOriginFlatFamily + 1 : -1;
         stairMicroPhaseTurnPending = true;
         flatStartReleaseCommitInProgress = true;
         bReleaseHandoffTime = Time.time;
-        // A floor hit while the finger was down may be a side wall. Leave
-        // receiving-stage verification to the existing FixedUpdate observer.
-        ShowRouteGameSign("STAIR MICRO STEER",
-            "Turn only on next stair phase",
-            new Color(1f, .78f, .20f));
-        AutoHoldLog("STAIR MICRO PHASE PENDING",
-            $"originStage={bHoldOriginFlatFamily}; " +
-            $"fromFlatTap={fromFlatTap}; source={origin}; " +
-            "lateral correction accepted; next StairWay only");
+        // A floor hit while the finger was down may be a side wall. Leave receiving-stage verification to the existing FixedUpdate observer.
+        string turnTarget = stairMicroFlatTapLeftEdgeStage >= 0 ? "next physical flat/stair" : "next StairWay only";
+        ShowRouteGameSign("STAIR MICRO STEER", turnTarget, new Color(1f, .78f, .20f));
+        AutoHoldLog("STAIR MICRO PHASE PENDING", $"originStage={bHoldOriginFlatFamily}; " + $"fromFlatTap={fromFlatTap}; source={origin}; " +
+            $"lateral correction accepted; {turnTarget}");
         flickConsumed = true;
         flickStart = pointerPosition;
         BeginAdaptiveFlick(pointerPosition);
     }
-
     void TryQueueFlickFromPosition(Vector2 position)
     {
         if (!trackingFlick || flickConsumed)
             return;
-
-        // MouseUp on the already transferred REAL StairWay(N+1) belongs to
-        // the existing stair-start B. Its first few steps also look like an
-        // original-stair early flick, so check physical B ownership FIRST.
-        // A missing/ambiguous contact still cannot invent a 90-degree turn.
-        if (slopeReleaseHoldArmed && autoHoldEligible &&
-            slopeReleaseFirstStairFamily >= 0)
+        // Extra release-only option on the ORIGINAL post-extreme stair. Once the receiving phase is observed, normal B owns the release. A coherent drag may choose the sign, but no
+        // drag is required.
+        bool postExtremeLongHold = slopeReleaseHoldArmed && slopeReleaseStartedAfterExtreme && autoHoldEligible && Time.unscaledTime - flickPressUnscaledTime >= .30f &&
+            !slopeReleaseHoldNextFlatSeen && !autoHoldNextFlatReady && slopeReleaseFirstStairFamily >= 0 && slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily;
+        if (postExtremeLongHold)
         {
-            if (slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily &&
-                knotDetector && rb)
-                TryTransferSlopeHoldToPhysicalNextStair(
-                    knotDetector.Evaluate(rb.position));
+            float releaseSign;
+            if (TryGetAdaptiveFlick(position, out float signedPixels))
+                releaseSign = Mathf.Sign(signedPixels);
+            else if (!TryResolveAutoHoldTurnSign(out releaseSign, out _))
+                releaseSign = -1f;
+            if (QueueQuarterTurn(releaseSign, false, true))
+            {
+                flickConsumed = true;
+                ResetAutoHoldObservation(false);
+                SlopeReleaseHoldLog("POST-EXTREME RELEASE TURN", "90-degree turn queued at finger release; no left-edge assist");
+                return;
+            }
+            // A failed optional fast route must not erase the usual B hold.
+            SlopeReleaseHoldLog("POST-EXTREME FAST ROUTE UNAVAILABLE", "continuing existing physical B release path");
+        }
+        // MouseUp on the already transferred REAL StairWay(N+1) belongs to the existing stair-start B. Its first few steps also look like an original-stair early flick, so check
+        // physical B ownership FIRST. A missing/ambiguous contact still cannot invent a 90-degree turn.
+        if (slopeReleaseHoldArmed && autoHoldEligible && slopeReleaseFirstStairFamily >= 0)
+        {
+            if (slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily && knotDetector && rb)
+                TryTransferSlopeHoldToPhysicalNextStair( knotDetector.Evaluate(rb.position));
             if (slopeReleaseOriginStairFamily > slopeReleaseFirstStairFamily)
             {
                 var support = HasGroundSupport();
-                bool onSuccessorFlat = support.Item1 &&
-                    IsSlopeTerminalSuccessorFlat(support.Item2);
+                bool onSuccessorFlat = support.Item1 && IsSlopeTerminalSuccessorFlat(support.Item2);
                 if (!onSuccessorFlat && LatchSlopeReleaseTerminalGesture())
                 {
-                    SlopeReleaseHoldLog("NEXT STAIR B RELEASE",
-                        $"from={slopeReleaseFirstStairFamily} " +
-                        $"to={slopeReleaseOriginStairFamily}; " +
+                    SlopeReleaseHoldLog("NEXT STAIR B RELEASE", $"from={slopeReleaseFirstStairFamily} " + $"to={slopeReleaseOriginStairFamily}; " +
                         "verified stair owner takes release before micro-flick");
                     return;
                 }
             }
         }
-
-        // A genuine pre-extreme stair flick steers immediately, then reserves
-        // a turn ONLY on physical StairWay(N+1). A short preceding tap on
-        // ArcSlab(N) is a permitted origin witness for the SAME reservation;
-        // it must not redirect the flick to TapEdge's later flat turn.
-        // A plain stair tap (no horizontal flick) grants no turn permission.
-        // Initialize before the && chain: its short-circuit skips out calls.
+        // A genuine pre-extreme stair flick steers immediately, then reserves a turn ONLY on physical StairWay(N+1). A short preceding tap on ArcSlab(N) is a permitted origin witness
+        // for the SAME reservation; it must not redirect the flick to TapEdge's later flat turn. A plain stair tap (no horizontal flick) grants no turn permission.
         float stairMicroSignedPixels = 0f;
-        bool stairMicroFlick = slopeReleaseHoldArmed &&
-            autoHoldEligible && bHoldOriginFlatFamily >= 0 &&
-            currentGuideValid && currentGuide.isSlope &&
-            (flickStartedBeforeExtreme ||
-             currentGuide.sectionProgress01 < TargetProgress) &&
-            TryGetAdaptiveFlick(position, out stairMicroSignedPixels) &&
+        bool stairMicroFlick = slopeReleaseHoldArmed && autoHoldEligible && bHoldOriginFlatFamily >= 0 && currentGuideValid && currentGuide.isSlope &&
+            (flickStartedBeforeExtreme || currentGuide.sectionProgress01 < TargetProgress) && TryGetAdaptiveFlick(position, out stairMicroSignedPixels) &&
             CanQueueEarlyFlick(flickStartedBeforeExtreme);
         int tappedStageFamily = -1;
-        // A tap on flat N can precede a NEW touch on stair N. This fresh
-        // stair press intentionally does not arm the old slope-hold route;
-        // use the existing physical stage witness and the same micro path.
-        bool flatTapStairMicroFlick = !stairMicroFlick &&
-            tapEdgeState == TapEdgeState.Armed && tapEdgeFlatCollider &&
-            currentSupported && currentHit.collider &&
-            currentGuideValid && currentGuide.isSlope &&
-            (flickStartedBeforeExtreme ||
-             currentGuide.sectionProgress01 < TargetProgress) &&
-            TryGetStageFamily(tapEdgeFlatCollider, "ArcSlab",
-                out tappedStageFamily) &&
-            TryGetStageFamily(currentHit.collider, "StairWay",
-                out int physicalStairFamily) &&
-            tappedStageFamily == physicalStairFamily &&
-            TryGetAdaptiveFlick(position, out stairMicroSignedPixels) &&
-            CanQueueEarlyFlick(flickStartedBeforeExtreme);
+        // A tap on flat N can precede a NEW touch on stair N. This fresh stair press intentionally does not arm the old slope-hold route; use the existing physical stage witness and
+        // the same micro path.
+        bool flatTapStairMicroFlick = !stairMicroFlick && tapEdgeState == TapEdgeState.Armed && tapEdgeFlatCollider && currentSupported && currentHit.collider &&
+            currentGuideValid && currentGuide.isSlope && (flickStartedBeforeExtreme || currentGuide.sectionProgress01 < TargetProgress) &&
+            TryGetStageFamily(tapEdgeFlatCollider, "ArcSlab", out tappedStageFamily) && TryGetStageFamily(currentHit.collider, "StairWay", out int physicalStairFamily) &&
+            tappedStageFamily == physicalStairFamily && TryGetAdaptiveFlick(position, out stairMicroSignedPixels) && CanQueueEarlyFlick(flickStartedBeforeExtreme);
         if (stairMicroFlick || flatTapStairMicroFlick)
         {
             if (flatTapStairMicroFlick)
             {
-                // The short flat tap has supplied its ONLY useful evidence:
-                // same stage N. No later flat may consume this micro flick.
+                // The short flat tap has supplied its ONLY useful evidence: same stage N. No later flat may consume this micro flick.
                 ResetTapEdge();
                 autoHoldEligible = true;
                 bHoldOriginFlatFamily = tappedStageFamily;
-                autoHoldPressConfirmedHeading = NormalizeFlat(
-                    direction, currentGuide.tangent);
+                autoHoldPressConfirmedHeading = NormalizeFlat( direction, currentGuide.tangent);
                 ObserveAutoHoldSlope(currentGuide);
             }
-            QueueStairMicroPhaseTurn(stairMicroSignedPixels, position,
-                flatTapStairMicroFlick ? "flat-tap" : "stair-press");
+            QueueStairMicroPhaseTurn(stairMicroSignedPixels, position, flatTapStairMicroFlick ? "flat-tap" : "stair-press");
             return;
         }
-
-        // Original flat-start B keeps its independent release+phase route.
-        // The stair-start early-flick exception below still applies to flat
-        // gestures, but stair-origin no-swipe input cannot queue this B route.
-        if (autoHoldEligible && bHoldOriginFlatFamily >= 0 &&
-            !slopeReleaseHoldArmed &&
-            (autoHoldSawSlope || autoHoldNextFlatReady))
+        // Original flat-start B keeps its independent release+phase route. The stair-start early-flick exception below still applies to flat gestures, but stair-origin no-swipe input
+        // cannot queue this B route.
+        if (autoHoldEligible && bHoldOriginFlatFamily >= 0 && !slopeReleaseHoldArmed && (autoHoldSawSlope || autoHoldNextFlatReady))
         {
-            bool originalStairMicroFlick = !slopeReleaseHoldArmed &&
-                !autoHoldNextFlatReady &&
-                currentGuideValid && currentGuide.isSlope &&
-                autoHoldLastSlopeGuide.valid && knotDetector &&
-                knotDetector.IsSameSection(autoHoldLastSlopeGuide, currentGuide) &&
-                currentGuide.sectionProgress01 < TargetProgress &&
-                !extremePointFiredInSection &&
-                TryGetAdaptiveFlick(position, out stairMicroSignedPixels);
+            bool originalStairMicroFlick = !slopeReleaseHoldArmed && !autoHoldNextFlatReady && currentGuideValid && currentGuide.isSlope &&
+                autoHoldLastSlopeGuide.valid && knotDetector && knotDetector.IsSameSection(autoHoldLastSlopeGuide, currentGuide) &&
+                currentGuide.sectionProgress01 < TargetProgress && !extremePointFiredInSection && TryGetAdaptiveFlick(position, out stairMicroSignedPixels);
             if (originalStairMicroFlick)
             {
-                // A flat-held press can make a genuine micro-flick on its
-                // original stair. Reuse the same next-stair reservation as a
-                // fresh stair press; cancellation used to erase its stage.
+                // A flat-held press can make a genuine micro-flick on its original stair. Reuse the same next-stair reservation as a fresh stair press; cancellation used to erase its stage.
                 if (CanQueueEarlyFlick(flickStartedBeforeExtreme, true))
-                    QueueStairMicroPhaseTurn(stairMicroSignedPixels,
-                        position, "flat-hold");
+                    QueueStairMicroPhaseTurn(stairMicroSignedPixels, position, "flat-hold");
                 return; // Never reinterpret a rejected micro as a B/90 turn.
             }
             flatStartReleaseCommitInProgress = true;
@@ -5963,59 +4105,40 @@ public float AdvancePredictedSplineDriveReadOnly(
                 flatStartReleaseCommitInProgress = false;
             else
             {
-                ShowRouteGameSign("B TURN RESERVED",
-                    "Waiting for next stage phase",
-                    new Color(1f, .78f, .20f));
-                AutoHoldLog("B RELEASE PHASE PENDING",
-                    $"originStage={bHoldOriginFlatFamily} " +
-                    $"observed={(autoHoldNextFlatReady ? autoHoldNextFlatCollider.name : "-")} " +
-                    "waiting for actual next physical stage phase");
+                ShowRouteGameSign("B TURN RESERVED", "Waiting for next stage phase", new Color(1f, .78f, .20f));
+                AutoHoldLog("B RELEASE PHASE PENDING", $"originStage={bHoldOriginFlatFamily} " +
+                    $"observed={(autoHoldNextFlatReady ? autoHoldNextFlatCollider.name : "-")} " + "waiting for actual next physical stage phase");
             }
             flickConsumed = true;
             flickStart = position;
             BeginAdaptiveFlick(position);
             return;
         }
-
-        // A held slope-start gesture is committed only by release on the NEXT
-        // verified flat. It is not classified as an EarlyFlick or a flat tap.
+        // A held slope-start gesture is committed only by release on the NEXT verified flat. It is not classified as an EarlyFlick or a flat tap.
         if (slopeReleaseHoldArmed)
         {
-            if (slopeReleaseHoldArmed &&
-                TryCommitSlopeReleaseHoldOnFlat())
+            if (slopeReleaseHoldArmed && TryCommitSlopeReleaseHoldOnFlat())
                 return;
-            // The release input may arrive in Update before FixedUpdate has
-            // transferred the actual StairWay(N+1) contact. Recheck the real
-            // floor now, without requiring ArcSlab(N+1) first.
+            // The release input may arrive in Update before FixedUpdate has transferred the actual StairWay(N+1) contact. Recheck the real floor now, without requiring ArcSlab(N+1)
+            // first.
             if (slopeReleaseHoldArmed && knotDetector && rb)
-                TryTransferSlopeHoldToPhysicalNextStair(
-                    knotDetector.Evaluate(rb.position));
-            // Pressed on stair N, crossed its verified flat, and released on
-            // stair N+1: retain this single MouseUp for the SAME stair's end.
-            // Never require a hypothetical flat N+2 to exist.
-            if (slopeReleaseHoldArmed &&
-                LatchSlopeReleaseTerminalGesture())
+                TryTransferSlopeHoldToPhysicalNextStair( knotDetector.Evaluate(rb.position));
+            // Pressed on stair N, crossed its verified flat, and released on stair N+1: retain this single MouseUp for the SAME stair's end. Never require a hypothetical flat N+2 to
+            // exist.
+            if (slopeReleaseHoldArmed && LatchSlopeReleaseTerminalGesture())
                 return;
-            // MouseUp on the original real stair is still one B request.
-            // Keep it until that stair's immediate physical successor, not
-            // as a second EarlyFlick or as an automatic held-input turn.
-            if (slopeReleaseHoldArmed && autoHoldEligible &&
-                slopeReleaseFirstStairFamily >= 0 &&
-                slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily)
+            // MouseUp on the original real stair is still one B request. Keep it until that stair's immediate physical successor, not as a second EarlyFlick or as an automatic held-input
+            // turn.
+            if (slopeReleaseHoldArmed && autoHoldEligible && slopeReleaseFirstStairFamily >= 0 && slopeReleaseOriginStairFamily == slopeReleaseFirstStairFamily)
             {
                 var original = HasGroundSupport();
-                if (original.Item1 && original.Item2.collider &&
-                    IsCloseGroundRay(original.Item2, rb.worldCenterOfMass) &&
-                    IsAutoHoldStageHit(original.Item2, float.NaN) &&
-                    TryGetStageFamily(original.Item2.collider,
-                        "StairWay", out int originalFamily) &&
-                    originalFamily == slopeReleaseFirstStairFamily)
+                if (original.Item1 && original.Item2.collider && IsCloseGroundRay(original.Item2, rb.worldCenterOfMass) && IsAutoHoldStageHit(original.Item2, float.NaN) &&
+                    TryGetStageFamily(original.Item2.collider, "StairWay", out int originalFamily) && originalFamily == slopeReleaseFirstStairFamily)
                 {
                     slopeReleaseTerminalReleaseAt = Time.time;
+                    flatStartReleaseCommitInProgress = true;
                     flickConsumed = true;
-                    SlopeReleaseHoldLog("PRE-TRANSFER RELEASE LATCHED",
-                        $"from=StairWay{originalFamily}; waiting for " +
-                        $"physical StairWay{originalFamily + 1}");
+                    SlopeReleaseHoldLog("PRE-TRANSFER RELEASE LATCHED", $"from=StairWay{originalFamily}; waiting for " + $"physical ArcSlab/StairWay{originalFamily + 1}");
                     return;
                 }
             }
@@ -6023,28 +4146,18 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (slopeReleaseHoldArmed && slopeReleaseHoldNextFlatSeen)
                 return;
         }
-
-
-        // Missing source-stage identity is not permission to guess a B turn.
-        // Keep normal flick and TapEdge rules below for such inputs.
+        // Missing source-stage identity is not permission to guess a B turn. Keep normal flick and TapEdge rules below for such inputs.
         Vector2 flick = position - flickStart;
         bool validFlick = TryGetAdaptiveFlick(position, out float signedTurnPixels);
-        // Register a real short TAP on flat, never a long-held release or a
-        // swipe. Old Auto Hold remains enabled throughout the held gesture.
-        // A tap must remain near its start; it may not be an already-qualified flick.
+        // Register a real short TAP on flat, never a long-held release or a swipe. Old Auto Hold remains enabled throughout the held gesture. A tap must remain near its start; it may
+        // not be an already-qualified flick.
         float tapPixels = 1.5f * Mathf.Max(1f, adaptivePixelsPerMm);
         var releaseSupport = HasGroundSupport();
-        bool physicalFlat = releaseSupport.Item1 && releaseSupport.Item2.collider &&
-            Vector3.Angle(releaseSupport.Item2.normal, Vector3.up) <= 15f;
-        bool stableTapFlatAtRelease = IsTapEdgeSupportedFlat(
-            releaseSupport.Item1, releaseSupport.Item2);
-        if (tapEdgeState == TapEdgeState.None && tapEdgePressOnFlat &&
-            stableTapFlatAtRelease && releaseSupport.Item2.collider == flickPressFlatCollider &&
-            BeginCommandOnTouch && Earliest &&
-            !MainGameManager.OnDead && !HasPendingTurnIntent &&
-            !turnTransitionActive && !waitingForTurnGuide &&
-            Time.unscaledTime - flickPressUnscaledTime <= .30f &&
-            !validFlick && flick.sqrMagnitude <= tapPixels * tapPixels &&
+        bool physicalFlat = releaseSupport.Item1 && releaseSupport.Item2.collider && Vector3.Angle(releaseSupport.Item2.normal, Vector3.up) <= 15f;
+        bool stableTapFlatAtRelease = IsTapEdgeSupportedFlat( releaseSupport.Item1, releaseSupport.Item2);
+        if (tapEdgeState == TapEdgeState.None && tapEdgePressOnFlat && stableTapFlatAtRelease && releaseSupport.Item2.collider == flickPressFlatCollider &&
+            BeginCommandOnTouch && Earliest && !MainGameManager.OnDead && !HasPendingTurnIntent && !turnTransitionActive && !waitingForTurnGuide &&
+            Time.unscaledTime - flickPressUnscaledTime <= .30f && !validFlick && flick.sqrMagnitude <= tapPixels * tapPixels &&
             adaptivePeakHorizontalMm <= 1.5f && adaptivePeakVerticalMm <= 1.5f)
         {
             tapEdgeState = TapEdgeState.Armed;
@@ -6052,64 +4165,45 @@ public float AdvancePredictedSplineDriveReadOnly(
             TapEdgeLog("ARMED", $"short flat tap collider={tapEdgeFlatCollider.name}");
             return;
         }
+        if (logTurnTransition && tapEdgeState == TapEdgeState.None && !validFlick && flickStartedOnFlat &&
+            Time.unscaledTime - flickPressUnscaledTime <= .35f)
+            TapEdgeLog("ARM REJECT", $"pressFlat={tapEdgePressOnFlat} stableFlat={stableTapFlatAtRelease} " +
+                $"sameCollider={flickPressFlatCollider != null && releaseSupport.Item2.collider == flickPressFlatCollider} " +
+                $"duration={Time.unscaledTime - flickPressUnscaledTime:F3}s peakH={adaptivePeakHorizontalMm:F2}mm " +
+                $"peakV={adaptivePeakVerticalMm:F2}mm pending={HasPendingTurnIntent} turnActive={turnTransitionActive} guideWait={waitingForTurnGuide}");
         if (!validFlick || !Earliest)
         {
-            // Report directional rejection once, on release, without spamming
-            // drag samples or changing any of the existing turn acceptance gates.
-            if (!validFlick && logTurnTransition &&
-                flick.magnitude / Mathf.Max(1f, adaptivePixelsPerMm) >= adaptiveRequiredMm &&
-                !HasClearHorizontalTurnIntent(
+            // Report directional rejection once, on release, without spamming drag samples or changing any of the existing turn acceptance gates.
+            if (!validFlick && logTurnTransition && flick.magnitude / Mathf.Max(1f, adaptivePixelsPerMm) >= adaptiveRequiredMm && !HasClearHorizontalTurnIntent(
                     flick / Mathf.Max(1f, adaptivePixelsPerMm)))
-                Debug.Log($"[FLICK DIRECTION REJECTED] t={Time.time:F3} " +
-                    $"dx={flick.x:F1}px dy={flick.y:F1}px " +
-                    $"netHorizontalMm={Mathf.Abs(flick.x) / Mathf.Max(1f, adaptivePixelsPerMm):F2} " +
-                    $"horizontalPathMm={adaptiveTotalHorizontalTravelMm:F2} " +
-                    $"sideToVertical={Mathf.Abs(flick.x) / Mathf.Max(.01f, Mathf.Abs(flick.y)):F2}; " +
-                    $"no left/right turn from vertical or wandering drag", this);
-            if (!validFlick && logTurnTransition &&
-                adaptiveMovingSamples == 0 && flick.sqrMagnitude <= Eps)
-                Debug.Log($"[FLICK NO MOVEMENT] t={Time.time:F3} " +
-                    $"input samples=0; a click or a touch without cursor motion " +
-                    $"cannot determine a 90-degree turn direction. " +
-                    $"slope={(currentGuideValid && currentGuide.isSlope)} " +
+                Debug.Log($"[FLICK DIRECTION REJECTED] t={Time.time:F3} " + $"dx={flick.x:F1}px dy={flick.y:F1}px " +
+                    $"netHorizontalMm={Mathf.Abs(flick.x) / Mathf.Max(1f, adaptivePixelsPerMm):F2} " + $"horizontalPathMm={adaptiveTotalHorizontalTravelMm:F2} " +
+                    $"sideToVertical={Mathf.Abs(flick.x) / Mathf.Max(.01f, Mathf.Abs(flick.y)):F2}; " + $"no left/right turn from vertical or wandering drag", this);
+            if (!validFlick && logTurnTransition && adaptiveMovingSamples == 0 && flick.sqrMagnitude <= Eps)
+                Debug.Log($"[FLICK NO MOVEMENT] t={Time.time:F3} " + $"input samples=0; a click or a touch without cursor motion " +
+                    $"cannot determine a 90-degree turn direction. " + $"slope={(currentGuideValid && currentGuide.isSlope)} " +
                     $"progress={(currentGuideValid ? currentGuide.sectionProgress01 : -1f):F3}", this);
             if (tapEdgeState == TapEdgeState.Armed && logTurnTransition)
-                TapEdgeLog("FLICK REJECTED",
-                    $"dx={flick.x:F1}px dy={flick.y:F1}px " +
-                    $"speedMmS={adaptivePeakSlideMmPerSecond:F1} " +
-                    $"samples={adaptiveMovingSamples} " +
-                    $"coherent={adaptiveConsistentSamples} " +
-                    $"requiredMm={adaptiveRequiredMm:F2} " +
-                    $"timeToSlope={(float.IsInfinity(adaptiveTimeToSlope) ? -1f : adaptiveTimeToSlope):F3}s " +
-                    $"remaining={adaptiveDistanceToSlope:F2}m " +
+                TapEdgeLog("FLICK REJECTED", $"dx={flick.x:F1}px dy={flick.y:F1}px " + $"speedMmS={adaptivePeakSlideMmPerSecond:F1} " + $"samples={adaptiveMovingSamples} " +
+                    $"coherent={adaptiveConsistentSamples} " + $"requiredMm={adaptiveRequiredMm:F2} " +
+                    $"timeToSlope={(float.IsInfinity(adaptiveTimeToSlope) ? -1f : adaptiveTimeToSlope):F3}s " + $"remaining={adaptiveDistanceToSlope:F2}m " +
                     $"earliest={Earliest}");
             return;
         }
-
-        // Keep the press/release physical collider identity authoritative.
-        // At the edge of a flat MeshCollider the sphere cast can touch a beveled
-        // triangle (normal > 15 degrees) even while the spline is still flat.
-        // Use the existing supported flat guide as a bounded fallback; NEVER
-        // accept missing support or a different collider.
+        // Keep the press/release physical collider identity authoritative. At the edge of a flat MeshCollider the sphere cast can touch a beveled triangle (normal > 15 degrees) even
+        // while the spline is still flat. Use the existing supported flat guide as a bounded fallback; NEVER accept missing support or a different collider.
         bool supportedTapFlat = stableTapFlatAtRelease;
-        // A qualified original-stair micro flick has already returned through
-        // the shared reservation; horizontal tread normals cannot steal it.
+        // A qualified original-stair micro flick has already returned through the shared reservation; horizontal tread normals cannot steal it.
         if (BallVisualIsOnFlat || physicalFlat || supportedTapFlat)
         {
-            // The tap is still ARMED only for the same live physical slab.
-            // A transient slope guide sample must not veto a genuine same-slab
-            // tap+flick; leaving the slab or an accepted micro-flick already
-            // transitions/cancels the Armed state through the existing policy.
-            bool sameFlatTapTurn = tapEdgeState == TapEdgeState.Armed &&
-                tapEdgeFlatCollider && flickPressFlatCollider &&
-                releaseSupport.Item2.collider == tapEdgeFlatCollider &&
-                flickPressFlatCollider == tapEdgeFlatCollider &&
-                supportedTapFlat;
+            // The tap is still ARMED only for the same live physical slab. A transient slope guide sample must not veto a genuine same-slab tap+flick; leaving the slab or an accepted
+            // micro-flick already transitions/cancels the Armed state through the existing policy.
+            bool sameFlatTapTurn = tapEdgeState == TapEdgeState.Armed && tapEdgeFlatCollider && flickPressFlatCollider &&
+                releaseSupport.Item2.collider == tapEdgeFlatCollider && flickPressFlatCollider == tapEdgeFlatCollider && supportedTapFlat;
             if (tapEdgeState == TapEdgeState.Armed)
             {
                 Collider releaseCollider = releaseSupport.Item2.collider;
-                float supportAngle = releaseCollider
-                    ? Vector3.Angle(releaseSupport.Item2.normal, Vector3.up) : -1f;
+                float supportAngle = releaseCollider ? Vector3.Angle(releaseSupport.Item2.normal, Vector3.up) : -1f;
                 TapEdgeLog(sameFlatTapTurn ? "SAME FLAT MATCH" : "SAME FLAT REJECT",
                     $"tap={(tapEdgeFlatCollider ? tapEdgeFlatCollider.name : "-")}#{(tapEdgeFlatCollider ? tapEdgeFlatCollider.GetInstanceID() : 0)} " +
                     $"press={(flickPressFlatCollider ? flickPressFlatCollider.name : "-")}#{(flickPressFlatCollider ? flickPressFlatCollider.GetInstanceID() : 0)} " +
@@ -6120,12 +4214,8 @@ public float AdvancePredictedSplineDriveReadOnly(
             flickConsumed = QueueQuarterTurn(signedTurnPixels, sameFlatTapTurn);
             return;
         }
-
-        // 階段で離した場合は、極限ポイント前に押したジェスチャーを
-        // 微小進路変更として分類する（途中で60%を越えても継続）。
-        // B is release-only; the original stair remains a micro-flick exception.
-        if (currentGuideValid && currentGuide.isSlope &&
-            (flickStartedBeforeExtreme || currentGuide.sectionProgress01 < TargetProgress))
+        // 階段で離した場合は、極限ポイント前に押したジェスチャーを 微小進路変更として分類する（途中で60%を越えても継続）。 B is release-only; the original stair remains a micro-flick exception.
+        if (currentGuideValid && currentGuide.isSlope && (flickStartedBeforeExtreme || currentGuide.sectionProgress01 < TargetProgress))
         {
             if (CanQueueEarlyFlick(flickStartedBeforeExtreme))
             {
@@ -6134,20 +4224,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             return; // 階段でEarlyFlickが拒否されても90度旋回へ誤送しない。
         }
-
         // 極限ポイント通過後の階段で離した場合など、既存の90度許可条件に従う。
         if (CanAcceptQuarterTurn(out _))
             flickConsumed = QueueQuarterTurn(signedTurnPixels);
     }
-
     void ResetFlickGesture()
     {
-        // MouseUp/Touch.Ended was already consumed by B. Keep only its short
-        // physical recheck alive; the pointer gesture itself is finished.
-        bool pendingBReleaseRecheck = flatStartReleaseCommitInProgress &&
-            autoHoldEligible && !HasPendingTurnIntent;
-        bool terminalBReleaseOwned = slopeReleaseTerminalReleaseAt >= 0f &&
-            slopeReleaseHoldArmed && autoHoldEligible;
+        // MouseUp/Touch.Ended was already consumed by B. Keep only its short physical recheck alive; the pointer gesture itself is finished.
+        bool pendingBReleaseRecheck = flatStartReleaseCommitInProgress && autoHoldEligible && !HasPendingTurnIntent;
+        bool terminalBReleaseOwned = slopeReleaseTerminalReleaseAt >= 0f && slopeReleaseHoldArmed && autoHoldEligible;
         if (!pendingBReleaseRecheck)
             flatStartReleaseCommitInProgress = false;
         trackingFlick = false;
@@ -6165,30 +4250,21 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         activeFlickFingerId = -1;
     }
-
     void TapEdgeLog(string phase, string details)
     {
         if (logTurnTransition)
             Debug.Log($"[TAP EDGE {phase}] t={Time.fixedTime:F3} {details}", this);
     }
-
-    // The same-flat tap path may be at the lip of a mesh, where a sphere cast
-    // sees a small inclined edge triangle instead of the horizontal top.
-    // Trust only an actual supported hit together with a still-flat active
-    // guide, and never accept a fully unsupported body or an actual slope.
-    // No new Inspector setting or physical force is introduced here.
+    // The same-flat tap path may be at the lip of a mesh, where a sphere cast sees a small inclined edge triangle instead of the horizontal top. Trust only an actual supported
+    // hit together with a still-flat active guide, and never accept a fully unsupported body or an actual slope. No new Inspector setting or physical force is introduced here.
     bool IsTapEdgeSupportedFlat(bool hasSupport, RaycastHit hit)
     {
         if (!hasSupport || !hit.collider)
             return false;
         float angle = Vector3.Angle(hit.normal, Vector3.up);
-        return angle <= 15f ||
-            (angle <= maxSlopeAngle && currentGuideValid &&
-             !currentGuide.isSlope);
+        return angle <= 15f || (angle <= maxSlopeAngle && currentGuideValid && !currentGuide.isSlope);
     }
-
-    // Only a handoff that actually waited on the tapped flat restores XZ speed.
-    // Never inject it after falling or landing on another collider.
+    // Only a handoff that actually waited on the tapped flat restores XZ speed. Never inject it after falling or landing on another collider.
     void ReleaseTapEdgeHandoffHold()
     {
         if (!tapEdgeHandoffHeld) return;
@@ -6201,7 +4277,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         LateralAuditMarkVelocityWriter("TapEdgeHandoffResume");
         TapEdgeLog("HANDOFF RESUME", $"velocity={rb.velocity:F3}");
     }
-
     void ResetTapEdge()
     {
         ReleaseTapEdgeHandoffHold();
@@ -6209,7 +4284,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         tapEdgeFlatCollider = null;
         tapEdgeFastTurnQueued = false;
     }
-
     void CancelTapEdge(string reason)
     {
         if (tapEdgeState == TapEdgeState.None) return;
@@ -6225,47 +4299,32 @@ public float AdvancePredictedSplineDriveReadOnly(
         TapEdgeLog("CANCEL", reason);
         ResetTapEdge();
     }
-
-    // A short flat tap stays armed for a same-flat flick or a verified
-    // same-stage stair micro-flick. A guide can preview the next flat while
-    // the ball is physically on stair N; that preview must NOT clear the tap.
-    // Only genuine support from a LATER ArcSlab expires an unused tap.
+    // A short flat tap stays armed for a same-flat flick or a verified same-stage stair micro-flick. A guide can preview the next flat while the ball is physically on stair N;
+    // that preview must NOT clear the tap. Only genuine support from a LATER ArcSlab expires an unused tap.
     void ObserveTapEdgeGuide(bool grounded)
     {
-        // The earned bonus is independent of the canceled stair-only B
-        // reservation, but cannot leak into a later stage's normal turn.
-        if (stairMicroFlatTapLeftEdgeStage >= 0 && grounded &&
-            currentHit.collider &&
-            ((TryGetStageFamily(currentHit.collider, "ArcSlab", out int actualStage) ||
-              TryGetStageFamily(currentHit.collider, "StairWay", out actualStage)) &&
-             actualStage > stairMicroFlatTapLeftEdgeStage))
+        // The earned bonus is independent of the canceled stair-only B reservation, but cannot leak into a later stage's normal turn.
+        if (stairMicroFlatTapLeftEdgeStage >= 0 && grounded && currentHit.collider && ((TryGetStageFamily(currentHit.collider, "ArcSlab", out int actualStage) ||
+              TryGetStageFamily(currentHit.collider, "StairWay", out actualStage)) && actualStage > stairMicroFlatTapLeftEdgeStage))
         {
-            AutoHoldLog("FLAT TAP LEFT EDGE EXPIRED",
-                $"expectedStage={stairMicroFlatTapLeftEdgeStage} actualStage={actualStage}");
+            AutoHoldLog("FLAT TAP LEFT EDGE EXPIRED", $"expectedStage={stairMicroFlatTapLeftEdgeStage} actualStage={actualStage}");
             stairMicroFlatTapLeftEdgeStage = -1;
         }
-        if (tapEdgeState != TapEdgeState.Armed || !grounded ||
-            !tapEdgeFlatCollider || !currentHit.collider)
+        if (tapEdgeState != TapEdgeState.Armed || !grounded || !tapEdgeFlatCollider || !currentHit.collider)
             return;
-        if (TryGetStageFamily(currentHit.collider, "ArcSlab",
-                out int physicalFlatFamily) &&
-            TryGetStageFamily(tapEdgeFlatCollider, "ArcSlab",
-                out int originalFlatFamily) &&
+        if (TryGetStageFamily(currentHit.collider, "ArcSlab", out int physicalFlatFamily) && TryGetStageFamily(tapEdgeFlatCollider, "ArcSlab", out int originalFlatFamily) &&
             physicalFlatFamily > originalFlatFamily)
             CancelTapEdge("later physical flat reached without micro flick");
     }
-
     // 独立操作: 通常のフリック方法A(MouseUp/Touch.Ended)は変更しない。
     void AutoHoldLog(string phase, string details)
     {
         if (logTurnTransition)
             Debug.Log($"[AUTO HOLD {phase}] t={Time.fixedTime:F3} {details}", this);
     }
-
     void ResetAutoHoldObservation(bool cancelHandoff)
     {
-        if (cancelHandoff && slopeReleaseTerminalReleaseAt >= 0f &&
-            !HasPendingTurnIntent)
+        if (cancelHandoff && slopeReleaseTerminalReleaseAt >= 0f && !HasPendingTurnIntent)
             ballVisualSlopeDrive?.CancelTurnHandoffRequest();
         slopeReleaseHoldArmed = false;
         slopeReleaseHoldNextFlatSeen = false;
@@ -6301,10 +4360,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         autoHoldPressConfirmedHeading = Vector3.zero;
         autoHoldPredictedTurnSignValid = false;
         autoHoldPredictedTurnSign = 0f;
-        // The flat-tap edge reward has its own physical-stage lifetime.
-        // New presses/releases may cancel B but must not consume this reward.
-        // A committed turn still needs this slope/flat and physical-edge data
-        // after the gesture has been consumed while awaiting BallVisual Handoff.
+        // The flat-tap edge reward has its own physical-stage lifetime. New presses/releases may cancel B but must not consume this reward. A committed turn still needs this
+        // slope/flat and physical-edge data after the gesture has been consumed while awaiting BallVisual Handoff.
         if (!autoHoldTurnPending)
         {
             autoHoldLastSlopeGuide = default;
@@ -6320,7 +4377,6 @@ public float AdvancePredictedSplineDriveReadOnly(
             autoHoldEdgeCollider = null;
         }
     }
-
     void CancelAutoHold(string reason)
     {
         if (autoHoldEligible)
@@ -6332,7 +4388,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         ResetAutoHoldObservation(true);
     }
-
     bool IsAutoHoldReleaseAwaitingUpdate()
     {
         if (!trackingFlick || flickConsumed) return false;
@@ -6348,7 +4403,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return Input.GetMouseButtonUp(0);
     }
-
     bool IsAutoHoldInputStillDown()
     {
         if (!trackingFlick || flickConsumed) return false;
@@ -6368,26 +4422,19 @@ public float AdvancePredictedSplineDriveReadOnly(
             return false;
         return autoHoldEligible;
     }
-
     // 左右どちらの位置も有効。地形の左軸は横位置の観測とInCorner用のエッジ探索にだけ使用。
     void ObserveAutoHoldSlope(NearestKnotDetector.GuideFrame guide)
     {
         if (!guide.valid || !guide.isSlope || !knotDetector || !rb) return;
         Surface surface = BuildSplineSurface(guide);
         if (!surface.Valid) return;
-        bool hasFrame = knotDetector.TryGetFiveLineFrame(
-            guide, surface.side,
-            out NearestKnotDetector.FiveLineFrame frame) && frame.valid;
-        if (!hasFrame && slopeReleaseHoldArmed &&
-            slopeReleaseStartedAfterExtreme)
+        bool hasFrame = knotDetector.TryGetFiveLineFrame( guide, surface.side, out NearestKnotDetector.FiveLineFrame frame) && frame.valid;
+        if (!hasFrame && slopeReleaseHoldArmed && slopeReleaseStartedAfterExtreme)
         {
-            // At the very last stair, the detector may have advanced to a
-            // flat segment while only the held slope's last guide survives.
-            // A matching next-flat lane cross-section is an acceptable
-            // geometry fallback; the ACTUAL edge is still ray-verified.
+            // At the very last stair, the detector may have advanced to a flat segment while only the held slope's last guide survives. A matching next-flat lane cross-section is an
+            // acceptable geometry fallback; the ACTUAL edge is still ray-verified.
             Vector3 forward = NormalizeFlat(direction, guide.tangent);
-            hasFrame = knotDetector.TryGetFollowingFlatFiveLineFrame(
-                guide, forward, ProbeRadius * 2f, out frame) && frame.valid;
+            hasFrame = knotDetector.TryGetFollowingFlatFiveLineFrame( guide, forward, ProbeRadius * 2f, out frame) && frame.valid;
         }
         if (!hasFrame)
         {
@@ -6406,7 +4453,6 @@ public float AdvancePredictedSplineDriveReadOnly(
             candidateDistance = rightDistance;
         }
         if (candidateDistance <= autoHoldLeftHalfMarginMeters) return;
-
         bool wasObserved = autoHoldSawSlope;
         bool wasLeft = autoHoldLeftHalf;
         autoHoldSawSlope = true;
@@ -6417,50 +4463,35 @@ public float AdvancePredictedSplineDriveReadOnly(
         autoHoldLastInnerLinePoint = candidateLeft;
         autoHoldLeftOffset = Vector3.Dot(rb.position - frame.center, left);
         autoHoldLeftHalf = autoHoldLeftOffset > autoHoldLeftHalfMarginMeters;
-        // FiveLine supplies a cross-section for BOTH halves; left/right is diagnostic, not eligibility.
-        // The actual target is determined from the active physics surface below.
+        // FiveLine supplies a cross-section for BOTH halves; left/right is diagnostic, not eligibility. The actual target is determined from the active physics surface below.
         autoHoldLastSlopeGuide = guide;
         autoHoldLastSlopeProgress = guide.sectionProgress01;
         if (!wasObserved)
         {
-            // Inspect the next *actual* slope after this slope's flat.
-            // The current nearest guide can still be on the stairs when a
-            // fast hold reaches the flat, so it is not enough by itself.
-            autoHoldPredictedTurnSignValid =
-                TryResolveAutoHoldTurnFromFollowingSlope(guide,
-                    heading, out autoHoldPredictedTurnSign);
+            // Inspect the next *actual* slope after this slope's flat. The current nearest guide can still be on the stairs when a fast hold reaches the flat, so it is not enough by
+            // itself.
+            autoHoldPredictedTurnSignValid = TryResolveAutoHoldTurnFromFollowingSlope(guide, heading, out autoHoldPredictedTurnSign);
         }
-
         // Approximate geometric exit plane, independent from body Y / ground collision.
-        Vector3 alongSlope = guide.tangent.sqrMagnitude > Eps
-            ? guide.tangent.normalized : surface.tangent;
+        Vector3 alongSlope = guide.tangent.sqrMagnitude > Eps ? guide.tangent.normalized : surface.tangent;
         if (Vector3.Dot(alongSlope, heading) < 0f) alongSlope = -alongSlope;
         float remaining = Mathf.Max(0f, guide.sectionLength *
             (1f - Mathf.Clamp01(guide.sectionProgress01)));
         autoHoldExitPoint = guide.point + alongSlope * remaining;
-
         if (!wasObserved)
             AutoHoldLog("SLOPE", $"section={guide.splineIndex} progress={guide.sectionProgress01:F3}");
         if (autoHoldLeftHalf && (!wasLeft || !wasObserved))
             AutoHoldLog("LEFT HALF", $"offset={autoHoldLeftOffset:F3}m innerLine={candidateDistance:F3}m");
         if (wasLeft && !autoHoldLeftHalf)
             AutoHoldLog("LEFT HALF LOST", $"offset={autoHoldLeftOffset:F3}m");
-
-        // Do NOT request Handoff here. The old automatic turn used to do
-        // that at 95% slope progress, even while the player kept pressing.
-        // The existing QueueAutoHoldHeldTurn requests it AFTER release.
+        // Do NOT request Handoff here. The old automatic turn used to do that at 95% slope progress, even while the player kept pressing. The existing QueueAutoHoldHeldTurn requests
+        // it AFTER release.
     }
-
-    // These probes share HasGroundSupport's existing radius, mask, distance,
-    // and permitted surface angle. Only stage colliders count as a floor:
-    // the visible BallVisual / InSubject rigidbodies must never define an edge.
-    // Static stage geometry is permitted. Pylon/Thorn/Traffic_Corn and
-    // visual/player colliders are never a support source even if GroundMask
-    // includes their layers. Keep valid Physics AND Render slabs at seams.
+    // These probes share HasGroundSupport's existing radius, mask, distance, and permitted surface angle. Only stage colliders count as a floor: the visible BallVisual /
+    // InSubject rigidbodies must never define an edge. Static stage geometry is permitted. Pylon/Thorn/Traffic_Corn and
     static bool IsGeneratedStageFloor(Collider collider)
     {
-        if (!collider || !collider.enabled || collider.isTrigger ||
-            collider.attachedRigidbody || collider is SphereCollider)
+        if (!collider || !collider.enabled || collider.isTrigger || collider.attachedRigidbody || collider is SphereCollider)
             return false;
         string n = collider.name;
         int i;
@@ -6478,82 +4509,62 @@ public float AdvancePredictedSplineDriveReadOnly(
         string suffix = n.Substring(i);
         return suffix == "_Physics" || suffix == "_Render";
     }
-
-    // Stage family numbers are local route geometry IDs. Never use them to
-    // queue a turn; they only validate a physically contiguous handoff.
-    static bool TryGetStageFamily(Collider collider, string prefix,
-        out int family)
+    // Stage family numbers are local route geometry IDs. Never use them to queue a turn; they only validate a physically contiguous handoff.
+    static bool TryGetStageFamily(Collider collider, string prefix, out int family)
     {
         family = -1;
-        if (!IsGeneratedStageFloor(collider) ||
-            !collider.name.StartsWith(prefix, System.StringComparison.Ordinal))
+        if (!IsGeneratedStageFloor(collider) || !collider.name.StartsWith(prefix, System.StringComparison.Ordinal))
             return false;
         int start = prefix.Length;
         int end = collider.name.IndexOf('_', start);
-        return end > start && int.TryParse(
-            collider.name.Substring(start, end - start), out family);
+        return end > start && int.TryParse( collider.name.Substring(start, end - start), out family);
     }
-
     bool IsAutoHoldStageHit(RaycastHit hit, float referenceHeight)
     {
-        return IsGeneratedStageFloor(hit.collider) &&
-            Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle &&
-            (float.IsNaN(referenceHeight) ||
+        return IsGeneratedStageFloor(hit.collider) && Vector3.Angle(hit.normal, Vector3.up) <= maxSlopeAngle && (float.IsNaN(referenceHeight) ||
              Mathf.Abs(hit.point.y - referenceHeight) <= ProbeRadius * 1.75f);
     }
-
-    bool TryAutoHoldGroundRay(Vector3 sample, out RaycastHit hit,
-        float referenceHeight = float.NaN)
+    bool TryAutoHoldGroundRay(Vector3 sample, out RaycastHit hit, float referenceHeight = float.NaN)
     {
         hit = default;
-        int count = Physics.RaycastNonAlloc(sample + Vector3.up * .05f,
-            Vector3.down, autoHoldCastHits, probeDistance + ProbeRadius + .25f,
+        int count = Physics.RaycastNonAlloc(sample + Vector3.up * .05f, Vector3.down, autoHoldCastHits, probeDistance + ProbeRadius + .25f,
             groundMask, QueryTriggerInteraction.Ignore);
         float closest = float.PositiveInfinity;
         bool found = false;
         for (int i = 0; i < count; ++i)
         {
             RaycastHit candidate = autoHoldCastHits[i];
-            if (!IsAutoHoldStageHit(candidate, referenceHeight) ||
-                candidate.distance >= closest) continue;
+            if (!IsAutoHoldStageHit(candidate, referenceHeight) || candidate.distance >= closest) continue;
             closest = candidate.distance;
             hit = candidate;
             found = true;
         }
         return found;
     }
-
     bool TryAutoHoldGroundSphere(Vector3 sample, float referenceHeight)
     {
-        int count = Physics.SphereCastNonAlloc(sample + Vector3.up * .05f,
-            ProbeRadius, Vector3.down, autoHoldCastHits, probeDistance,
+        int count = Physics.SphereCastNonAlloc(sample + Vector3.up * .05f, ProbeRadius, Vector3.down, autoHoldCastHits, probeDistance,
             groundMask, QueryTriggerInteraction.Ignore);
         for (int i = 0; i < count; ++i)
             if (IsAutoHoldStageHit(autoHoldCastHits[i], referenceHeight))
                 return true;
         return false;
     }
-
-    // SphereCast can miss an edge when its sweep starts in contact with a
-    // MeshCollider or its hit normal is the side of the slab. Do not treat a
-    // single missed sphere as proof that the stage is missing. Instead accept
-    // only a conservative footprint backed by several same-collider rays.
-    bool TryAutoHoldVerifiedFootprint(Vector3 centre, float height,
-        Vector3 inward, out string evidence)
+    // SphereCast can miss an edge when its sweep starts in contact with a MeshCollider or its hit normal is the side of the slab. Do not treat a single missed sphere as proof
+    // that the stage is missing. Instead accept only a conservative footprint backed by several same-collider rays.
+    bool TryAutoHoldVerifiedFootprint(Vector3 centre, float height, Vector3 inward, out string evidence)
     {
         if (TryAutoHoldGroundSphere(centre, height))
         {
             evidence = "sphere";
             return true;
         }
-
         evidence = "no_central_ray";
         if (!TryAutoHoldGroundRay(centre, out RaycastHit middle, height))
             return false;
         Collider slab = middle.collider;
         if (!slab || !slab.enabled || slab.isTrigger)
             return false;
-
         inward = Vector3.ProjectOnPlane(inward, Vector3.up);
         if (inward.sqrMagnitude <= Eps)
         {
@@ -6563,13 +4574,9 @@ public float AdvancePredictedSplineDriveReadOnly(
         inward.Normalize();
         Vector3 forward = Vector3.Cross(Vector3.up, inward).normalized;
         Vector3 inside = centre + inward * (ProbeRadius * .55f);
-        // Same physical floor, forward and backward, not only a single pixel
-        // of a thin ledge. This fallback does not approve a missing stage.
-        if (!TryAutoHoldFootprintRay(inside, slab, height) ||
-            !TryAutoHoldFootprintRay(inside + forward * (ProbeRadius * .30f),
-                slab, height) ||
-            !TryAutoHoldFootprintRay(inside - forward * (ProbeRadius * .30f),
-                slab, height))
+        // Same physical floor, forward and backward, not only a single pixel of a thin ledge. This fallback does not approve a missing stage.
+        if (!TryAutoHoldFootprintRay(inside, slab, height) || !TryAutoHoldFootprintRay(inside + forward * (ProbeRadius * .30f), slab, height) ||
+            !TryAutoHoldFootprintRay(inside - forward * (ProbeRadius * .30f), slab, height))
         {
             evidence = "footprint_rays_not_supported";
             return false;
@@ -6577,113 +4584,77 @@ public float AdvancePredictedSplineDriveReadOnly(
         evidence = "verified_three_ray_footprint";
         return true;
     }
-
-    bool TryAutoHoldFootprintRay(Vector3 sample, Collider expected,
-        float height)
+    bool TryAutoHoldFootprintRay(Vector3 sample, Collider expected, float height)
     {
-        return TryAutoHoldGroundRay(sample, out RaycastHit hit, height) &&
-            hit.collider == expected &&
-            Mathf.Abs(hit.point.y - height) <= ProbeRadius * .5f;
+        return TryAutoHoldGroundRay(sample, out RaycastHit hit, height) && hit.collider == expected && Mathf.Abs(hit.point.y - height) <= ProbeRadius * .5f;
     }
-
-    // The spline supplies ONLY a cross-section and an estimated search width.
-    // The final boundary is always determined by actual stage collider hits.
-    // No Evaluate() call: that would mutate the detector's active guide tracking.
-    bool TryBuildAutoHoldEdgeAnchor(Vector3 left, out Vector3 centre,
-        out float range)
+    // The spline supplies ONLY a cross-section and an estimated search width. The final boundary is always determined by actual stage collider hits. No Evaluate() call: that
+    // would mutate the detector's active guide tracking.
+    bool TryBuildAutoHoldEdgeAnchor(Vector3 left, out Vector3 centre, out float range)
     {
         centre = rb.position;
         range = ProbeRadius * 4f;
         if (!knotDetector || !autoHoldLastSlopeGuide.valid) return false;
-
         NearestKnotDetector.FiveLineFrame frame;
-        float pastExit = Vector3.Dot(rb.position - autoHoldExitPoint,
-            autoHoldLastForward);
-        bool flatApproach = pastExit >= -ProbeRadius * 2f ||
-            (currentGuideValid && !currentGuide.isSlope);
-
-        if (flatApproach && knotDetector.TryGetFollowingFlatStart(
-                autoHoldLastSlopeGuide, out Vector3 flatStart,
-                out Vector3 flatTangent))
+        float pastExit = Vector3.Dot(rb.position - autoHoldExitPoint, autoHoldLastForward);
+        bool flatApproach = pastExit >= -ProbeRadius * 2f || (currentGuideValid && !currentGuide.isSlope);
+        if (flatApproach && knotDetector.TryGetFollowingFlatStart( autoHoldLastSlopeGuide, out Vector3 flatStart, out Vector3 flatTangent))
         {
-            float along = Mathf.Max(ProbeRadius * 2f,
-                Vector3.Dot(rb.position - flatStart, autoHoldLastForward));
-            if (knotDetector.TryGetFollowingFlatFiveLineFrame(
-                    autoHoldLastSlopeGuide, autoHoldLastForward,
-                    along, out frame) && frame.valid)
+            float along = Mathf.Max(ProbeRadius * 2f, Vector3.Dot(rb.position - flatStart, autoHoldLastForward));
+            if (knotDetector.TryGetFollowingFlatFiveLineFrame( autoHoldLastSlopeGuide, autoHoldLastForward, along, out frame) && frame.valid)
                 centre = frame.center;
             else
             {
-                // Some newly inserted flats have no complete three-lane
-                // cross section yet. Their existing start/tangent still give
-                // a valid Y and search origin; the ray finds the actual edge.
+                // Some newly inserted flats have no complete three-lane cross section yet. Their existing start/tangent still give a valid Y and search origin; the ray finds the actual edge.
                 frame = default;
-                Vector3 flatForward = NormalizeFlat(flatTangent,
-                    autoHoldLastForward);
+                Vector3 flatForward = NormalizeFlat(flatTangent, autoHoldLastForward);
                 float lane = Vector3.Dot(autoHoldLastCenter -
                     autoHoldLastSlopeGuide.point, left);
                 centre = flatStart + flatForward * along + left * lane;
             }
         }
-        else if (currentGuideValid && currentGuide.isSlope &&
-            knotDetector.TryGetFiveLineFrame(currentGuide, currentSurfaceValid
-                ? currentSurface.side : Vector3.Cross(Vector3.up, autoHoldLastForward),
-                out frame) && frame.valid)
+        else if (currentGuideValid && currentGuide.isSlope && knotDetector.TryGetFiveLineFrame(currentGuide, currentSurfaceValid
+                ? currentSurface.side : Vector3.Cross(Vector3.up, autoHoldLastForward), out frame) && frame.valid)
         {
             centre = frame.center;
         }
         else
         {
-            // Last measured slope centre is safe as a search *origin*, not
-            // as the physical edge. Its Y is from the tracked support section.
+            // Last measured slope centre is safe as a search *origin*, not as the physical edge. Its Y is from the tracked support section.
             frame = default;
             centre = autoHoldLastCenter;
             centre += autoHoldLastForward *
                 Vector3.Dot(rb.position - centre, autoHoldLastForward);
         }
-
-        float width = frame.valid
-            ? Mathf.Abs(Vector3.Dot(frame.left - frame.right, left))
-            : Mathf.Abs(Vector3.Dot(autoHoldLastInnerLinePoint -
+        float width = frame.valid ? Mathf.Abs(Vector3.Dot(frame.left - frame.right, left)) : Mathf.Abs(Vector3.Dot(autoHoldLastInnerLinePoint -
                 autoHoldLastCenter, left)) * 2f;
-        // Search relative to the SAME lane centre, not to a ball that may
-        // already be several metres to the right of it.
+        // Search relative to the SAME lane centre, not to a ball that may already be several metres to the right of it.
         range = Mathf.Max(ProbeRadius * 4f, width + ProbeRadius * 4f);
         // Body centre is ~one radius above the actual flat/slope surface.
         centre.y += ProbeRadius + .25f;
         return width > ProbeRadius;
     }
-
-    bool TryScanAutoHoldLeftEdge(Vector3 probeCentre, Vector3 left,
-        float range, out Vector3 target)
+    bool TryScanAutoHoldLeftEdge(Vector3 probeCentre, Vector3 left, float range, out Vector3 target)
     {
-        return TryScanAutoHoldLeftEdge(probeCentre, left, range,
-            out target, out _);
+        return TryScanAutoHoldLeftEdge(probeCentre, left, range, out target, out _);
     }
-
-    bool TryScanAutoHoldLeftEdge(Vector3 probeCentre, Vector3 left,
-        float range, out Vector3 target, out string failureStage,
-        bool keepFullBallOnSlab = false)
+    bool TryScanAutoHoldLeftEdge(Vector3 probeCentre, Vector3 left, float range, out Vector3 target, out string failureStage, bool keepFullBallOnSlab = false)
     {
         target = rb.position;
         failureStage = "invalid_side";
         left = Vector3.ProjectOnPlane(left, Vector3.up);
         if (left.sqrMagnitude <= Eps) return false;
         left.Normalize();
-
-        // Coarse Raycasts use the existing ball radius; the six bisections
-        // refine the physical lip without scanning hundreds of tiny steps.
+        // Coarse Raycasts use the existing ball radius; the six bisections refine the physical lip without scanning hundreds of tiny steps.
         float step = ProbeRadius;
         float originOffset = 0f;
         if (!TryAutoHoldGroundRay(probeCentre, out RaycastHit referenceHit))
         {
-            // The centre can be in an actual joint/gap: recover toward the
-            // inside first. Never take an unsupported point as the edge.
+            // The centre can be in an actual joint/gap: recover toward the inside first. Never take an unsupported point as the edge.
             bool recovered = false;
             for (float back = step; back <= range; back += step)
             {
-                if (!TryAutoHoldGroundRay(probeCentre - left * back,
-                        out referenceHit)) continue;
+                if (!TryAutoHoldGroundRay(probeCentre - left * back, out referenceHit)) continue;
                 originOffset = -back;
                 recovered = true;
                 break;
@@ -6694,23 +4665,20 @@ public float AdvancePredictedSplineDriveReadOnly(
                 return false;
             }
         }
-
         float referenceHeight = referenceHit.point.y;
         float lastSupported = 0f;
         float firstUnsupported = -1f;
         bool confirmedBoundary = false;
         for (float d = step; d <= range + ProbeRadius + Eps; d += step)
         {
-            if (TryAutoHoldGroundRay(probeCentre +
-                    left * (originOffset + d), out _, referenceHeight))
+            if (TryAutoHoldGroundRay(probeCentre + left * (originOffset + d), out _, referenceHeight))
             {
                 lastSupported = d;
                 firstUnsupported = -1f;
                 continue;
             }
             if (firstUnsupported < 0f) firstUnsupported = d;
-            // Small slab seams are not necessarily the outside edge.
-            // Require an unsupported span wider than the sphere footprint.
+            // Small slab seams are not necessarily the outside edge. Require an unsupported span wider than the sphere footprint.
             if (d - firstUnsupported < ProbeRadius) continue;
             confirmedBoundary = true;
             break;
@@ -6720,40 +4688,30 @@ public float AdvancePredictedSplineDriveReadOnly(
             failureStage = "no_outer_boundary_within_scan_range";
             return false;
         }
-
         for (int i = 0; i < 6; ++i)
         {
             float mid = (lastSupported + firstUnsupported) * .5f;
-            if (TryAutoHoldGroundRay(probeCentre +
-                    left * (originOffset + mid), out _, referenceHeight))
+            if (TryAutoHoldGroundRay(probeCentre + left * (originOffset + mid), out _, referenceHeight))
                 lastSupported = mid;
             else
                 firstUnsupported = mid;
         }
-        // Fast same-flat approach: the centre must stay one ball radius
-        // inside the measured lip. Ordinary Auto Hold retains its prior inset.
-        float inset = keepFullBallOnSlab
-            ? ProbeRadius * 1.10f : ProbeRadius * .20f;
-        float edgeOffset = originOffset +
-            Mathf.Max(0f, lastSupported - inset);
+        // Fast same-flat approach: the centre must stay one ball radius inside the measured lip. Ordinary Auto Hold retains its prior inset.
+        float inset = keepFullBallOnSlab ? ProbeRadius * 1.10f : ProbeRadius * .20f;
+        float edgeOffset = originOffset + Mathf.Max(0f, lastSupported - inset);
         Vector3 checkedCentre = probeCentre + left * edgeOffset;
-        if (!TryAutoHoldGroundRay(checkedCentre,
-                out RaycastHit edgeHit, referenceHeight))
+        if (!TryAutoHoldGroundRay(checkedCentre, out RaycastHit edgeHit, referenceHeight))
         {
             failureStage = "refined_edge_ray_missing";
             return false;
         }
-        if (!TryAutoHoldVerifiedFootprint(checkedCentre, referenceHeight,
-                -left, out string verification))
+        if (!TryAutoHoldVerifiedFootprint(checkedCentre, referenceHeight, -left, out string verification))
         {
             failureStage = "refined_edge_footprint_missing_" + verification;
             return false;
         }
-        // A non-null note on success is diagnostic, not an error. The caller
-        // logs whether the fallback used a three-ray stage footprint.
-        failureStage = keepFullBallOnSlab && verification != "sphere"
-            ? verification : null;
-
+        // A non-null note on success is diagnostic, not an error. The caller logs whether the fallback used a three-ray stage footprint.
+        failureStage = keepFullBallOnSlab && verification != "sphere" ? verification : null;
         target = rb.position + left *
             Vector3.Dot(checkedCentre - rb.position, left);
         autoHoldEdgeCollider = edgeHit.collider;
@@ -6761,43 +4719,33 @@ public float AdvancePredictedSplineDriveReadOnly(
         autoHoldEdgeSurfaceHeight = referenceHeight;
         return true;
     }
-
     bool TryReuseAutoHoldEdge(Vector3 left, out Vector3 target)
     {
         target = rb.position;
-        if (!autoHoldEdgeSampleValid || !autoHoldEdgeCollider ||
-            !autoHoldEdgeCollider.enabled) return false;
+        if (!autoHoldEdgeSampleValid || !autoHoldEdgeCollider || !autoHoldEdgeCollider.enabled) return false;
         Vector3 centre = rb.position + left *
             Vector3.Dot(autoHoldEdgeSample - rb.position, left);
         centre.y = autoHoldEdgeProbeHeight;
-        if (!TryAutoHoldGroundRay(centre, out RaycastHit hit,
-                autoHoldEdgeSurfaceHeight) ||
-            hit.collider != autoHoldEdgeCollider ||
+        if (!TryAutoHoldGroundRay(centre, out RaycastHit hit, autoHoldEdgeSurfaceHeight) || hit.collider != autoHoldEdgeCollider ||
             !TryAutoHoldGroundSphere(centre, autoHoldEdgeSurfaceHeight))
             return false;
         target = rb.position + left *
             Vector3.Dot(centre - rb.position, left);
         return true;
     }
-
     bool TryResolveAutoHoldEdge(Vector3 left, out Vector3 target)
     {
         target = rb.position;
         left = Vector3.ProjectOnPlane(left, Vector3.up);
         if (left.sqrMagnitude <= Eps) return false;
         left.Normalize();
-        if (TryBuildAutoHoldEdgeAnchor(left, out Vector3 anchor,
-                out float range) &&
-            TryScanAutoHoldLeftEdge(anchor, left, range, out target))
+        if (TryBuildAutoHoldEdgeAnchor(left, out Vector3 anchor, out float range) && TryScanAutoHoldLeftEdge(anchor, left, range, out target))
             return true;
         // Never extrapolate an unverified edge across a different collider.
         return TryReuseAutoHoldEdge(left, out target);
     }
-
-    // The previous EDGE LOCK measures the PRE-turn lip. This controller
-    // deliberately discards that geometry and measures the NEW direction.
-    void StartPostAutoHoldLeftEdge(Vector3 newHeading, bool fastArrival = false,
-        bool universalInCorner = false, int receivingStage = -1)
+    // The previous EDGE LOCK measures the PRE-turn lip. This controller deliberately discards that geometry and measures the NEW direction.
+    void StartPostAutoHoldLeftEdge(Vector3 newHeading, bool fastArrival = false, bool universalInCorner = false, int receivingStage = -1)
     {
         StopEdgeCruise("new edge-approach turn");
         ClearPostAutoHoldLeftEdge();
@@ -6809,14 +4757,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         postAutoHoldStartedAt = Time.fixedTime;
         postAutoHoldNextProbeTime = 0f;
         if (postAutoHoldEdgeActive)
-            AutoHoldLog("NEXT SLOPE EDGE", (fastArrival
-                ? "armed after SAME FLAT tap turn; waiting new guide"
-                : universalInCorner
-                    ? "InCorner target locked by normal UTurn; speed-independent"
-                    : "armed after Auto Hold turn; waiting new guide") +
+            AutoHoldLog("NEXT SLOPE EDGE", (fastArrival ? "armed after SAME FLAT tap turn; waiting new guide" : universalInCorner
+                    ? "InCorner target locked by normal UTurn; speed-independent" : "armed after Auto Hold turn; waiting new guide") +
                 (receivingStage >= 0 ? $" receivingStage={receivingStage}" : ""));
     }
-
     void ClearPostAutoHoldLeftEdge()
     {
         postAutoHoldEdgeActive = false;
@@ -6846,59 +4790,41 @@ public float AdvancePredictedSplineDriveReadOnly(
         postBEdgeReacquireUntil = -1f;
         postBEdgeNextLogTime = 0f;
     }
-
     void FinishPostAutoHoldLeftEdge(string reason, bool completedSlope)
     {
         if (!postAutoHoldEdgeActive) return;
         float tolerance = ProbeRadius * .20f;
-        bool succeeded = completedSlope && postAutoHoldSawSlope &&
-            postAutoHoldSlopeSamples > 0 &&
-            postAutoHoldHadEdgeSample &&
+        bool succeeded = completedSlope && postAutoHoldSawSlope && postAutoHoldSlopeSamples > 0 && postAutoHoldHadEdgeSample &&
             Mathf.Abs(postAutoHoldLastError) <= tolerance;
-        AutoHoldLog(succeeded ? "NEXT SLOPE SUCCESS" : "NEXT SLOPE FAILED",
-            $"reason={reason} finalError={postAutoHoldLastError:F3}m " +
-            $"peakSlopeError={postAutoHoldPeakSlopeError:F3}m " +
-            $"samples={postAutoHoldSlopeSamples} corrections={postAutoHoldCorrections}");
-        // Completed next-slope approach is the ONLY way to arm continuing
-        // edge protection. A failure or a support loss never arms it.
+        AutoHoldLog(succeeded ? "NEXT SLOPE SUCCESS" : "NEXT SLOPE FAILED", $"reason={reason} finalError={postAutoHoldLastError:F3}m " +
+            $"peakSlopeError={postAutoHoldPeakSlopeError:F3}m " + $"samples={postAutoHoldSlopeSamples} corrections={postAutoHoldCorrections}");
+        // Completed next-slope approach is the ONLY way to arm continuing edge protection. A failure or a support loss never arms it.
         if (succeeded)
             StartEdgeCruise(postAutoHoldHeading);
         ClearPostAutoHoldLeftEdge();
     }
-
     bool IsPostAutoHoldReceivingCollider(Collider collider)
     {
         if (postAutoHoldReceivingStage < 0) return true;
-        return collider &&
-            (TryGetStageFamily(collider, "ArcSlab", out int family) ||
-             TryGetStageFamily(collider, "StairWay", out family)) &&
+        return collider && (TryGetStageFamily(collider, "ArcSlab", out int family) || TryGetStageFamily(collider, "StairWay", out family)) &&
             family == postAutoHoldReceivingStage;
     }
-
-    // Reuse the exact same Raycast/SphereCast edge solver as pre-turn Auto Hold.
-    // Here the cross-section comes from the NEW current guide, not the old slope.
-    bool TryResolvePostAutoHoldLeftEdge(
-        NearestKnotDetector.GuideFrame guide, Surface surface,
-        Vector3 left, out Vector3 target, out string failureReason)
+    // Reuse the exact same Raycast/SphereCast edge solver as pre-turn Auto Hold. Here the cross-section comes from the NEW current guide, not the old slope.
+    bool TryResolvePostAutoHoldLeftEdge( NearestKnotDetector.GuideFrame guide, Surface surface, Vector3 left, out Vector3 target, out string failureReason)
     {
         target = rb.position;
         failureReason = "invalid_guide_or_surface";
         if (!guide.valid || !surface.Valid || !knotDetector)
             return false;
-
         Vector3 forward = NormalizeFlat(guide.tangent, postAutoHoldHeading);
         if (Vector3.Dot(forward, postAutoHoldHeading) < .75f)
         {
             failureReason = "new_guide_direction_mismatch";
             return false;
         }
-
-        // For a same-flat tap+flick, seek the PHYSICAL lip on the first new
-        // supported flat, before crossing into the stair. The ball's centre
-        // is already above the slab. Adding another radius to rb.position
-        // made the final SphereCast miss the flat at the default probeDistance.
-        if ((postAutoHoldFastArrival || postAutoHoldUniversalInCorner) &&
-            !guide.isSlope)
+        // For a same-flat tap+flick, seek the PHYSICAL lip on the first new supported flat, before crossing into the stair. The ball's centre is already above the slab. Adding
+        // another radius to rb.position made the final SphereCast miss the flat at the default probeDistance.
+        if ((postAutoHoldFastArrival || postAutoHoldUniversalInCorner) && !guide.isSlope)
         {
             var flatSupport = HasGroundSupport();
             if (!flatSupport.Item1 || !flatSupport.Item2.collider)
@@ -6913,47 +4839,34 @@ public float AdvancePredictedSplineDriveReadOnly(
             {
                 Bounds bounds = flatSupport.Item2.collider.bounds;
                 float projectedWidth = 2f *
-                    (Mathf.Abs(left.x) * bounds.extents.x +
-                     Mathf.Abs(left.z) * bounds.extents.z);
-                float scanRange = Mathf.Clamp(projectedWidth + ProbeRadius * 4f,
-                    ProbeRadius * 4f, ProbeRadius * 40f);
-                // Contact point is at the actual floor elevation; never
-                // add the probe lift to the already elevated Rigidbody centre.
+                    (Mathf.Abs(left.x) * bounds.extents.x + Mathf.Abs(left.z) * bounds.extents.z);
+                float scanRange = Mathf.Clamp(projectedWidth + ProbeRadius * 4f, ProbeRadius * 4f, ProbeRadius * 40f);
+                // Contact point is at the actual floor elevation; never add the probe lift to the already elevated Rigidbody centre.
                 Vector3 flatProbe = rb.position;
                 flatProbe.y = flatSupport.Item2.point.y + ProbeRadius + .25f;
-                bool scanned = TryScanAutoHoldLeftEdge(flatProbe, left, scanRange,
-                    out target, out string scanFailureStage, true);
+                bool scanned = TryScanAutoHoldLeftEdge(flatProbe, left, scanRange, out target, out string scanFailureStage, true);
                 if (scanned && IsPostAutoHoldReceivingCollider(autoHoldEdgeCollider))
                 {
                     if (!postAutoHoldFastFlatPrescanLogged)
                     {
                         postAutoHoldFastFlatPrescanLogged = true;
-                        AutoHoldLog("FAST EDGE EARLY FLAT SAMPLE",
-                            $"collider={flatSupport.Item2.collider.name} " +
-                            $"error={Vector3.Dot(target - rb.position, left):F3}m " +
-                            $"scanRange={scanRange:F2}m " +
-                            $"floorY={flatSupport.Item2.point.y:F3} probeY={flatProbe.y:F3} " +
+                        AutoHoldLog("FAST EDGE EARLY FLAT SAMPLE", $"collider={flatSupport.Item2.collider.name} " + $"error={Vector3.Dot(target - rb.position, left):F3}m " +
+                            $"scanRange={scanRange:F2}m " + $"floorY={flatSupport.Item2.point.y:F3} probeY={flatProbe.y:F3} " +
                             $"verification={(scanFailureStage ?? "sphere")} ");
                     }
                     failureReason = null;
                     return true;
                 }
-                failureReason = scanned
-                    ? "flat_edge_found_on_wrong_stage"
-                    : "flat_physical_edge_scan_failed_" + scanFailureStage;
+                failureReason = scanned ? "flat_edge_found_on_wrong_stage" : "flat_physical_edge_scan_failed_" + scanFailureStage;
             }
         }
-
-        // Preserve the existing FiveLine-guided physical fallback for slopes,
-        // seams, and flats whose own physical lip cannot be confirmed.
-        if (!knotDetector.TryGetFiveLineFrame(guide, surface.side,
-                out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
+        // Preserve the existing FiveLine-guided physical fallback for slopes, seams, and flats whose own physical lip cannot be confirmed.
+        if (!knotDetector.TryGetFiveLineFrame(guide, surface.side, out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
         {
             if (failureReason == "invalid_guide_or_surface")
                 failureReason = "five_line_frame_unavailable";
             return false;
         }
-
         float width = Mathf.Abs(Vector3.Dot(frame.left - frame.right, left));
         if (width <= ProbeRadius)
         {
@@ -6961,43 +4874,32 @@ public float AdvancePredictedSplineDriveReadOnly(
                 failureReason = "five_line_width_too_small";
             return false;
         }
-
-        float along = Mathf.Clamp(Vector3.Dot(rb.position - frame.center,
-            forward), -ProbeRadius * 2f, ProbeRadius * 2f);
+        float along = Mathf.Clamp(Vector3.Dot(rb.position - frame.center, forward), -ProbeRadius * 2f, ProbeRadius * 2f);
         Vector3 probe = frame.center + forward * along;
         probe.y += ProbeRadius + .25f;
         float range = Mathf.Max(ProbeRadius * 4f, width + ProbeRadius * 4f);
-        bool scannedFiveLine = TryScanAutoHoldLeftEdge(probe, left, range,
-            out target, out _, true);
+        bool scannedFiveLine = TryScanAutoHoldLeftEdge(probe, left, range, out target, out _, true);
         if (!scannedFiveLine || !IsPostAutoHoldReceivingCollider(autoHoldEdgeCollider))
         {
             if (postAutoHoldUniversalInCorner)
             {
-                // Use the physical LeftSpline as the minimum goal, but only
-                // when it has actual support. The inward margin keeps the
-                // sphere centre off the mathematically exact outer lip.
-                Vector3 leftSpline =
-                    Vector3.Dot(frame.left - frame.center, left) >
-                    Vector3.Dot(frame.right - frame.center, left)
-                        ? frame.left : frame.right;
-                Vector3 towardCenter = Vector3.ProjectOnPlane(
-                    frame.center - leftSpline, Vector3.up);
+                // Use the physical LeftSpline as the minimum goal, but only when it has actual support. The inward margin keeps the sphere centre off the mathematically exact outer lip.
+                Vector3 leftSpline = Vector3.Dot(frame.left - frame.center, left) >
+                    Vector3.Dot(frame.right - frame.center, left) ? frame.left : frame.right;
+                Vector3 towardCenter = Vector3.ProjectOnPlane( frame.center - leftSpline, Vector3.up);
                 if (towardCenter.sqrMagnitude > Eps)
                 {
                     target = leftSpline + towardCenter.normalized *
                         (ProbeRadius * .65f);
                     Vector3 sample = target + Vector3.up *
                         (ProbeRadius * .45f);
-                    if (TryAutoHoldGroundRay(sample, out RaycastHit safe) &&
-                        IsPostAutoHoldReceivingCollider(safe.collider) &&
-                        IsCloseGroundRay(safe, sample))
+                    if (TryAutoHoldGroundRay(sample, out RaycastHit safe) && IsPostAutoHoldReceivingCollider(safe.collider) && IsCloseGroundRay(safe, sample))
                     {
                         failureReason = null;
                         if (!postAutoHoldUniversalFallbackLogged)
                         {
                             postAutoHoldUniversalFallbackLogged = true;
-                            Debug.Log($"[INCORNER LEFTSPLINE FALLBACK] " +
-                                $"t={Time.fixedTime:F3} left={leftSpline:F3} " +
+                            Debug.Log($"[INCORNER LEFTSPLINE FALLBACK] " + $"t={Time.fixedTime:F3} left={leftSpline:F3} " +
                                 $"target={target:F3} floor={safe.collider.name}", this);
                         }
                         return true;
@@ -7012,10 +4914,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         failureReason = null;
         return true;
     }
-
-    // ================================================================
     // Edge cruise: safety after the completed left-edge approach
-    // ================================================================
     void StartEdgeCruise(Vector3 heading)
     {
         StopEdgeCruise("replaced");
@@ -7024,15 +4923,12 @@ public float AdvancePredictedSplineDriveReadOnly(
         edgeCruiseNextProbeTime = 0f;
         edgeCruiseNextLogTime = 0f;
         if (edgeCruiseActive)
-            AutoHoldLog("EDGE CRUISE START",
-                "next slope completed; maintaining verified physical lip clearance");
+            AutoHoldLog("EDGE CRUISE START", "next slope completed; maintaining verified physical lip clearance");
     }
-
     void StopEdgeCruise(string reason)
     {
         if (edgeCruiseActive)
-            AutoHoldLog("EDGE CRUISE STOP",
-                $"reason={reason} corrections={edgeCruiseCorrections}");
+            AutoHoldLog("EDGE CRUISE STOP", $"reason={reason} corrections={edgeCruiseCorrections}");
         edgeCruiseActive = false;
         edgeCruiseSampleValid = false;
         edgeCruiseHeading = Vector3.zero;
@@ -7043,13 +4939,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         edgeCruiseNextLogTime = 0f;
         edgeCruiseCorrections = 0;
     }
-
-    float StepEdgeCruise(NearestKnotDetector.GuideFrame guide,
-        Surface surface, bool grounded, RaycastHit supportHit)
+    float StepEdgeCruise(NearestKnotDetector.GuideFrame guide, Surface surface, bool grounded, RaycastHit supportHit)
     {
         if (!edgeCruiseActive) return 0f;
-        if (MainGameManager.OnDead || !BeginCommandOnTouch ||
-            HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide ||
+        if (MainGameManager.OnDead || !BeginCommandOnTouch || HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide ||
             earlyFlickSession || autoHoldEligible || postAutoHoldEdgeActive)
         {
             StopEdgeCruise("player action or turn");
@@ -7062,41 +4955,29 @@ public float AdvancePredictedSplineDriveReadOnly(
             StopEdgeCruise("spline heading changed");
             return 0f;
         }
-
-        // Do not suspend gravity or steer an unsupported body. The normal
-        // support/DropOut logic remains authoritative, even in edge cruise.
+        // Do not suspend gravity or steer an unsupported body. The normal support/DropOut logic remains authoritative, even in edge cruise.
         if (!grounded || !IsAutoHoldStageHit(supportHit, float.NaN))
         {
             edgeCruiseSampleValid = false;
             return 0f;
         }
-
         Vector3 left = Vector3.Cross(edgeCruiseHeading, Vector3.up).normalized;
         if (left.sqrMagnitude <= Eps) return 0f;
         float vLeft = Vector3.Dot(rb.velocity, left);
-        if (Time.fixedTime >= edgeCruiseNextProbeTime ||
-            (edgeCruiseSupportCollider &&
-             supportHit.collider != edgeCruiseSupportCollider))
+        if (Time.fixedTime >= edgeCruiseNextProbeTime || (edgeCruiseSupportCollider && supportHit.collider != edgeCruiseSupportCollider))
         {
             Bounds bounds = supportHit.collider.bounds;
-            float width = 2f * (Mathf.Abs(left.x) * bounds.extents.x +
-                Mathf.Abs(left.z) * bounds.extents.z);
-            float range = Mathf.Clamp(width + ProbeRadius * 4f,
-                ProbeRadius * 4f, ProbeRadius * 40f);
+            float width = 2f * (Mathf.Abs(left.x) * bounds.extents.x + Mathf.Abs(left.z) * bounds.extents.z);
+            float range = Mathf.Clamp(width + ProbeRadius * 4f, ProbeRadius * 4f, ProbeRadius * 40f);
             Vector3 probe = rb.position;
             probe.y = supportHit.point.y + ProbeRadius + .25f;
-
-            if (TryScanAutoHoldLeftEdge(probe, left, range,
-                    out Vector3 lipTarget, out _, true))
+            if (TryScanAutoHoldLeftEdge(probe, left, range, out Vector3 lipTarget, out _, true))
             {
-                // Leave slightly more than one full radius inside the lip.
-                // Validated against the actual floor, not the Spline width.
+                // Leave slightly more than one full radius inside the lip. Validated against the actual floor, not the Spline width.
                 Vector3 safeTarget = lipTarget - left * (ProbeRadius * .24f);
                 Vector3 check = probe + left *
                     Vector3.Dot(safeTarget - rb.position, left);
-                if (TryAutoHoldGroundRay(check, out RaycastHit safeHit,
-                        supportHit.point.y) &&
-                    safeHit.collider == supportHit.collider &&
+                if (TryAutoHoldGroundRay(check, out RaycastHit safeHit, supportHit.point.y) && safeHit.collider == supportHit.collider &&
                     IsAutoHoldStageHit(safeHit, supportHit.point.y))
                 {
                     edgeCruiseTarget = safeTarget;
@@ -7109,95 +4990,62 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             else
                 edgeCruiseSampleValid = false;
-
-            // Only sample every second physics tick unless outward drift is
-            // already significant. No unbounded raycasts every Update frame.
-            edgeCruiseNextProbeTime = Time.fixedTime +
-                (vLeft > 1f ? Time.fixedDeltaTime :
-                    Mathf.Max(Time.fixedDeltaTime, Time.fixedDeltaTime * 2f));
+            // Only sample every second physics tick unless outward drift is already significant. No unbounded raycasts every Update frame.
+            edgeCruiseNextProbeTime = Time.fixedTime + (vLeft > 1f ? Time.fixedDeltaTime : Mathf.Max(Time.fixedDeltaTime, Time.fixedDeltaTime * 2f));
         }
-
-        // A cached lip may only be used on the SAME supported collider, for
-        // at most two physics ticks. Across seams, reacquire the new floor.
-        bool fresh = edgeCruiseSampleValid &&
-            supportHit.collider == edgeCruiseSupportCollider &&
-            Time.fixedTime - edgeCruiseSampleTime <=
+        // A cached lip may only be used on the SAME supported collider, for at most two physics ticks. Across seams, reacquire the new floor.
+        bool fresh = edgeCruiseSampleValid && supportHit.collider == edgeCruiseSupportCollider && Time.fixedTime - edgeCruiseSampleTime <=
                 Mathf.Max(.04f, Time.fixedDeltaTime * 2.5f);
         if (!fresh)
         {
             if (Time.fixedTime >= edgeCruiseNextLogTime)
             {
                 edgeCruiseNextLogTime = Time.fixedTime + .40f;
-                AutoHoldLog("EDGE CRUISE PROBE UNAVAILABLE",
-                    $"collider={supportHit.collider.name} supported={grounded} " +
-                    "no stale-lip force across stage seams");
+                AutoHoldLog("EDGE CRUISE PROBE UNAVAILABLE", $"collider={supportHit.collider.name} supported={grounded} " + "no stale-lip force across stage seams");
             }
             return 0f;
         }
-
         float error = Vector3.Dot(edgeCruiseTarget - rb.position, left);
-        // Positive vLeft means moving toward the outside of the left lip.
-        // Predict the stopping distance before the ball touches the boundary.
-        float maxAcceleration = Mathf.Clamp(Mathf.Max(
-            autoHoldMaxSideAcceleration, GroundAcceleration * 2.5f), 45f, 120f);
-        float stoppingDistance = vLeft > 0f
-            ? vLeft * vLeft / (2f * maxAcceleration) : 0f;
+        // Positive vLeft means moving toward the outside of the left lip. Predict the stopping distance before the ball touches the boundary.
+        float maxAcceleration = Mathf.Clamp(Mathf.Max( autoHoldMaxSideAcceleration, GroundAcceleration * 2.5f), 45f, 120f);
+        float stoppingDistance = vLeft > 0f ? vLeft * vLeft / (2f * maxAcceleration) : 0f;
         float predictedError = error - vLeft *
             Mathf.Max(.05f, Time.fixedDeltaTime * 3f);
-        bool nearOutside = error <= ProbeRadius * .25f + stoppingDistance +
-            Mathf.Max(0f, vLeft) * Time.fixedDeltaTime;
-
-        // Gentle parallel running at the lip, with stronger braking ONLY when
-        // outward velocity predicts an overrun. Normal forward speed is untouched.
+        bool nearOutside = error <= ProbeRadius * .25f + stoppingDistance + Mathf.Max(0f, vLeft) * Time.fixedDeltaTime;
+        // Gentle parallel running at the lip, with stronger braking ONLY when outward velocity predicts an overrun. Normal forward speed is untouched.
         float targetSideSpeed = Mathf.Clamp(error *
             (nearOutside ? 8f : 3.5f), -2.5f, 1.1f);
         if (nearOutside && vLeft > .4f)
             targetSideSpeed = Mathf.Min(targetSideSpeed, -Mathf.Min(2f, vLeft));
-        float accelLeft = Mathf.Clamp((targetSideSpeed - vLeft) * 12f,
-            -maxAcceleration, maxAcceleration);
+        float accelLeft = Mathf.Clamp((targetSideSpeed - vLeft) * 12f, -maxAcceleration, maxAcceleration);
         if (nearOutside && vLeft > 0f)
-            accelLeft = Mathf.Min(accelLeft,
-                -Mathf.Min(maxAcceleration, vLeft * 25f));
-
+            accelLeft = Mathf.Min(accelLeft, -Mathf.Min(maxAcceleration, vLeft * 25f));
         if (Mathf.Abs(accelLeft) <= .01f) return 0f;
         edgeCruiseCorrections++;
         if (Time.fixedTime >= edgeCruiseNextLogTime)
         {
             edgeCruiseNextLogTime = Time.fixedTime + .40f;
-            AutoHoldLog("EDGE CRUISE GUARD",
-                $"error={error:F3}m outwardSpeed={vLeft:F2}m/s " +
-                $"predicted={predictedError:F3}m accel={accelLeft:F1}m/s2 " +
+            AutoHoldLog("EDGE CRUISE GUARD", $"error={error:F3}m outwardSpeed={vLeft:F2}m/s " + $"predicted={predictedError:F3}m accel={accelLeft:F1}m/s2 " +
                 $"collider={supportHit.collider.name} slope={guide.isSlope}");
         }
-        // Lateral force only. Never teleport, clamp world position, freeze Y,
-        // add invisible walls, or override the existing death logic.
+        // Lateral force only. Never teleport, clamp world position, freeze Y, add invisible walls, or override the existing death logic.
         return accelLeft * Vector3.Dot(left, surface.side);
     }
-
-    // A latched physical left-lip target is not changed when NearestKnot
-    // switches to another Spline lane of the same stair. Revalidate it against
-    // the ACTUAL supporting stair collider at this forward position first.
+    // A latched physical left-lip target is not changed when NearestKnot switches to another Spline lane of the same stair. Revalidate it against the ACTUAL supporting stair
+    // collider at this forward position first.
     bool IsPostBEdgeAnchorStillSupported(Vector3 left, float signedLateral)
     {
-        if (!postBDownhillSawSlope || postBDownhillStairFamily < 0 ||
-            !currentHit.collider || !IsAutoHoldStageHit(currentHit, float.NaN) ||
-            !TryGetPostBStairFamily(currentHit.collider, out int family) ||
-            family != postBDownhillStairFamily)
+        if (!postBDownhillSawSlope || postBDownhillStairFamily < 0 || !currentHit.collider || !IsAutoHoldStageHit(currentHit, float.NaN) ||
+            !TryGetPostBStairFamily(currentHit.collider, out int family) || family != postBDownhillStairFamily)
             return false;
-
         Vector3 probe = rb.worldCenterOfMass + left *
             (signedLateral - Vector3.Dot(rb.worldCenterOfMass, left));
         probe.y = currentHit.point.y + ProbeRadius + .25f;
-        if (!TryAutoHoldGroundRay(probe, out RaycastHit check,
-                currentHit.point.y) ||
-            !TryGetPostBStairFamily(check.collider, out int checkedFamily) ||
-            checkedFamily != family ||
-            !TryAutoHoldVerifiedFootprint(probe, check.point.y, -left,
-                out _))
+        if (!TryAutoHoldGroundRay(probe, out RaycastHit check, currentHit.point.y) || !TryGetPostBStairFamily(check.collider, out int checkedFamily) ||
+            checkedFamily != family || !TryAutoHoldVerifiedFootprint(probe, check.point.y, -left, out _))
             return false;
         return true;
     }
-
     void StabilizePostBLeftEdgeTarget(Vector3 left)
     {
         if (!postBDownhillSawSlope || !currentHit.collider) return;
@@ -7212,54 +5060,39 @@ public float AdvancePredictedSplineDriveReadOnly(
             float jump = Mathf.Abs(measured - postBEdgeAnchorLateral);
             if (jump > PostBEdgeAnchorNoiseMeters)
             {
-                if (IsPostBEdgeAnchorStillSupported(left,
-                        postBEdgeAnchorLateral))
+                if (IsPostBEdgeAnchorStillSupported(left, postBEdgeAnchorLateral))
                 {
-                    // The original lip is still physically present. Ignore
-                    // a 2.5m lane/section snap in the Guide and do not chase.
+                    // The original lip is still physically present. Ignore a 2.5m lane/section snap in the Guide and do not chase.
                     if (Time.fixedTime >= postBEdgeNextLogTime)
                     {
                         postBEdgeNextLogTime = Time.fixedTime + .25f;
-                        Debug.Log($"[B EDGE TARGET HELD] " +
-                            $"t={Time.fixedTime:F3} guideJump={jump:F2}m " +
-                            $"floor={currentHit.collider.name}", this);
+                        Debug.Log($"[B EDGE TARGET HELD] " + $"t={Time.fixedTime:F3} guideJump={jump:F2}m " + $"floor={currentHit.collider.name}", this);
                     }
                 }
                 else
                 {
-                    // A newly VERIFIED physical lip is available, but the
-                    // old lip disappeared. Slew the reference and BRAKE
-                    // sideways during reacquisition, never jump the target.
-                    postBEdgeAnchorLateral = Mathf.MoveTowards(
-                        postBEdgeAnchorLateral, measured,
-                        PostBEdgeAnchorSlewMetersPerSecond *
+                    // A newly VERIFIED physical lip is available, but the old lip disappeared. Slew the reference and BRAKE sideways during reacquisition, never jump the target.
+                    postBEdgeAnchorLateral = Mathf.MoveTowards( postBEdgeAnchorLateral, measured, PostBEdgeAnchorSlewMetersPerSecond *
                         Time.fixedDeltaTime);
                     postBEdgeReacquireUntil = Time.fixedTime + .06f;
                     if (Time.fixedTime >= postBEdgeNextLogTime)
                     {
                         postBEdgeNextLogTime = Time.fixedTime + .25f;
-                        Debug.LogWarning($"[B EDGE TARGET REACQUIRE] " +
-                            $"t={Time.fixedTime:F3} guideJump={jump:F2}m " +
-                            $"floor={currentHit.collider.name}", this);
+                        Debug.LogWarning($"[B EDGE TARGET REACQUIRE] " + $"t={Time.fixedTime:F3} guideJump={jump:F2}m " + $"floor={currentHit.collider.name}", this);
                     }
                 }
             }
             else
             {
-                postBEdgeAnchorLateral = Mathf.MoveTowards(
-                    postBEdgeAnchorLateral, measured,
-                    PostBEdgeAnchorSlewMetersPerSecond * Time.fixedDeltaTime);
+                postBEdgeAnchorLateral = Mathf.MoveTowards( postBEdgeAnchorLateral, measured, PostBEdgeAnchorSlewMetersPerSecond * Time.fixedDeltaTime);
             }
         }
         postAutoHoldEdgeTarget = rb.position + left *
             (postBEdgeAnchorLateral - Vector3.Dot(rb.position, left));
     }
-
-    // B-InCorner exclusively: bounded side acceleration, velocity-based
-    // stopping distance, no side push while re-locating the physical lip.
-    // No X/Z snap, no force along the downhill tangent, no new MonoBehaviour.
-    float StepPostBSafeLateral(Vector3 left, Surface surface,
-        float error, float lateralVelocity, bool targetVerified)
+    // B-InCorner exclusively: bounded side acceleration, velocity-based stopping distance, no side push while re-locating the physical lip. No X/Z snap, no force along the
+    // downhill tangent, no new MonoBehaviour.
+    float StepPostBSafeLateral(Vector3 left, Surface surface, float error, float lateralVelocity, bool targetVerified)
     {
         float desiredSpeed = 0f;
         float tolerance = ProbeRadius * .20f;
@@ -7267,42 +5100,28 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             float travelToGoal = Mathf.Max(0f, Mathf.Abs(error) - tolerance);
             float towardSpeed = Mathf.Sign(error) * lateralVelocity;
-            float stopDistance = towardSpeed > 0f
-                ? towardSpeed * towardSpeed /
+            float stopDistance = towardSpeed > 0f ? towardSpeed * towardSpeed /
                     (2f * PostBEdgeMaxSideAcceleration) : 0f;
-
             if (stopDistance + Mathf.Max(0f, towardSpeed) *
                     Time.fixedDeltaTime >= travelToGoal)
                 desiredSpeed = 0f; // begin BRAKING before overshoot
             else
-                desiredSpeed = Mathf.Sign(error) * Mathf.Min(
-                    PostBEdgeMaxSideSpeed,
-                    Mathf.Min(Mathf.Sqrt(2f * PostBEdgeMaxSideAcceleration *
+                desiredSpeed = Mathf.Sign(error) * Mathf.Min( PostBEdgeMaxSideSpeed, Mathf.Min(Mathf.Sqrt(2f * PostBEdgeMaxSideAcceleration *
                         travelToGoal), travelToGoal * 6f));
         }
         float requestedAcceleration = (desiredSpeed - lateralVelocity) * 16f;
-        float accelerationLeft = Mathf.Clamp(requestedAcceleration,
-            -PostBEdgeMaxSideAcceleration, PostBEdgeMaxSideAcceleration);
-        if (Time.fixedTime >= postBEdgeNextLogTime &&
-            (Mathf.Abs(lateralVelocity) > 2f ||
-             Mathf.Abs(error) > ProbeRadius))
+        float accelerationLeft = Mathf.Clamp(requestedAcceleration, -PostBEdgeMaxSideAcceleration, PostBEdgeMaxSideAcceleration);
+        if (Time.fixedTime >= postBEdgeNextLogTime && (Mathf.Abs(lateralVelocity) > 2f || Mathf.Abs(error) > ProbeRadius))
         {
             postBEdgeNextLogTime = Time.fixedTime + .18f;
-            Debug.Log($"[B EDGE LATERAL BRAKE] " +
-                $"t={Time.fixedTime:F3} error={error:F2}m " +
-                $"side={lateralVelocity:F2}m/s " +
-                $"target={desiredSpeed:F2}m/s " +
-                $"sideAccel={accelerationLeft:F1} " +
-                $"verified={targetVerified}", this);
+            Debug.Log($"[B EDGE LATERAL BRAKE] " + $"t={Time.fixedTime:F3} error={error:F2}m " + $"side={lateralVelocity:F2}m/s " + $"target={desiredSpeed:F2}m/s " +
+                $"sideAccel={accelerationLeft:F1} " + $"verified={targetVerified}", this);
         }
         return accelerationLeft * Vector3.Dot(left, surface.side);
     }
-
-    // Only Auto Hold's immediately following flat -> slope is eligible.
-    // A correct edge position gets no steering. A measurable error gets only
-    // existing lateral AddForce, never a new hard teleport into stair colliders.
-    float StepPostAutoHoldLeftEdge(
-        NearestKnotDetector.GuideFrame guide, Surface surface, bool grounded)
+    // Only Auto Hold's immediately following flat -> slope is eligible. A correct edge position gets no steering. A measurable error gets only existing lateral AddForce, never a
+    // new hard teleport into stair colliders.
+    float StepPostAutoHoldLeftEdge( NearestKnotDetector.GuideFrame guide, Surface surface, bool grounded)
     {
         if (!postAutoHoldEdgeActive) return 0f;
         if (MainGameManager.OnDead)
@@ -7310,9 +5129,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             FinishPostAutoHoldLeftEdge("player died", false);
             return 0f;
         }
-        if (!BeginCommandOnTouch || HasPendingTurnIntent ||
-            turnTransitionActive || waitingForTurnGuide ||
-            earlyFlickSession || autoHoldEligible)
+        if (!BeginCommandOnTouch || HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide || earlyFlickSession || autoHoldEligible)
         {
             AutoHoldLog("NEXT SLOPE CANCELED", "new player action / inactive");
             ClearPostAutoHoldLeftEdge();
@@ -7322,16 +5139,13 @@ public float AdvancePredictedSplineDriveReadOnly(
             return 0f;
         if (!grounded)
         {
-            if (postAutoHoldFastArrival && guide.isSlope &&
-                !postAutoHoldFastDeadlineLogged && guide.sectionProgress01 >= 3f / 7f)
+            if (postAutoHoldFastArrival && guide.isSlope && !postAutoHoldFastDeadlineLogged && guide.sectionProgress01 >= 3f / 7f)
             {
                 postAutoHoldFastDeadlineLogged = true;
-                AutoHoldLog("FAST EDGE STEP 3 UNSUPPORTED",
-                    $"progress={guide.sectionProgress01:F3} no physical support");
+                AutoHoldLog("FAST EDGE STEP 3 UNSUPPORTED", $"progress={guide.sectionProgress01:F3} no physical support");
             }
             return 0f; // never steer toward a lip while unsupported
         }
-
         Vector3 heading = NormalizeFlat(guide.tangent, postAutoHoldHeading);
         if (Vector3.Dot(heading, postAutoHoldHeading) < .75f)
         {
@@ -7341,134 +5155,95 @@ public float AdvancePredictedSplineDriveReadOnly(
         float elapsed = Time.fixedTime - postAutoHoldStartedAt;
         if (elapsed > (postAutoHoldSawSlope ? 12f : 6f))
         {
-            FinishPostAutoHoldLeftEdge(postAutoHoldSawSlope
-                ? "next slope not completed" : "next slope not reached", false);
+            FinishPostAutoHoldLeftEdge(postAutoHoldSawSlope ? "next slope not completed" : "next slope not reached", false);
             return 0f;
         }
-
         if (guide.isSlope)
         {
             if (!postAutoHoldSawSlope)
             {
                 postAutoHoldSawSlope = true;
                 postAutoHoldNextProbeTime = 0f;
-                AutoHoldLog("NEXT SLOPE EDGE",
-                    $"slope entered section={guide.sectionIndex}");
+                AutoHoldLog("NEXT SLOPE EDGE", $"slope entered section={guide.sectionIndex}");
             }
-            postAutoHoldMaxSlopeProgress = Mathf.Max(
-                postAutoHoldMaxSlopeProgress, guide.sectionProgress01);
+            postAutoHoldMaxSlopeProgress = Mathf.Max( postAutoHoldMaxSlopeProgress, guide.sectionProgress01);
         }
         else if (postAutoHoldSawSlope)
         {
-            // On the B-InCorner receiving stair a flat GUIDE can occur at
-            // a knot/step seam while the real collider is still StairWay.
-            // The downhill guard, not the guide flag, confirms ArcSlab arrival.
+            // On the B-InCorner receiving stair a flat GUIDE can occur at a knot/step seam while the real collider is still StairWay. The downhill guard, not the guide flag, confirms
+            // ArcSlab arrival.
             if (postBDownhillArmed && postAutoHoldUniversalInCorner)
                 return 0f;
             if (postAutoHoldMaxSlopeProgress >= .65f)
                 FinishPostAutoHoldLeftEdge("next slope exited", true);
             return 0f;
         }
-        // A same-flat tap+flick may start from any VERIFIED new flat after
-        // the turn, instead of waiting for nextIsSlope at the last seam.
-        if (!postAutoHoldFastArrival && !postAutoHoldUniversalInCorner &&
-            !guide.isSlope && !guide.nextIsSlope)
+        // A same-flat tap+flick may start from any VERIFIED new flat after the turn, instead of waiting for nextIsSlope at the last seam.
+        if (!postAutoHoldFastArrival && !postAutoHoldUniversalInCorner && !guide.isSlope && !guide.nextIsSlope)
             return 0f;
-
         Vector3 left = Vector3.Cross(postAutoHoldHeading, Vector3.up).normalized;
         if (left.sqrMagnitude <= Eps) return 0f;
-
-        // At high forward speed sample every two physics ticks; a new slope
-        // triggers immediate resampling. Reuse only within the same guide span.
+        // At high forward speed sample every two physics ticks; a new slope triggers immediate resampling. Reuse only within the same guide span.
         if (Time.fixedTime >= postAutoHoldNextProbeTime)
         {
-            postAutoHoldHadEdgeSample = TryResolvePostAutoHoldLeftEdge(
-                guide, surface, left, out postAutoHoldEdgeTarget,
-                out string probeFailureReason);
-            postAutoHoldNextProbeTime = Time.fixedTime +
-                Mathf.Max(Time.fixedDeltaTime, Time.fixedDeltaTime * 2f);
-            if (postAutoHoldHadEdgeSample && postBDownhillArmed &&
-                postAutoHoldUniversalInCorner &&
-                postBDownhillSawSlope && guide.isSlope)
+            postAutoHoldHadEdgeSample = TryResolvePostAutoHoldLeftEdge( guide, surface, left, out postAutoHoldEdgeTarget, out string probeFailureReason);
+            postAutoHoldNextProbeTime = Time.fixedTime + Mathf.Max(Time.fixedDeltaTime, Time.fixedDeltaTime * 2f);
+            if (postAutoHoldHadEdgeSample && postBDownhillArmed && postAutoHoldUniversalInCorner && postBDownhillSawSlope && guide.isSlope)
                 StabilizePostBLeftEdgeTarget(left);
-            // Only failed early-flat probes are logged, throttled to avoid
-            // flooding the console at physics tick frequency.
-            if (!postAutoHoldHadEdgeSample && postAutoHoldFastArrival &&
-                !guide.isSlope && Time.fixedTime >= postAutoHoldNextFlatProbeFailureLogTime)
+            // Only failed early-flat probes are logged, throttled to avoid flooding the console at physics tick frequency.
+            if (!postAutoHoldHadEdgeSample && postAutoHoldFastArrival && !guide.isSlope && Time.fixedTime >= postAutoHoldNextFlatProbeFailureLogTime)
             {
                 postAutoHoldNextFlatProbeFailureLogTime = Time.fixedTime + .16f;
-                AutoHoldLog("FAST EDGE EARLY FLAT PROBE FAILED",
-                    $"reason={probeFailureReason} " +
-                    $"support={grounded} guideFlat={!guide.isSlope} " +
-                    $"collider={(currentHit.collider ? currentHit.collider.name : "-")} " +
-                    $"speed={Vector3.Dot(rb.velocity, postAutoHoldHeading):F2}m/s");
+                AutoHoldLog("FAST EDGE EARLY FLAT PROBE FAILED", $"reason={probeFailureReason} " + $"support={grounded} guideFlat={!guide.isSlope} " +
+                    $"collider={(currentHit.collider ? currentHit.collider.name : "-")} " + $"speed={Vector3.Dot(rb.velocity, postAutoHoldHeading):F2}m/s");
             }
         }
         if (!postAutoHoldHadEdgeSample)
         {
             if (postBDownhillArmed && postAutoHoldUniversalInCorner)
-                return StepPostBSafeLateral(left, surface, 0f,
-                    Vector3.Dot(rb.velocity, left), false);
-            if (postAutoHoldFastArrival && guide.isSlope &&
-                !postAutoHoldFastDeadlineLogged && guide.sectionProgress01 >= 3f / 7f)
+                return StepPostBSafeLateral(left, surface, 0f, Vector3.Dot(rb.velocity, left), false);
+            if (postAutoHoldFastArrival && guide.isSlope && !postAutoHoldFastDeadlineLogged && guide.sectionProgress01 >= 3f / 7f)
             {
                 postAutoHoldFastDeadlineLogged = true;
-                AutoHoldLog("FAST EDGE STEP 3 UNAVAILABLE",
-                    $"progress={guide.sectionProgress01:F3} no verified edge");
+                AutoHoldLog("FAST EDGE STEP 3 UNAVAILABLE", $"progress={guide.sectionProgress01:F3} no verified edge");
             }
             return 0f;
         }
-
         float error = Vector3.Dot(postAutoHoldEdgeTarget - rb.position, left);
         float tolerance = ProbeRadius * .20f;
         float lateralVelocity = Vector3.Dot(rb.velocity, left);
-        // If the ball is on the lip but moving outward, do not wait until
-        // the next tick to begin braking. Otherwise a good edge gets no force.
+        // If the ball is on the lip but moving outward, do not wait until the next tick to begin braking. Otherwise a good edge gets no force.
         float predictedError = error - lateralVelocity *
             (Time.fixedDeltaTime * 2f);
-        bool needsCorrection = Mathf.Abs(error) > tolerance ||
-            Mathf.Abs(predictedError) > tolerance;
+        bool needsCorrection = Mathf.Abs(error) > tolerance || Mathf.Abs(predictedError) > tolerance;
         postAutoHoldLastError = error;
-        // Three treads are the DEADLINE, not the start of steering.
-        // Count only a measured arrival before that line; confirm it remains
-        // at the lip when the third-tread boundary is crossed.
-        bool arrived = Mathf.Abs(error) <= tolerance &&
-            Mathf.Abs(predictedError) <= tolerance;
-        if (postAutoHoldFastArrival && !postAutoHoldFastArrivedBeforeThird &&
-            arrived && (!guide.isSlope || guide.sectionProgress01 < 3f / 7f))
+        // Three treads are the DEADLINE, not the start of steering. Count only a measured arrival before that line; confirm it remains at the lip when the third-tread boundary is
+        // crossed.
+        bool arrived = Mathf.Abs(error) <= tolerance && Mathf.Abs(predictedError) <= tolerance;
+        if (postAutoHoldFastArrival && !postAutoHoldFastArrivedBeforeThird && arrived && (!guide.isSlope || guide.sectionProgress01 < 3f / 7f))
         {
             postAutoHoldFastArrivedBeforeThird = true;
-            AutoHoldLog("FAST EDGE EARLY ARRIVAL",
-                $"slope={guide.isSlope} progress={guide.sectionProgress01:F3} " +
-                $"error={error:F3}m lateral={lateralVelocity:F2}m/s");
+            AutoHoldLog("FAST EDGE EARLY ARRIVAL", $"slope={guide.isSlope} progress={guide.sectionProgress01:F3} " + $"error={error:F3}m lateral={lateralVelocity:F2}m/s");
         }
-        if (postAutoHoldFastArrival && guide.isSlope &&
-            !postAutoHoldFastDeadlineLogged && guide.sectionProgress01 >= 3f / 7f)
+        if (postAutoHoldFastArrival && guide.isSlope && !postAutoHoldFastDeadlineLogged && guide.sectionProgress01 >= 3f / 7f)
         {
             postAutoHoldFastDeadlineLogged = true;
-            AutoHoldLog(postAutoHoldFastArrivedBeforeThird && arrived
-                    ? "FAST EDGE STEP 3 SUCCESS" : "FAST EDGE STEP 3 MISSED",
-                $"progress={guide.sectionProgress01:F3} error={error:F3}m " +
-                $"lateral={lateralVelocity:F2}m/s predictedError={predictedError:F3}m " +
-                $"early={postAutoHoldFastArrivedBeforeThird} " +
-                $"corrections={postAutoHoldCorrections}");
+            AutoHoldLog(postAutoHoldFastArrivedBeforeThird && arrived ? "FAST EDGE STEP 3 SUCCESS" : "FAST EDGE STEP 3 MISSED",
+                $"progress={guide.sectionProgress01:F3} error={error:F3}m " + $"lateral={lateralVelocity:F2}m/s predictedError={predictedError:F3}m " +
+                $"early={postAutoHoldFastArrivedBeforeThird} " + $"corrections={postAutoHoldCorrections}");
         }
         if (postAutoHoldSawSlope)
         {
             postAutoHoldSlopeSamples++;
-            postAutoHoldPeakSlopeError = Mathf.Max(postAutoHoldPeakSlopeError,
-                Mathf.Abs(error));
+            postAutoHoldPeakSlopeError = Mathf.Max(postAutoHoldPeakSlopeError, Mathf.Abs(error));
         }
-
         if (postBDownhillArmed && postAutoHoldUniversalInCorner)
         {
-            // Original B-InCorner only: do not apply the 220m/s2 universal
-            // quintic controller. The slow 5m/s side target is based on the
-            // PHYSICAL lip, with braking distance and measured side speed.
+            // Original B-InCorner only: do not apply the 220m/s2 universal quintic controller. The slow 5m/s side target is based on the PHYSICAL lip, with braking distance and measured
+            // side speed.
             if (needsCorrection || Mathf.Abs(lateralVelocity) > .15f)
                 postAutoHoldCorrections++;
-            return StepPostBSafeLateral(left, surface, error,
-                lateralVelocity, true);
+            return StepPostBSafeLateral(left, surface, error, lateralVelocity, true);
         }
         if (!needsCorrection)
         {
@@ -7477,106 +5252,62 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         if (!postAutoHoldCorrectionActive)
         {
-            AutoHoldLog("NEXT SLOPE CORRECT",
-                $"error={error:F3}m slope={guide.isSlope} collider=" +
-                (autoHoldEdgeCollider ? autoHoldEdgeCollider.name : "-"));
+            AutoHoldLog("NEXT SLOPE CORRECT", $"error={error:F3}m slope={guide.isSlope} collider=" + (autoHoldEdgeCollider ? autoHoldEdgeCollider.name : "-"));
             postAutoHoldCorrectionActive = true;
         }
         postAutoHoldCorrections++;
-
-        // Same-flat tap + turn: a physically bounded trajectory controller.
-        // Never demand 700-1200 m/s2 from the ball just because only a few
-        // centimetres of the stair remain. If the deadline is impossible,
-        // report it and still steer as safely and quickly as the caps permit.
+        // Same-flat tap + turn: a physically bounded trajectory controller. Never demand 700-1200 m/s2 from the ball just because only a few centimetres of the stair remain. If the
+        // deadline is impossible, report it and still steer as safely and quickly as the caps permit.
         if (postAutoHoldFastArrival)
         {
             const float maxFastSideSpeed = 24f;        // m/s
             const float maxFastSideAcceleration = 220f; // m/s2
             const float earlyTreadProgress = 2.5f / 7f;
-            float remaining = guide.isSlope
-                ? Mathf.Max(0f, (earlyTreadProgress - guide.sectionProgress01) *
-                    Mathf.Max(0f, guide.sectionLength))
-                : Mathf.Max(0f, guide.distanceToNextSlope) +
-                    earlyTreadProgress * 9.9f;
-            float forward = Mathf.Max(1f,
-                Vector3.Dot(rb.velocity, postAutoHoldHeading));
-            float budget = Mathf.Max(Time.fixedDeltaTime * 2f,
-                remaining / forward * .80f);
-
+            float remaining = guide.isSlope ? Mathf.Max(0f, (earlyTreadProgress - guide.sectionProgress01) *
+                    Mathf.Max(0f, guide.sectionLength)) : Mathf.Max(0f, guide.distanceToNextSlope) + earlyTreadProgress * 9.9f;
+            float forward = Mathf.Max(1f, Vector3.Dot(rb.velocity, postAutoHoldHeading));
+            float budget = Mathf.Max(Time.fixedDeltaTime * 2f, remaining / forward * .80f);
             float absError = Mathf.Abs(error);
-            float initialPeakSpeed = Mathf.Sqrt(
-                maxFastSideAcceleration * absError);
-            float minimumTimeFromRest = initialPeakSpeed <= maxFastSideSpeed
-                ? 2f * initialPeakSpeed / maxFastSideAcceleration
-                : 2f * maxFastSideSpeed / maxFastSideAcceleration +
-                  (absError - maxFastSideSpeed * maxFastSideSpeed /
+            float initialPeakSpeed = Mathf.Sqrt( maxFastSideAcceleration * absError);
+            float minimumTimeFromRest = initialPeakSpeed <= maxFastSideSpeed ? 2f * initialPeakSpeed / maxFastSideAcceleration
+                : 2f * maxFastSideSpeed / maxFastSideAcceleration + (absError - maxFastSideSpeed * maxFastSideSpeed /
                    maxFastSideAcceleration) / maxFastSideSpeed;
-
             if (postAutoHoldCorrections == 1)
             {
-                AutoHoldLog("FAST EDGE BEFORE STEP 3 PLAN",
-                    $"error={error:F2}m remaining={remaining:F2}m " +
-                    $"budget={budget:F3}s minFromRest={minimumTimeFromRest:F3}s " +
-                    $"speedCap={maxFastSideSpeed:F1}m/s " +
-                    $"accelCap={maxFastSideAcceleration:F0}m/s2 " +
-                    $"feasibleFromRest={minimumTimeFromRest <= budget}");
+                AutoHoldLog("FAST EDGE BEFORE STEP 3 PLAN", $"error={error:F2}m remaining={remaining:F2}m " + $"budget={budget:F3}s minFromRest={minimumTimeFromRest:F3}s " +
+                    $"speedCap={maxFastSideSpeed:F1}m/s " + $"accelCap={maxFastSideAcceleration:F0}m/s2 " + $"feasibleFromRest={minimumTimeFromRest <= budget}");
             }
-            if (!postAutoHoldFastInfeasibleLogged &&
-                minimumTimeFromRest > budget * 1.05f)
+            if (!postAutoHoldFastInfeasibleLogged && minimumTimeFromRest > budget * 1.05f)
             {
                 postAutoHoldFastInfeasibleLogged = true;
-                AutoHoldLog("FAST EDGE TIME BUDGET RISK",
-                    $"fromRestEstimate={minimumTimeFromRest:F3}s " +
-                    $"available={budget:F3}s error={error:F2}m " +
-                    $"initialLateral={lateralVelocity:F2}m/s " +
-                    "bounded acceleration; estimate assumes zero initial lateral speed");
+                AutoHoldLog("FAST EDGE TIME BUDGET RISK", $"fromRestEstimate={minimumTimeFromRest:F3}s " + $"available={budget:F3}s error={error:F2}m " +
+                    $"initialLateral={lateralVelocity:F2}m/s " + "bounded acceleration; estimate assumes zero initial lateral speed");
             }
-
-            // The stop distance governs WHEN to start braking; a tiny
-            // position error alone is not a sufficient arrival condition.
+            // The stop distance governs WHEN to start braking; a tiny position error alone is not a sufficient arrival condition.
             float speedToward = Mathf.Sign(error) * lateralVelocity;
-            float stoppingDistance = speedToward > 0f
-                ? speedToward * speedToward / (2f * maxFastSideAcceleration)
-                : 0f;
-            float speedByDistance = Mathf.Sqrt(
-                2f * maxFastSideAcceleration * absError);
+            float stoppingDistance = speedToward > 0f ? speedToward * speedToward / (2f * maxFastSideAcceleration) : 0f;
+            float speedByDistance = Mathf.Sqrt( 2f * maxFastSideAcceleration * absError);
             float speedByTime = absError / Mathf.Max(.12f, budget) * 1.4f;
-            float targetSpeed = Mathf.Min(maxFastSideSpeed,
-                Mathf.Min(speedByDistance, speedByTime));
-            float desiredLateralSpeed = Mathf.Abs(error) <= tolerance
-                ? 0f : Mathf.Sign(error) * targetSpeed;
-            float speedGain = Mathf.Clamp(4f / Mathf.Max(.12f, budget),
-                10f, 26f);
+            float targetSpeed = Mathf.Min(maxFastSideSpeed, Mathf.Min(speedByDistance, speedByTime));
+            float desiredLateralSpeed = Mathf.Abs(error) <= tolerance ? 0f : Mathf.Sign(error) * targetSpeed;
+            float speedGain = Mathf.Clamp(4f / Mathf.Max(.12f, budget), 10f, 26f);
             float accelerationLeft = (desiredLateralSpeed - lateralVelocity) *
                 speedGain;
-            if (speedToward > 0f &&
-                stoppingDistance >= Mathf.Max(0f, absError - tolerance))
+            if (speedToward > 0f && stoppingDistance >= Mathf.Max(0f, absError - tolerance))
                 accelerationLeft = -Mathf.Sign(lateralVelocity) *
                     maxFastSideAcceleration;
-
             // The existing surface.side is the ONLY force output channel.
-            return Mathf.Clamp(
-                accelerationLeft * Vector3.Dot(left, surface.side),
-                -maxFastSideAcceleration, maxFastSideAcceleration);
+            return Mathf.Clamp( accelerationLeft * Vector3.Dot(left, surface.side), -maxFastSideAcceleration, maxFastSideAcceleration);
         }
-
         if (postAutoHoldUniversalInCorner)
         {
-            // Receding-horizon quintic from measured position/side speed to
-            // the confirmed *physical* InCorner lip: e(T)=v(T)=a(T)=0.
-            // Unlike selecting the nearest FiveLine, this target is not
-            // changed to Center/Out just because acceleration is high.
+            // Receding-horizon quintic from measured position/side speed to the confirmed *physical* InCorner lip: e(T)=v(T)=a(T)=0. Unlike selecting the nearest FiveLine, this target is
+            // not changed to Center/Out just because acceleration is high.
             const float maxSideAcceleration = 220f;
-            float maxSideSpeed = Mathf.Max(autoHoldMaxSideSpeed,
-                maxGroundSpeed * 0.75f);
-            float forward = Mathf.Max(1f,
-                Vector3.Dot(rb.velocity, postAutoHoldHeading));
-            float distance = guide.isSlope
-                ? Mathf.Max(0f, guide.sectionLength *
-                    (1f - guide.sectionProgress01))
-                : guide.nextIsSlope
-                    ? Mathf.Max(0f, guide.distanceToNextSlope) + 3f
-                    : Mathf.Max(1.5f, maxGroundSpeed * .25f);
+            float maxSideSpeed = Mathf.Max(autoHoldMaxSideSpeed, maxGroundSpeed * 0.75f);
+            float forward = Mathf.Max(1f, Vector3.Dot(rb.velocity, postAutoHoldHeading));
+            float distance = guide.isSlope ? Mathf.Max(0f, guide.sectionLength *
+                    (1f - guide.sectionProgress01)) : guide.nextIsSlope ? Mathf.Max(0f, guide.distanceToNextSlope) + 3f : Mathf.Max(1.5f, maxGroundSpeed * .25f);
             float horizon = Mathf.Clamp(distance / forward, .12f, 1.2f);
             float v0 = lateralVelocity;
             float T2 = horizon * horizon;
@@ -7590,72 +5321,46 @@ public float AdvancePredictedSplineDriveReadOnly(
             float l2 = look * look;
             float l3 = l2 * look;
             float l4 = l3 * look;
-            float targetSpeed = v0 + 3f * c3 * l2 +
-                4f * c4 * l3 + 5f * c5 * l4;
-            targetSpeed = Mathf.Clamp(targetSpeed,
-                -maxSideSpeed, maxSideSpeed);
-
-            // Stop distance is a hard safety constraint when the remaining
-            // horizon is physically infeasible. Never apply unbounded force.
+            float targetSpeed = v0 + 3f * c3 * l2 + 4f * c4 * l3 + 5f * c5 * l4;
+            targetSpeed = Mathf.Clamp(targetSpeed, -maxSideSpeed, maxSideSpeed);
+            // Stop distance is a hard safety constraint when the remaining horizon is physically infeasible. Never apply unbounded force.
             float toward = Mathf.Sign(error) * v0;
-            float stopping = toward > 0f
-                ? toward * toward / (2f * maxSideAcceleration) : 0f;
+            float stopping = toward > 0f ? toward * toward / (2f * maxSideAcceleration) : 0f;
             if (stopping >= Mathf.Max(0f, Mathf.Abs(error) - tolerance))
                 targetSpeed = 0f;
             if (Mathf.Abs(error) <= tolerance)
                 targetSpeed = 0f;
-            float accel = Mathf.Clamp(
-                (targetSpeed - v0) / Mathf.Max(look, Time.fixedDeltaTime),
-                -maxSideAcceleration, maxSideAcceleration);
+            float accel = Mathf.Clamp( (targetSpeed - v0) / Mathf.Max(look, Time.fixedDeltaTime), -maxSideAcceleration, maxSideAcceleration);
             return accel * Vector3.Dot(left, surface.side);
         }
-
         bool largeError = Mathf.Abs(error) > ProbeRadius;
-        float maxSpeed = largeError
-            ? Mathf.Max(autoHoldMaxSideSpeed, maxGroundSpeed * .25f)
-            : autoHoldMaxSideSpeed;
-        float maxAccel = largeError
-            ? Mathf.Max(autoHoldMaxSideAcceleration, GroundAcceleration * 3f)
-            : autoHoldMaxSideAcceleration;
+        float maxSpeed = largeError ? Mathf.Max(autoHoldMaxSideSpeed, maxGroundSpeed * .25f) : autoHoldMaxSideSpeed;
+        float maxAccel = largeError ? Mathf.Max(autoHoldMaxSideAcceleration, GroundAcceleration * 3f) : autoHoldMaxSideAcceleration;
         const float response = 12f;
         const float positionGain = 8f;
         // Auto Hold's ordinary slow approach remains unchanged.
         float brakingSpeed = Mathf.Sqrt(2f * maxAccel * Mathf.Abs(error));
-        float desired = Mathf.Abs(error) <= tolerance ? 0f :
-            Mathf.Sign(error) * Mathf.Min(maxSpeed,
-                Mathf.Min(Mathf.Abs(error) * positionGain, brakingSpeed));
+        float desired = Mathf.Abs(error) <= tolerance ? 0f : Mathf.Sign(error) * Mathf.Min(maxSpeed, Mathf.Min(Mathf.Abs(error) * positionGain, brakingSpeed));
         float desiredSideSpeed = Vector3.Dot(left * desired, surface.side);
-        return Mathf.Clamp((desiredSideSpeed - surface.lateralSpeed) * response,
-            -maxAccel, maxAccel);
+        return Mathf.Clamp((desiredSideSpeed - surface.lateralSpeed) * response, -maxAccel, maxAccel);
     }
-
-    // Continuous natural approach on the existing AddForce lateral channel.
-    // The flat-entry time and lateral braking distance provide the target speed;
-    // the existing Inspector speed/acceleration remain its upper bounds.
+    // Continuous natural approach on the existing AddForce lateral channel. The flat-entry time and lateral braking distance provide the target speed; the existing Inspector
+    // speed/acceleration remain its upper bounds.
     float StepAutoHoldInnerSteering(Surface surface, bool grounded)
     {
-        // A pressed gesture may begin on EITHER side. However, left-lip
-        // steering is an InCorner-specific assist, not a requirement for
-        // authorizing the turn. Never pull a right-half OutCorner into the
-        // left lip merely because its hold started on a stair.
-        // No guessed left-lip approach while the next turn direction is unknown.
-        // Guessing left can damage an OutCorner even before the finger is released.
-        bool innerSteeringEligible = autoHoldPredictedTurnSignValid &&
-            autoHoldPredictedTurnSign < 0f;
-        bool held = autoHoldEligible && autoHoldSawSlope &&
-            !autoHoldNextFlatReady && // no forced edge chase while choosing release time
-            autoHoldLastHalfValid && innerSteeringEligible &&
-            IsAutoHoldInputStillDown();
+        if (IsPostExtremeNoLeftEdgeActive(currentHit.collider))
+            return 0f;
+        // A pressed gesture may begin on EITHER side. However, left-lip steering is an InCorner-specific assist, not a requirement for authorizing the turn. Never pull a right-half
+        // OutCorner into the left lip merely because its hold started on a stair. No guessed left-lip approach while the next turn direction is unknown.
+        bool innerSteeringEligible = autoHoldPredictedTurnSignValid && autoHoldPredictedTurnSign < 0f;
+        bool held = autoHoldEligible && autoHoldSawSlope && !autoHoldNextFlatReady && // no forced edge chase while choosing release time
+            autoHoldLastHalfValid && innerSteeringEligible && IsAutoHoldInputStillDown();
         bool innerTurnPending = autoHoldTurnPending && autoHoldTurnSign < 0f;
         if (!grounded || !surface.Valid || (!held && !innerTurnPending))
             return 0f;
-        // On the next verified flat we can resolve the upcoming turn from
-        // the actual next-slope direction. OutCorner must preserve its lane.
-        if (held && currentGuideValid && !currentGuide.isSlope &&
-            TryResolveAutoHoldTurnFromCurrentFlat(out float flatTurnSign) &&
-            flatTurnSign > 0f)
+        // On the next verified flat we can resolve the upcoming turn from the actual next-slope direction. OutCorner must preserve its lane.
+        if (held && currentGuideValid && !currentGuide.isSlope && TryResolveAutoHoldTurnFromCurrentFlat(out float flatTurnSign) && flatTurnSign > 0f)
             return 0f;
-
         Vector3 left = autoHoldTurnPending ? autoHoldTurnLeft : autoHoldLastLeft;
         left = Vector3.ProjectOnPlane(left, Vector3.up);
         if (left.sqrMagnitude <= Eps) return 0f;
@@ -7669,45 +5374,29 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             else
                 autoHoldEdgeSampleValid = false;
-            // At high speed, refresh before the body travels more than two
-            // probe radii; at low speed avoid unnecessary geometry queries.
-            float groundSpeed = Vector3.ProjectOnPlane(rb.velocity,
-                Vector3.up).magnitude;
-            autoHoldNextEdgeSampleTime = Time.fixedTime +
-                Mathf.Min(.08f, ProbeRadius * 2f / Mathf.Max(1f, groundSpeed));
+            // At high speed, refresh before the body travels more than two probe radii; at low speed avoid unnecessary geometry queries.
+            float groundSpeed = Vector3.ProjectOnPlane(rb.velocity, Vector3.up).magnitude;
+            autoHoldNextEdgeSampleTime = Time.fixedTime + Mathf.Min(.08f, ProbeRadius * 2f / Mathf.Max(1f, groundSpeed));
         }
         if (!autoHoldEdgeSampleValid) return 0f;
-
         float remaining = Vector3.Dot(autoHoldEdgeSample - rb.position, left);
-        float distanceToExit = Mathf.Max(0f,
-            Vector3.Dot(autoHoldExitPoint - rb.position, autoHoldLastForward));
-        float forwardSpeed = Mathf.Max(1f,
-            Vector3.Dot(rb.velocity, autoHoldLastForward));
+        float distanceToExit = Mathf.Max(0f, Vector3.Dot(autoHoldExitPoint - rb.position, autoHoldLastForward));
+        float forwardSpeed = Mathf.Max(1f, Vector3.Dot(rb.velocity, autoHoldLastForward));
         float timeRemaining = Mathf.Max(.12f, distanceToExit / forwardSpeed);
-        // This route begins later (on the slope, not on the preceding flat).
-        // Give it a bounded distance/time-responsive side budget. The original
-        // flat-start Auto Hold's Inspector caps remain completely unchanged.
-        float sideAccel = slopeReleaseHoldArmed
-            ? Mathf.Max(autoHoldMaxSideAcceleration, GroundAcceleration * 2f)
-            : autoHoldMaxSideAcceleration;
-        float sideSpeedCap = slopeReleaseHoldArmed
-            ? Mathf.Max(autoHoldMaxSideSpeed, Mathf.Min(8f, maxGroundSpeed * .32f))
-            : autoHoldMaxSideSpeed;
+        // This route begins later (on the slope, not on the preceding flat). Give it a bounded distance/time-responsive side budget. The original flat-start Auto Hold's Inspector
+        // caps remain completely unchanged.
+        float sideAccel = slopeReleaseHoldArmed ? Mathf.Max(autoHoldMaxSideAcceleration, GroundAcceleration * 2f) : autoHoldMaxSideAcceleration;
+        float sideSpeedCap = slopeReleaseHoldArmed ? Mathf.Max(autoHoldMaxSideSpeed, Mathf.Min(8f, maxGroundSpeed * .32f)) : autoHoldMaxSideSpeed;
         float stopSpeed = Mathf.Sqrt(2f * sideAccel * Mathf.Abs(remaining));
-        float speed = Mathf.Min(sideSpeedCap,
-            Mathf.Min(Mathf.Abs(remaining) / timeRemaining, stopSpeed));
+        float speed = Mathf.Min(sideSpeedCap, Mathf.Min(Mathf.Abs(remaining) / timeRemaining, stopSpeed));
         float desiredSideSpeed = Vector3.Dot(left *
             (Mathf.Sign(remaining) * speed), surface.side);
-        return Mathf.Clamp((desiredSideSpeed - surface.lateralSpeed) * 12f,
-            -sideAccel, sideAccel);
+        return Mathf.Clamp((desiredSideSpeed - surface.lateralSpeed) * 12f, -sideAccel, sideAccel);
     }
-
-    // Only committed Auto Hold performs final edge alignment. A long shift
-    // must be supported all along its cross-section; normal flicks are untouched.
+    // Only committed Auto Hold performs final edge alignment. A long shift must be supported all along its cross-section; normal flicks are untouched.
     void SetAutoHoldTurnAtPhysicalEdge()
     {
-        Vector3 left = Vector3.ProjectOnPlane(autoHoldTurnLeft,
-            Vector3.up);
+        Vector3 left = Vector3.ProjectOnPlane(autoHoldTurnLeft, Vector3.up);
         if (left.sqrMagnitude <= Eps) return;
         left.Normalize();
         if (!TryResolveAutoHoldEdge(left, out Vector3 target))
@@ -7716,8 +5405,7 @@ public float AdvancePredictedSplineDriveReadOnly(
             return;
         }
         Vector3 delta = Vector3.ProjectOnPlane(target - rb.position, Vector3.up);
-        int steps = Mathf.Max(1,
-            Mathf.CeilToInt(delta.magnitude / (ProbeRadius * .5f)));
+        int steps = Mathf.Max(1, Mathf.CeilToInt(delta.magnitude / (ProbeRadius * .5f)));
         for (int i = 1; i <= steps; ++i)
         {
             Vector3 sample = rb.position + delta * (i / (float)steps);
@@ -7737,108 +5425,67 @@ public float AdvancePredictedSplineDriveReadOnly(
         rb.velocity -= left * Vector3.Dot(rb.velocity, left);
         AutoHoldLog("EDGE LOCK", $"shift={delta.magnitude:F3}m collider={(autoHoldEdgeCollider ? autoHoldEdgeCollider.name : "-")} pos={rb.position:F3}");
     }
-
-    // Read-only lookahead through the REAL section after the held slope.
-    // Works even if the detector's current nearest guide is still on a stair
-    // or the incoming ball has already passed the physical next-flat lip.
-    bool TryResolveAutoHoldTurnFromFollowingSlope(
-        NearestKnotDetector.GuideFrame heldSlope, Vector3 previousHeading,
-        out float turnSign)
+    // Read-only lookahead through the REAL section after the held slope. Works even if the detector's current nearest guide is still on a stair or the incoming ball has already
+    // passed the physical next-flat lip.
+    bool TryResolveAutoHoldTurnFromFollowingSlope( NearestKnotDetector.GuideFrame heldSlope, Vector3 previousHeading, out float turnSign)
     {
         turnSign = 0f;
-        if (!knotDetector || !heldSlope.valid || !heldSlope.isSlope ||
-            !knotDetector.TryGetFollowingFlatStart(
-                heldSlope, out Vector3 flatStart, out Vector3 flatTangent) ||
-            !knotDetector.TryEvaluateSameSection(heldSlope, 1f,
-                out NearestKnotDetector.GuideSample lastSlopeSample) ||
-            !lastSlopeSample.valid)
+        if (!knotDetector || !heldSlope.valid || !heldSlope.isSlope || !knotDetector.TryGetFollowingFlatStart( heldSlope, out Vector3 flatStart, out Vector3 flatTangent) ||
+            !knotDetector.TryEvaluateSameSection(heldSlope, 1f, out NearestKnotDetector.GuideSample lastSlopeSample) || !lastSlopeSample.valid)
             return false;
-
-        // The first flat segment is exactly after the last segment of the
-        // held slope. TryGetFollowingFlatStart verified that it exists.
-        NearestKnotDetector.GuideFrame followingFlat =
-            new NearestKnotDetector.GuideFrame
+        // The first flat segment is exactly after the last segment of the held slope. TryGetFollowingFlatStart verified that it exists.
+        NearestKnotDetector.GuideFrame followingFlat = new NearestKnotDetector.GuideFrame
             {
-                valid = true,
-                isSlope = false,
-                splineIndex = lastSlopeSample.splineIndex,
-                segmentIndex = lastSlopeSample.segmentIndex + 1,
-                tangent = flatTangent,
+                valid = true, isSlope = false, splineIndex = lastSlopeSample.splineIndex, segmentIndex = lastSlopeSample.segmentIndex + 1, tangent = flatTangent,
                 point = flatStart
             };
-        if (!knotDetector.TryEvaluateForwardSlopeSection(
-                followingFlat, 0f,
-                out NearestKnotDetector.GuideSample futureSlope) ||
-            !futureSlope.valid)
+        if (!knotDetector.TryEvaluateForwardSlopeSection( followingFlat, 0f, out NearestKnotDetector.GuideSample futureSlope) || !futureSlope.valid)
             return false;
-
         Vector3 forward = NormalizeFlat(previousHeading, heldSlope.tangent);
         Vector3 nextForward = NormalizeFlat(futureSlope.tangent, forward);
-        float signedAngle = Vector3.SignedAngle(
-            forward, nextForward, Vector3.up);
-        // Require a real quarter-turn candidate; do not infer from slight
-        // ramp deviations or from whichever side the body happens to occupy.
-        if (Mathf.Abs(signedAngle) < 50f ||
-            Mathf.Abs(signedAngle) > 130f)
+        float signedAngle = Vector3.SignedAngle( forward, nextForward, Vector3.up);
+        // Require a real quarter-turn candidate; do not infer from slight ramp deviations or from whichever side the body happens to occupy.
+        if (Mathf.Abs(signedAngle) < 50f || Mathf.Abs(signedAngle) > 130f)
             return false;
-
         turnSign = signedAngle > 0f ? 1f : -1f;
         return true;
     }
-
-    // At release, the receiving FLAT is an independent way to read the
-    // immediately following slope. Verify the incoming heading and elevation
-    // before using it; a geometrically nearby but unrelated lane is not proof.
+    // At release, the receiving FLAT is an independent way to read the immediately following slope. Verify the incoming heading and elevation before using it; a geometrically
+    // nearby but unrelated lane is not proof.
     bool TryResolveAutoHoldTurnFromCurrentFlat(out float sign)
     {
         sign = 0f;
         if (!knotDetector || !autoHoldLastSlopeGuide.valid || !rb)
             return false;
         NearestKnotDetector.GuideFrame flat = knotDetector.CurrentGuide;
-        if (!flat.valid || flat.isSlope ||
-            !knotDetector.TryGetFollowingFlatStart(autoHoldLastSlopeGuide,
-                out Vector3 flatStart, out Vector3 flatTangent))
+        if (!flat.valid || flat.isSlope || !knotDetector.TryGetFollowingFlatStart(autoHoldLastSlopeGuide, out Vector3 flatStart, out Vector3 flatTangent))
             return false;
-
         Vector3 incoming = NormalizeFlat(autoHoldLastForward, direction);
-        if (Vector3.Dot(NormalizeFlat(flat.tangent, incoming), incoming) < .85f ||
-            Vector3.Dot(NormalizeFlat(flatTangent, incoming), incoming) < .85f ||
-            Mathf.Abs(flat.point.y - flatStart.y) > ProbeRadius + .50f ||
-            Vector3.Dot(flat.point - flatStart, incoming) < -.75f ||
-            !knotDetector.TryEvaluateForwardSlopeSection(flat, 0f,
-                out NearestKnotDetector.GuideSample nextSlope) ||
-            !nextSlope.valid)
+        if (Vector3.Dot(NormalizeFlat(flat.tangent, incoming), incoming) < .85f || Vector3.Dot(NormalizeFlat(flatTangent, incoming), incoming) < .85f ||
+            Mathf.Abs(flat.point.y - flatStart.y) > ProbeRadius + .50f || Vector3.Dot(flat.point - flatStart, incoming) < -.75f ||
+            !knotDetector.TryEvaluateForwardSlopeSection(flat, 0f, out NearestKnotDetector.GuideSample nextSlope) || !nextSlope.valid)
             return false;
-
         Vector3 outgoing = NormalizeFlat(nextSlope.tangent, incoming);
         float angle = Vector3.SignedAngle(incoming, outgoing, Vector3.up);
         if (Mathf.Abs(angle) < 50f || Mathf.Abs(angle) > 130f)
             return false;
-
         sign = angle > 0f ? 1f : -1f;
         return true;
     }
-
-    // Prefer corroborated right/left spline geometry. A conflict returns
-    // false; only the already-authorized B-release callers may then use the
-    // agreed LEFT default. Holding the pointer never invokes a turn here.
+    // Prefer corroborated right/left spline geometry. A conflict returns false; only the already-authorized B-release callers may then use the agreed LEFT default. Holding the
+    // pointer never invokes a turn here.
     bool TryResolveAutoHoldTurnSign(out float sign, out string source)
     {
         sign = 0f;
         source = "no verified next slope";
         bool liveFlat = TryResolveAutoHoldTurnFromCurrentFlat(out float flatSign);
-        bool heldSlope = TryResolveAutoHoldTurnFromFollowingSlope(
-            autoHoldLastSlopeGuide, autoHoldLastForward, out float slopeSign);
-
+        bool heldSlope = TryResolveAutoHoldTurnFromFollowingSlope( autoHoldLastSlopeGuide, autoHoldLastForward, out float slopeSign);
         if (liveFlat && heldSlope && flatSign != slopeSign)
         {
             source = "conflicting flat / held-slope geometry";
-            AutoHoldLog("TURN DIRECTION CONFLICT",
-                $"flat={flatSign:+0;-0} heldSlope={slopeSign:+0;-0} " +
-                $"spline={autoHoldLastSlopeGuide.splineIndex}; turn withheld");
+            AutoHoldLog("TURN DIRECTION CONFLICT", $"flat={flatSign:+0;-0} heldSlope={slopeSign:+0;-0} " + $"spline={autoHoldLastSlopeGuide.splineIndex}; turn withheld");
             return false;
         }
-
         if (liveFlat)
         {
             sign = flatSign;
@@ -7856,15 +5503,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         else
             return false;
-
-        if (autoHoldPredictedTurnSignValid &&
-            autoHoldPredictedTurnSign != sign)
-            AutoHoldLog("TURN DIRECTION REFRESHED",
-                $"old={autoHoldPredictedTurnSign:+0;-0} new={sign:+0;-0} " +
-                $"source={source}");
+        if (autoHoldPredictedTurnSignValid && autoHoldPredictedTurnSign != sign)
+            AutoHoldLog("TURN DIRECTION REFRESHED", $"old={autoHoldPredictedTurnSign:+0;-0} new={sign:+0;-0} " + $"source={source}");
         return true;
     }
-
     float ResolveEdgeTurnSign(Vector3 forward, Vector3 left)
     {
         // Both input methods use one geometric turn-direction decision.
@@ -7872,73 +5514,49 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             bool foundNextSlope = knotDetector.TryGetNextSlopePosition();
             Vector3 target = knotDetector.nextSlopePosition;
-            Vector3 toNext = Vector3.ProjectOnPlane(
-                target - rb.position, Vector3.up);
-            if (foundNextSlope && IsFiniteVector(target) &&
-                IsFiniteVector(toNext))
+            Vector3 toNext = Vector3.ProjectOnPlane( target - rb.position, Vector3.up);
+            if (foundNextSlope && IsFiniteVector(target) && IsFiniteVector(toNext))
             {
                 float ahead = Vector3.Dot(toNext, forward);
                 float towardLeft = Vector3.Dot(toNext, left);
-                if (ahead > -1f && Mathf.Abs(towardLeft) > 4f &&
-                    Mathf.Abs(towardLeft) > Mathf.Abs(ahead) * .65f)
+                if (ahead > -1f && Mathf.Abs(towardLeft) > 4f && Mathf.Abs(towardLeft) > Mathf.Abs(ahead) * .65f)
                     return towardLeft > 0f ? -1f : 1f;
             }
         }
         return autoHoldFallbackTurnRight ? 1f : -1f;
     }
-
-    // ================================================================
-    // Global near-stall safety. Never deliberately stops the ball.
-    // Does not apply to intentional HardFreeze / Handoff / new player turns.
-    // ================================================================
+    // Global near-stall safety. Never deliberately stops the ball. Does not apply to intentional HardFreeze / Handoff / new player turns.
     bool GeneralStallHasControlConflict()
     {
-        // Never compete with an intentional finger gesture, edge approach,
-        // or an ACCEPTED turn/Handoff. The ordinary motor keeps control then.
-        return !enableGeneralStallRecovery || !rb || rb.isKinematic ||
-            !BeginCommandOnTouch || MainGameManager.OnDead ||
-            turnTransitionActive || turnBodyFrozen ||
-            slopeReleaseEscapeActive || slopeReleaseHoldHandoffHeld ||
-            tapEdgeHandoffHeld || fiveLineCorrectionActive ||
-            postAutoHoldEdgeActive || edgeCruiseActive || trackingFlick ||
-            HasPendingTurnIntent;
+        // Never compete with an intentional finger gesture, edge approach, or an ACCEPTED turn/Handoff. The ordinary motor keeps control then.
+        return !enableGeneralStallRecovery || !rb || rb.isKinematic || !BeginCommandOnTouch || MainGameManager.OnDead || turnTransitionActive || turnBodyFrozen ||
+            slopeReleaseEscapeActive || slopeReleaseHoldHandoffHeld || tapEdgeHandoffHeld || fiveLineCorrectionActive ||
+            postAutoHoldEdgeActive || edgeCruiseActive || trackingFlick || HasPendingTurnIntent;
     }
-
     void ResetGeneralStallWatch()
     {
         stallLowSpeedSince = -1f;
         stallEarlyWatchSince = -1f;
     }
-
-    // A rolling observation for two *early* signals. Flat or stair is fine,
-    // but actual support, plausible direction, and a low-speed envelope are
-    // verified by the caller. No recovery is launched by this function.
-    bool ObserveEarlyGeneralStall(
-        NearestKnotDetector.GuideFrame guide, Surface surface,
-        Vector3 velocity, float forwardSpeed, float planarSpeed,
+    // A rolling observation for two *early* signals. Flat or stair is fine, but actual support, plausible direction, and a low-speed envelope are verified by the caller. No
+    // recovery is launched by this function.
+    bool ObserveEarlyGeneralStall( NearestKnotDetector.GuideFrame guide, Surface surface, Vector3 velocity, float forwardSpeed, float planarSpeed,
         out string reason, out float elapsed, out float progress)
     {
         reason = null;
         elapsed = 0f;
         progress = 0f;
-        if (forwardSpeed < -.65f || forwardSpeed > 2.25f ||
-            planarSpeed > 2.50f ||
-            Mathf.Abs(Vector3.Dot(velocity, surface.side)) > 1.80f ||
+        if (forwardSpeed < -.65f || forwardSpeed > 2.25f || planarSpeed > 2.50f || Mathf.Abs(Vector3.Dot(velocity, surface.side)) > 1.80f ||
             Mathf.Abs(Vector3.Dot(velocity, surface.normal)) > 1.50f)
         {
             stallEarlyWatchSince = -1f;
             return false;
         }
-
         Vector3 heading = NormalizeFlat(surface.tangent, direction);
-        if (stallEarlyWatchSince >= 0f &&
-            (stallEarlySectionIndex != guide.sectionIndex ||
-             stallEarlyWasSlope != guide.isSlope ||
+        if (stallEarlyWatchSince >= 0f && (stallEarlySectionIndex != guide.sectionIndex || stallEarlyWasSlope != guide.isSlope ||
              Vector3.Dot(stallEarlyStartHeading, heading) < .90f))
             stallEarlyWatchSince = -1f;
-
-        float crossTrack = Mathf.Abs(Vector3.Dot(
-            rb.position - guide.point, surface.side));
+        float crossTrack = Mathf.Abs(Vector3.Dot( rb.position - guide.point, surface.side));
         if (stallEarlyWatchSince < 0f)
         {
             stallEarlyWatchSince = Time.fixedTime;
@@ -7949,38 +5567,26 @@ public float AdvancePredictedSplineDriveReadOnly(
             stallEarlyWasSlope = guide.isSlope;
             return false;
         }
-
         elapsed = Time.fixedTime - stallEarlyWatchSince;
         Vector3 moved = rb.position - stallEarlyStartPosition;
         progress = Vector3.Dot(moved, surface.tangent);
-        float groundTravel = Vector3.ProjectOnPlane(
-            moved, surface.normal).magnitude;
-
-        // A: barely any *actual movement* (not merely low tangent speed).
-        // This prevents a ball sliding sideways at speed from being called stuck.
-        if (elapsed >= StallEarlyCreepSeconds &&
-            Mathf.Abs(progress) < StallEarlyCreepProgress &&
-            groundTravel < StallEarlyCreepTravel)
+        float groundTravel = Vector3.ProjectOnPlane( moved, surface.normal).magnitude;
+        // A: barely any *actual movement* (not merely low tangent speed). This prevents a ball sliding sideways at speed from being called stuck.
+        if (elapsed >= StallEarlyCreepSeconds && Mathf.Abs(progress) < StallEarlyCreepProgress && groundTravel < StallEarlyCreepTravel)
         {
             reason = "early-creep";
             return true;
         }
-
-        // B: moving slowly along a line but staying >=1m away from it.
-        // Do not pull a rapidly drifting ball toward the nearest wrong spline.
+        // B: moving slowly along a line but staying >=1m away from it. Do not pull a rapidly drifting ball toward the nearest wrong spline.
         if (elapsed >= StallEarlyNoConvergenceSeconds)
         {
-            if (stallEarlyStartCrossTrack >= StallEarlyCrossTrack &&
-                crossTrack >= StallEarlyCrossTrack &&
-                stallEarlyStartCrossTrack - crossTrack <
+            if (stallEarlyStartCrossTrack >= StallEarlyCrossTrack && crossTrack >= StallEarlyCrossTrack && stallEarlyStartCrossTrack - crossTrack <
                     StallEarlyRequiredConvergence)
             {
                 reason = "early-no-convergence";
                 return true;
             }
-
-            // A healthy window becomes the new rolling reference. This keeps
-            // a long straight run from accumulating a stale offset sample.
+            // A healthy window becomes the new rolling reference. This keeps a long straight run from accumulating a stale offset sample.
             stallEarlyWatchSince = Time.fixedTime;
             stallEarlyStartPosition = rb.position;
             stallEarlyStartCrossTrack = crossTrack;
@@ -7990,45 +5596,29 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return false;
     }
-
     void ResetUncapturedTurnGuideStallWatch()
     {
         turnGuideStallWatchSince = -1f;
     }
-
     bool UncapturedTurnGuideStallHasControlConflict()
     {
-        // An InCorner may arm postAutoHoldEdgeActive WHILE waiting for the new
-        // guide. That edge approach cannot act until postAutoHoldNewGuide is
-        // true, so it must not veto the only possible recovery at this stage.
-        return !enableGeneralStallRecovery || !rb || rb.isKinematic ||
-            !BeginCommandOnTouch || MainGameManager.OnDead ||
-            turnTransitionActive || turnBodyFrozen ||
-            slopeReleaseEscapeActive || slopeReleaseHoldHandoffHeld ||
-            tapEdgeHandoffHeld || fiveLineCorrectionActive ||
-            (postAutoHoldEdgeActive && postAutoHoldNewGuide) ||
+        // An InCorner may arm postAutoHoldEdgeActive WHILE waiting for the new guide. That edge approach cannot act until postAutoHoldNewGuide is true, so it must not veto the only
+        // possible recovery at this stage.
+        return !enableGeneralStallRecovery || !rb || rb.isKinematic || !BeginCommandOnTouch || MainGameManager.OnDead || turnTransitionActive || turnBodyFrozen ||
+            slopeReleaseEscapeActive || slopeReleaseHoldHandoffHeld || tapEdgeHandoffHeld || fiveLineCorrectionActive || (postAutoHoldEdgeActive && postAutoHoldNewGuide) ||
             edgeCruiseActive || trackingFlick || HasPendingTurnIntent;
     }
-
-    // A completed turn can remain in waitingForTurnGuide indefinitely because
-    // Evaluate() still sees a perpendicular OLD spline. Do not lift that
-    // safety guard. Instead, find a FORWARD-aligned receiving spline without
-    // changing detector tracking, and demand real, close supporting floor.
-    bool ObserveUncapturedTurnGuideStall(
-        NearestKnotDetector.GuideFrame nearestGuide, bool grounded)
+    // A completed turn can remain in waitingForTurnGuide indefinitely because Evaluate() still sees a perpendicular OLD spline. Do not lift that safety guard. Instead, find a
+    // FORWARD-aligned receiving spline without changing detector tracking, and demand real, close supporting floor.
+    bool ObserveUncapturedTurnGuideStall( NearestKnotDetector.GuideFrame nearestGuide, bool grounded)
     {
-        if (!waitingForTurnGuide ||
-            UncapturedTurnGuideStallHasControlConflict() || !grounded ||
-            turnGuideReleasedAt < 0f || !knotDetector)
+        if (!waitingForTurnGuide || UncapturedTurnGuideStallHasControlConflict() || !grounded || turnGuideReleasedAt < 0f || !knotDetector)
         {
             ResetUncapturedTurnGuideStallWatch();
             return false;
         }
-        // Let the existing handoff complete normally if Evaluate() has
-        // finally acquired the matching receiving guide this very frame.
-        if (nearestGuide.valid &&
-            TurnGuideAxisAlignment(nearestGuide) >= TurnGuideAlignmentMin &&
-            nearestGuide.distanceToGuide <= Mathf.Max(
+        // Let the existing handoff complete normally if Evaluate() has finally acquired the matching receiving guide this very frame.
+        if (nearestGuide.valid && TurnGuideAxisAlignment(nearestGuide) >= TurnGuideAlignmentMin && nearestGuide.distanceToGuide <= Mathf.Max(
                 supportGraceMaxGuideDistance, ProbeRadius * 2f))
         {
             ResetUncapturedTurnGuideStallWatch();
@@ -8038,18 +5628,14 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (sinceRelease < TurnGuideStallAfterReleaseSeconds)
             return false;
         Vector3 planar = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
-        if (planar.magnitude > TurnGuideStallMaximumPlanarSpeed ||
-            Mathf.Abs(rb.velocity.y) > 1.50f)
+        if (planar.magnitude > TurnGuideStallMaximumPlanarSpeed || Mathf.Abs(rb.velocity.y) > 1.50f)
         {
             ResetUncapturedTurnGuideStallWatch();
             return false;
         }
-
-        // HasGroundSupport() alone may report a ray hit many metres below the
-        // ball (ProbeDistance can be 28). Require ACTUAL nearby stage floor.
+        // HasGroundSupport() alone may report a ray hit many metres below the ball (ProbeDistance can be 28). Require ACTUAL nearby stage floor.
         Vector3 centre = rb.worldCenterOfMass;
-        if (!TryAutoHoldGroundRay(centre, out RaycastHit closeFloor) ||
-            !IsCloseGroundRay(closeFloor, centre))
+        if (!TryAutoHoldGroundRay(centre, out RaycastHit closeFloor) || !IsCloseGroundRay(closeFloor, centre))
         {
             ResetUncapturedTurnGuideStallWatch();
             return false;
@@ -8059,15 +5645,12 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             turnGuideStallWatchSince = Time.fixedTime;
             turnGuideStallWatchPosition = rb.position;
-            GeneralStallLog("TURN GUIDE WATCH",
-                $"sinceRelease={sinceRelease:F2}s " +
-                $"speed={planar.magnitude:F2} floor={closeFloor.collider.name} " +
+            GeneralStallLog("TURN GUIDE WATCH", $"sinceRelease={sinceRelease:F2}s " + $"speed={planar.magnitude:F2} floor={closeFloor.collider.name} " +
                 $"target={target:F2}");
             return false;
         }
         float elapsed = Time.fixedTime - turnGuideStallWatchSince;
-        float progress = Vector3.Dot(
-            rb.position - turnGuideStallWatchPosition, target);
+        float progress = Vector3.Dot( rb.position - turnGuideStallWatchPosition, target);
         if (progress >= TurnGuideStallMinProgress)
         {
             // Real progress along the intended heading; observe anew.
@@ -8075,41 +5658,26 @@ public float AdvancePredictedSplineDriveReadOnly(
             turnGuideStallWatchPosition = rb.position;
             return false;
         }
-        if (elapsed < TurnGuideStallObservationSeconds ||
-            (stallLastAttemptAt >= 0f &&
-             Time.fixedTime - stallLastAttemptAt < stallRecoveryCooldown))
+        if (elapsed < TurnGuideStallObservationSeconds || (stallLastAttemptAt >= 0f && Time.fixedTime - stallLastAttemptAt < stallRecoveryCooldown))
             return false;
-
         stallLastAttemptAt = Time.fixedTime;
-        if (!knotDetector.TryFindGuideAlongHeading(
-                rb.position, target, 3.6f,
-                out NearestKnotDetector.GuideFrame candidate))
+        if (!knotDetector.TryFindGuideAlongHeading( rb.position, target, 3.6f, out NearestKnotDetector.GuideFrame candidate))
         {
-            LogTurnGuideStallBlocked("no forward-aligned spline within 3.6m",
-                elapsed, progress);
+            LogTurnGuideStallBlocked("no forward-aligned spline within 3.6m", elapsed, progress);
             return false;
         }
         Surface receiving = BuildSplineSurface(candidate);
-        if (!receiving.Valid ||
-            Vector3.Dot(NormalizeFlat(candidate.tangent, target), target) < .82f ||
-            candidate.distanceToGuide > 3.6f)
+        if (!receiving.Valid || Vector3.Dot(NormalizeFlat(candidate.tangent, target), target) < .82f || candidate.distanceToGuide > 3.6f)
         {
-            LogTurnGuideStallBlocked("receiving guide direction / distance",
-                elapsed, progress);
+            LogTurnGuideStallBlocked("receiving guide direction / distance", elapsed, progress);
             return false;
         }
-        if (!TrySelectGeneralSafeLane(candidate, receiving,
-                out Vector3 lanePoint,
-                out NearestKnotDetector.FiveLineGroup lane))
+        if (!TrySelectGeneralSafeLane(candidate, receiving, out Vector3 lanePoint, out NearestKnotDetector.FiveLineGroup lane))
         {
-            LogTurnGuideStallBlocked("no physically supported FiveLine corridor",
-                elapsed, progress);
+            LogTurnGuideStallBlocked("no physically supported FiveLine corridor", elapsed, progress);
             return false;
         }
-
-        // Reuse precisely the normal, bounded force motor. No teleport and
-        // no global 90-degree turn. Keep waitingForTurnGuide until tracking
-        // really acquires the receiving spline.
+        // Reuse precisely the normal, bounded force motor. No teleport and no global 90-degree turn. Keep waitingForTurnGuide until tracking really acquires the receiving spline.
         stallLastMovingVelocity = planar;
         // Keep historical acceleration until a new observation is measured.
         stallRecoveryPoint = lanePoint;
@@ -8121,64 +5689,43 @@ public float AdvancePredictedSplineDriveReadOnly(
         generalStallRecovering = true;
         ResetGeneralStallWatch();
         ResetUncapturedTurnGuideStallWatch();
-        GeneralStallLog("START",
-            $"reason=turn-guide-unclaimed " +
-            $"sinceRelease={sinceRelease:F2}s observed={elapsed:F2}s " +
-            $"progress={progress:F2}m " +
-            $"targetHeading={target:F2} lane={lane} " +
-            $"section={candidate.sectionIndex} " +
-            $"floor={closeFloor.collider.name} target={lanePoint:F2}");
+        GeneralStallLog("START", $"reason=turn-guide-unclaimed " + $"sinceRelease={sinceRelease:F2}s observed={elapsed:F2}s " + $"progress={progress:F2}m " +
+            $"targetHeading={target:F2} lane={lane} " + $"section={candidate.sectionIndex} " + $"floor={closeFloor.collider.name} target={lanePoint:F2}");
         return true;
     }
-
     void LogTurnGuideStallBlocked(string why, float elapsed, float progress)
     {
         if (Time.fixedTime < turnGuideStallNextLogAt)
             return;
         turnGuideStallNextLogAt = Time.fixedTime + 1.0f;
-        GeneralStallLog("TURN GUIDE BLOCKED",
-            $"reason={why} elapsed={elapsed:F2}s progress={progress:F2}m " +
-            $"pos={rb.position:F2} target={turnTargetDirection:F2}");
+        GeneralStallLog("TURN GUIDE BLOCKED", $"reason={why} elapsed={elapsed:F2}s progress={progress:F2}m " + $"pos={rb.position:F2} target={turnTargetDirection:F2}");
     }
-
-    // First prove a genuine stall: low speed, almost no progress, real ground,
-    // and no competing operation. Then and ONLY then search for a receiving
-    // line. This path must never fire on a jump, drop, slow but moving slope,
-    // hard freeze, or normal fast turn.
-    bool ObserveGeneralStallRecovery(
-        NearestKnotDetector.GuideFrame guide, Surface surface,
-        bool grounded, RaycastHit support)
+    // First prove a genuine stall: low speed, almost no progress, real ground, and no competing operation. Then and ONLY then search for a receiving line. This path must never
+    // fire on a jump, drop, slow but moving slope, hard freeze, or normal fast turn.
+    bool ObserveGeneralStallRecovery( NearestKnotDetector.GuideFrame guide, Surface surface, bool grounded, RaycastHit support)
     {
         if (waitingForTurnGuide)
             return false; // New guide recovery has its own verified path.
-        if (GeneralStallHasControlConflict() || !grounded ||
-            !IsAutoHoldStageHit(support, float.NaN) ||
-            !guide.valid || !surface.Valid ||
+        if (GeneralStallHasControlConflict() || !grounded || !IsAutoHoldStageHit(support, float.NaN) || !guide.valid || !surface.Valid ||
             guide.distanceToGuide > Mathf.Max(2.5f, ProbeRadius * 4f))
         {
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
             return false;
         }
-
         Vector3 heading = NormalizeFlat(surface.tangent, direction);
-        // A perpendicular closest-line swap is NOT a player's turn.
-        // A stalled ball must not be rescued onto the wrong 90deg branch.
-        Vector3 expected = waitingForTurnGuide
-            ? NormalizeFlat(turnTargetDirection, direction)
-            : NormalizeFlat(direction, travelDirection);
+        // A perpendicular closest-line swap is NOT a player's turn. A stalled ball must not be rescued onto the wrong 90deg branch.
+        Vector3 expected = waitingForTurnGuide ? NormalizeFlat(turnTargetDirection, direction) : NormalizeFlat(direction, travelDirection);
         if (Vector3.Dot(heading, expected) < .78f)
         {
             ResetGeneralStallWatch();
             stallPreviousVelocityValid = false;
             return false;
         }
-
         Vector3 velocity = rb.velocity;
         float forwardSpeed = Vector3.Dot(velocity, surface.tangent);
         float planarSpeed = Vector3.ProjectOnPlane(velocity, Vector3.up).magnitude;
-        // Do not infer the pre-stall acceleration from a velocity freshly
-        // overwritten by Handoff. Keep the last physically moving sample.
+        // Do not infer the pre-stall acceleration from a velocity freshly overwritten by Handoff. Keep the last physically moving sample.
         if (forwardSpeed >= 2.5f && planarSpeed >= 2.5f)
         {
             if (stallPreviousVelocityValid)
@@ -8186,12 +5733,10 @@ public float AdvancePredictedSplineDriveReadOnly(
                 Vector3 measured = (velocity - stallPreviousMotionVelocity) /
                     Mathf.Max(.001f, Time.fixedDeltaTime);
                 if (IsFiniteVector(measured) && measured.sqrMagnitude < 160f * 160f)
-                    stallLastMovingAcceleration = Vector3.Lerp(
-                        stallLastMovingAcceleration, measured, .20f);
+                    stallLastMovingAcceleration = Vector3.Lerp( stallLastMovingAcceleration, measured, .20f);
             }
             else
-                stallLastMovingAcceleration = Vector3.ClampMagnitude(
-                    acceleration, 90f);
+                stallLastMovingAcceleration = Vector3.ClampMagnitude( acceleration, 90f);
             stallPreviousMotionVelocity = velocity;
             stallPreviousVelocityValid = true;
             stallLastMovingVelocity = velocity;
@@ -8199,22 +5744,13 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         else
             stallPreviousVelocityValid = false;
-
-        // These early detectors share the existing safety corridor and motor.
-        // Keep the original 0.75s low-speed route as a separate fallback.
-        bool earlyStuck = ObserveEarlyGeneralStall(
-            guide, surface, velocity, forwardSpeed, planarSpeed,
-            out string cause, out float elapsed, out float distanceProgress);
-
-        // Require low TOTAL velocity as well: a fast sideways drift must not
-        // be mistaken for a stuck ball just because tangentSpeed is small.
-        bool nearlyStopped = forwardSpeed <= stallWatchForwardSpeed &&
-            forwardSpeed > -.65f &&
-            planarSpeed <= Mathf.Max(1.8f, stallWatchForwardSpeed + .5f) &&
+        // These early detectors share the existing safety corridor and motor. Keep the original 0.75s low-speed route as a separate fallback.
+        bool earlyStuck = ObserveEarlyGeneralStall( guide, surface, velocity, forwardSpeed, planarSpeed, out string cause, out float elapsed, out float distanceProgress);
+        // Require low TOTAL velocity as well: a fast sideways drift must not be mistaken for a stuck ball just because tangentSpeed is small.
+        bool nearlyStopped = forwardSpeed <= stallWatchForwardSpeed && forwardSpeed > -.65f && planarSpeed <= Mathf.Max(1.8f, stallWatchForwardSpeed + .5f) &&
             Mathf.Abs(Vector3.Dot(velocity, surface.normal)) <= 1.5f;
         if (!nearlyStopped)
             stallLowSpeedSince = -1f;
-
         if (!earlyStuck)
         {
             if (!nearlyStopped)
@@ -8223,19 +5759,14 @@ public float AdvancePredictedSplineDriveReadOnly(
             {
                 stallLowSpeedSince = Time.fixedTime;
                 stallStartPosition = rb.position;
-                GeneralStallLog("WATCH",
-                    $"surface={(guide.isSlope ? "STAIR" : "FLAT")} " +
-                    $"speed={forwardSpeed:F2}m/s (observe for {stallWatchSeconds:F2}s)");
+                GeneralStallLog("WATCH", $"surface={(guide.isSlope ? "STAIR" : "FLAT")} " + $"speed={forwardSpeed:F2}m/s (observe for {stallWatchSeconds:F2}s)");
                 return false;
             }
-
             elapsed = Time.fixedTime - stallLowSpeedSince;
-            distanceProgress = Vector3.Dot(
-                rb.position - stallStartPosition, surface.tangent);
+            distanceProgress = Vector3.Dot( rb.position - stallStartPosition, surface.tangent);
             if (Mathf.Abs(distanceProgress) >= stallWatchMaxProgress)
             {
-                // The ball still made measurable forward progress, but
-                // this does NOT reset the independent convergence monitor.
+                // The ball still made measurable forward progress, but this does NOT reset the independent convergence monitor.
                 stallLowSpeedSince = Time.fixedTime;
                 stallStartPosition = rb.position;
                 return false;
@@ -8244,40 +5775,29 @@ public float AdvancePredictedSplineDriveReadOnly(
                 return false;
             cause = "legacy-near-stop";
         }
-
-        if (stallLastAttemptAt >= 0f &&
-            Time.fixedTime - stallLastAttemptAt < stallRecoveryCooldown)
+        if (stallLastAttemptAt >= 0f && Time.fixedTime - stallLastAttemptAt < stallRecoveryCooldown)
             return false;
-
-        // A body that has never moved can be physically blocked at spawn;
-        // require a longer time before the first recovery attempt.
+        // A body that has never moved can be physically blocked at spawn; require a longer time before the first recovery attempt.
         if (stallLastHealthyTime < 0f && elapsed < stallWatchSeconds + .60f)
             return false;
         // No impulse from an old, unrelated turn: discard stale history.
-        if (stallLastHealthyTime < 0f ||
-            Time.fixedTime - stallLastHealthyTime > 2.0f)
+        if (stallLastHealthyTime < 0f || Time.fixedTime - stallLastHealthyTime > 2.0f)
         {
             stallLastMovingVelocity = surface.tangent * Mathf.Max(0f, forwardSpeed);
             stallLastMovingAcceleration = Vector3.zero;
         }
         stallLastAttemptAt = Time.fixedTime;
-        if (!TrySelectGeneralSafeLane(guide, surface, out Vector3 lanePoint,
-            out NearestKnotDetector.FiveLineGroup lane))
+        if (!TrySelectGeneralSafeLane(guide, surface, out Vector3 lanePoint, out NearestKnotDetector.FiveLineGroup lane))
         {
             if (Time.fixedTime >= stallNextDiagnosticAt)
             {
                 stallNextDiagnosticAt = Time.fixedTime + 1.5f;
-                GeneralStallLog("NO SAFE LANE",
-                    $"section={guide.sectionIndex} slope={guide.isSlope} " +
-                    $"reason={cause} observed={elapsed:F2}s " +
-                    $"progress={distanceProgress:F2}m " +
-                    "physical support/forward corridor not verified");
+                GeneralStallLog("NO SAFE LANE", $"section={guide.sectionIndex} slope={guide.isSlope} " + $"reason={cause} observed={elapsed:F2}s " +
+                    $"progress={distanceProgress:F2}m " + "physical support/forward corridor not verified");
             }
             return false; // Continue ordinary physics; do not freeze.
         }
-
-        // This is a REAL verified stall. It preempts any UNCOMMITTED hold;
-        // otherwise a later MouseUp could unexpectedly request a 90deg turn.
+        // This is a REAL verified stall. It preempts any UNCOMMITTED hold; otherwise a later MouseUp could unexpectedly request a 90deg turn.
         if (autoHoldEligible)
             CancelAutoHold("general stall recovery took priority");
         stallRecoveryPoint = lanePoint;
@@ -8288,88 +5808,59 @@ public float AdvancePredictedSplineDriveReadOnly(
         stallRecoveryForUncapturedTurn = false;
         generalStallRecovering = true;
         ResetGeneralStallWatch();
-        GeneralStallLog("START",
-            $"surface={(guide.isSlope ? "STAIR" : "FLAT")} " +
-            $"reason={cause} lane={lane} observed={elapsed:F2}s " +
-            $"progress={distanceProgress:F2}m " +
-            $"beforeVel={stallLastMovingVelocity:F2} " +
-            $"beforeAccel={stallLastMovingAcceleration:F2} " +
+        GeneralStallLog("START", $"surface={(guide.isSlope ? "STAIR" : "FLAT")} " + $"reason={cause} lane={lane} observed={elapsed:F2}s " +
+            $"progress={distanceProgress:F2}m " + $"beforeVel={stallLastMovingVelocity:F2} " + $"beforeAccel={stallLastMovingAcceleration:F2} " +
             $"target={lanePoint:F2} (no teleport/no forced stop)");
         return true;
     }
-
-    // Stair treads are horizontal MeshCollider patches even when the Spline
-    // segment slopes. Allow DIFFERENT colliders on successive treads, but
-    // verify that every lateral sample is near the expected physical surface.
-    bool GeneralStallFootprintSupported(
-        Vector3 fromCenter, Vector3 floorTarget,
-        NearestKnotDetector.GuideFrame baseGuide, Surface surface,
-        bool verifyAhead)
+    // Stair treads are horizontal MeshCollider patches even when the Spline segment slopes. Allow DIFFERENT colliders on successive treads, but verify that every lateral sample
+    // is near the expected physical surface.
+    bool GeneralStallFootprintSupported( Vector3 fromCenter, Vector3 floorTarget, NearestKnotDetector.GuideFrame baseGuide, Surface surface, bool verifyAhead)
     {
         if (!IsFiniteVector(floorTarget) || !surface.Valid)
             return false;
-        float normalHeight = Mathf.Clamp(
-            Vector3.Dot(fromCenter - baseGuide.point, surface.normal),
-            .15f, ProbeRadius + .45f);
+        float normalHeight = Mathf.Clamp( Vector3.Dot(fromCenter - baseGuide.point, surface.normal), .15f, ProbeRadius + .45f);
         Vector3 targetCenter = floorTarget + surface.normal * normalHeight;
-        Vector3 sideShift = Vector3.ProjectOnPlane(
-            targetCenter - fromCenter, surface.tangent);
+        Vector3 sideShift = Vector3.ProjectOnPlane( targetCenter - fromCenter, surface.tangent);
         if (sideShift.magnitude > 3.25f)
             return false;
-        // Every footprint sample must have a real collider reasonably close
-        // to the expected spline height. A far-away floor is not safe.
+        // Every footprint sample must have a real collider reasonably close to the expected spline height. A far-away floor is not safe.
         int count = Mathf.Clamp(Mathf.CeilToInt(sideShift.magnitude / .35f), 2, 10);
         for (int i = 0; i <= count; ++i)
         {
             float t = i / (float)count;
             Vector3 sample = Vector3.Lerp(fromCenter, targetCenter, t);
-            Vector3 expectedFloor = Vector3.Lerp(
-                baseGuide.point, floorTarget, t);
-            if (!TryAutoHoldGroundRay(sample, out RaycastHit hit) ||
-                !IsAutoHoldStageHit(hit, float.NaN) ||
-                Mathf.Abs(hit.point.y - expectedFloor.y) > .75f)
+            Vector3 expectedFloor = Vector3.Lerp( baseGuide.point, floorTarget, t);
+            if (!TryAutoHoldGroundRay(sample, out RaycastHit hit) || !IsAutoHoldStageHit(hit, float.NaN) || Mathf.Abs(hit.point.y - expectedFloor.y) > .75f)
                 return false;
         }
         if (!verifyAhead)
             return true;
         Vector3 aheadCenter = targetCenter + surface.tangent * .50f;
         Vector3 aheadFloor = floorTarget + surface.tangent * .50f;
-        return TryAutoHoldGroundRay(aheadCenter, out RaycastHit next) &&
-            IsAutoHoldStageHit(next, float.NaN) &&
-            Mathf.Abs(next.point.y - aheadFloor.y) <= .85f;
+        return TryAutoHoldGroundRay(aheadCenter, out RaycastHit next) && IsAutoHoldStageHit(next, float.NaN) && Mathf.Abs(next.point.y - aheadFloor.y) <= .85f;
     }
-
-    bool TrySelectGeneralSafeLane(
-        NearestKnotDetector.GuideFrame guide, Surface surface,
-        out Vector3 lanePoint, out NearestKnotDetector.FiveLineGroup lane)
+    bool TrySelectGeneralSafeLane( NearestKnotDetector.GuideFrame guide, Surface surface, out Vector3 lanePoint, out NearestKnotDetector.FiveLineGroup lane)
     {
         lanePoint = default;
         lane = NearestKnotDetector.FiveLineGroup.Center;
-        if (!knotDetector || !rb ||
-            !knotDetector.TryGetFiveLineFrame(
-                guide, surface.side,
-                out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
+        if (!knotDetector || !rb || !knotDetector.TryGetFiveLineFrame( guide, surface.side, out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
             return false;
         float best = float.PositiveInfinity;
         Vector3 side = surface.side;
         float previousVSide = Vector3.Dot(stallLastMovingVelocity, side);
         float previousASide = Vector3.Dot(stallLastMovingAcceleration, side);
-        // A short prediction measures which way the body was drifting before
-        // losing speed. Center remains preferred unless moving to it is unsafe.
-        float predicted = Vector3.Dot(rb.position - frame.center, side) +
-            previousVSide * .18f + .5f * previousASide * .18f * .18f;
+        // A short prediction measures which way the body was drifting before losing speed. Center remains preferred unless moving to it is unsafe.
+        float predicted = Vector3.Dot(rb.position - frame.center, side) + previousVSide * .18f + .5f * previousASide * .18f * .18f;
         for (int i = 0; i < 5; ++i)
         {
             var group = (NearestKnotDetector.FiveLineGroup)i;
             Vector3 candidate = frame.GetPoint(group);
-            if (!GeneralStallFootprintSupported(
-                rb.position, candidate, guide, surface, true))
+            if (!GeneralStallFootprintSupported( rb.position, candidate, guide, surface, true))
                 continue;
             float offset = Vector3.Dot(candidate - frame.center, side);
             float current = Vector3.Dot(rb.position - frame.center, side);
-            float score = Mathf.Abs(offset) * .80f +
-                Mathf.Abs(offset - predicted) * .35f +
-                Mathf.Abs(offset - current) * .28f;
+            float score = Mathf.Abs(offset) * .80f + Mathf.Abs(offset - predicted) * .35f + Mathf.Abs(offset - current) * .28f;
             if (score >= best) continue;
             best = score;
             lanePoint = candidate;
@@ -8377,23 +5868,17 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return !float.IsInfinity(best);
     }
-
     NearestKnotDetector.GuideFrame ReadSafeReceivingTurnGuide()
     {
         if (!waitingForTurnGuide || !knotDetector)
             return default;
-        return knotDetector.TryFindGuideAlongHeading(
-            rb.position, turnTargetDirection, 3.6f,
-            out NearestKnotDetector.GuideFrame guide) ? guide : default;
+        return knotDetector.TryFindGuideAlongHeading( rb.position, turnTargetDirection, 3.6f, out NearestKnotDetector.GuideFrame guide) ? guide : default;
     }
-
     bool StepGeneralStallRecovery()
     {
         if (!generalStallRecovering || !rb)
             return false;
-        if (stallRecoveryForUncapturedTurn
-                ? UncapturedTurnGuideStallHasControlConflict()
-                : GeneralStallHasControlConflict())
+        if (stallRecoveryForUncapturedTurn ? UncapturedTurnGuideStallHasControlConflict() : GeneralStallHasControlConflict())
         {
             ResetGeneralStallRecovery("player / turn / handoff took priority", true);
             return false;
@@ -8404,51 +5889,35 @@ public float AdvancePredictedSplineDriveReadOnly(
             ResetGeneralStallRecovery("actual ground lost", true);
             return false;
         }
-        // During post-turn rescue an extended HasGroundSupport ray is NOT
-        // enough: the body must really be sitting close to a stage collider.
-        if (stallRecoveryForUncapturedTurn &&
-            (!waitingForTurnGuide ||
-             !TryAutoHoldGroundRay(rb.worldCenterOfMass,
-                 out RaycastHit closeFloor) ||
+        // During post-turn rescue an extended HasGroundSupport ray is NOT enough: the body must really be sitting close to a stage collider.
+        if (stallRecoveryForUncapturedTurn && (!waitingForTurnGuide || !TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit closeFloor) ||
              !IsCloseGroundRay(closeFloor, rb.worldCenterOfMass)))
         {
             ResetGeneralStallRecovery("turn-guide floor / phase lost", true);
             return false;
         }
-        // Re-evaluate the live guide each tick. A new 90deg section, a drop,
-        // or a stale old segment must never be treated as permission to turn.
-        var live = stallRecoveryForUncapturedTurn
-            ? ReadSafeReceivingTurnGuide()
-            : knotDetector.Evaluate(rb.position);
-        if (!live.valid || live.isSlope != stallRecoveryWasSlope ||
-            Vector3.Dot(NormalizeFlat(live.tangent, direction),
-                NormalizeFlat(stallRecoveryHeading, direction)) < .80f ||
-            live.distanceToGuide > (stallRecoveryForUncapturedTurn ? 3.6f : 2.5f))
+        // Re-evaluate the live guide each tick. A new 90deg section, a drop, or a stale old segment must never be treated as permission to turn.
+        var live = stallRecoveryForUncapturedTurn ? ReadSafeReceivingTurnGuide() : knotDetector.Evaluate(rb.position);
+        if (!live.valid || live.isSlope != stallRecoveryWasSlope || Vector3.Dot(NormalizeFlat(live.tangent, direction),
+                NormalizeFlat(stallRecoveryHeading, direction)) < .80f || live.distanceToGuide > (stallRecoveryForUncapturedTurn ? 3.6f : 2.5f))
         {
             ResetGeneralStallRecovery("route changed / guide out of reach", true);
             return false;
         }
         Surface surface = BuildSplineSurface(live);
-        // A newly rescued ball can still be moving: carry the selected lane
-        // forward along the LIVE section instead of chasing a stale world
-        // point from the first frame of recovery.
-        if (!surface.Valid ||
-            !knotDetector.TryGetFiveLineFrame(live, surface.side,
-                out NearestKnotDetector.FiveLineFrame liveFrame) ||
-            !liveFrame.valid)
+        // A newly rescued ball can still be moving: carry the selected lane forward along the LIVE section instead of chasing a stale world point from the first frame of recovery.
+        if (!surface.Valid || !knotDetector.TryGetFiveLineFrame(live, surface.side, out NearestKnotDetector.FiveLineFrame liveFrame) || !liveFrame.valid)
         {
             ResetGeneralStallRecovery("receiving lane no longer valid", true);
             return false;
         }
         Vector3 targetNow = liveFrame.GetPoint(stallRecoveryLane);
-        if (!GeneralStallFootprintSupported(
-                rb.position, targetNow, live, surface, true))
+        if (!GeneralStallFootprintSupported( rb.position, targetNow, live, surface, true))
         {
             ResetGeneralStallRecovery("corridor no longer supported", true);
             return false;
         }
         stallRecoveryPoint = targetNow;
-
         Vector3 side = surface.side;
         float error = Vector3.Dot(stallRecoveryPoint - rb.position, side);
         float vSide = Vector3.Dot(rb.velocity, side);
@@ -8456,23 +5925,14 @@ public float AdvancePredictedSplineDriveReadOnly(
         float sideLimit = Mathf.Clamp(stallRecoverySideAcceleration, 1f, 55f);
         float sideTargetSpeed = Mathf.Sign(error) *
             Mathf.Min(2.5f, Mathf.Sqrt(2f * sideLimit * Mathf.Abs(error)));
-        float sideAccel = Mathf.Clamp(
-            (sideTargetSpeed - vSide) * 9f, -sideLimit, sideLimit);
-        float savedSpeed = Mathf.Max(0f,
-            Vector3.Dot(stallLastMovingVelocity, surface.tangent));
-        float savedAccel = Mathf.Max(0f,
-            Vector3.Dot(stallLastMovingAcceleration, surface.tangent));
-        float targetSpeed = Mathf.Clamp(
-            2.5f + savedSpeed * .15f + savedAccel * .04f,
-            2.5f, Mathf.Min(maxGroundSpeed, 6.5f));
-        float driveLimit = Mathf.Clamp(
-            stallRecoveryForwardAcceleration, 1f, 45f);
-        float forwardAccel = Mathf.Clamp(
-            (targetSpeed - forward) * 7f, -driveLimit, driveLimit);
-
-        // Keep the shared ground / extreme-point observer current while the
-        // bounded recovery motor temporarily owns forces. Otherwise a fast
-        // stair recovery might skip the 60% event or leave stale support.
+        float sideAccel = Mathf.Clamp( (sideTargetSpeed - vSide) * 9f, -sideLimit, sideLimit);
+        float savedSpeed = Mathf.Max(0f, Vector3.Dot(stallLastMovingVelocity, surface.tangent));
+        float savedAccel = Mathf.Max(0f, Vector3.Dot(stallLastMovingAcceleration, surface.tangent));
+        float targetSpeed = Mathf.Clamp( 2.5f + savedSpeed * .15f + savedAccel * .04f, 2.5f, Mathf.Min(maxGroundSpeed, 6.5f));
+        float driveLimit = Mathf.Clamp( stallRecoveryForwardAcceleration, 1f, 45f);
+        float forwardAccel = Mathf.Clamp( (targetSpeed - forward) * 7f, -driveLimit, driveLimit);
+        // Keep the shared ground / extreme-point observer current while the bounded recovery motor temporarily owns forces. Otherwise a fast stair recovery might skip the 60% event
+        // or leave stale support.
         currentGuide = live;
         currentGuideValid = true;
         currentSurface = surface;
@@ -8486,26 +5946,17 @@ public float AdvancePredictedSplineDriveReadOnly(
         else
             CompleteExtremePointAtFlat();
         UpdateFlatEntryFrame(live);
-
-        // Ground ahead was verified above for the selected lane; check the
-        // *current* step too. Keep gravity and normal stick, no position snap.
-        Vector3 recoveryForce = surface.tangent * forwardAccel +
-            side * sideAccel - surface.normal *
+        // Ground ahead was verified above for the selected lane; check the *current* step too. Keep gravity and normal stick, no position snap.
+        Vector3 recoveryForce = surface.tangent * forwardAccel + side * sideAccel - surface.normal *
             Mathf.Min(35f, Mathf.Max(0f, flatStick));
-        LateralAuditRecordOtherForce("GeneralStallRecovery",
-            recoveryForce, ForceMode.Acceleration);
+        LateralAuditRecordOtherForce("GeneralStallRecovery", recoveryForce, ForceMode.Acceleration);
         rb.AddForce(recoveryForce, ForceMode.Acceleration);
         if (live.isSlope) driveState = 0f;
         float duration = Time.fixedTime - stallRecoveryStartedAt;
-        bool reachedLane = forward >= 2.2f && Mathf.Abs(error) < .30f &&
-            Mathf.Abs(vSide) < 1.0f;
-        if (stallRecoveryForUncapturedTurn && reachedLane &&
-            live.distanceToGuide <= 1.60f &&
-            knotDetector.TryFocusGuideAfterSafeRecovery(
+        bool reachedLane = forward >= 2.2f && Mathf.Abs(error) < .30f && Mathf.Abs(vSide) < 1.0f;
+        if (stallRecoveryForUncapturedTurn && reachedLane && live.distanceToGuide <= 1.60f && knotDetector.TryFocusGuideAfterSafeRecovery(
                 live, rb.position, turnTargetDirection, 1.60f))
-            GeneralStallLog("TURN GUIDE FOCUSED",
-                $"section={live.sectionIndex} spline={live.splineIndex} " +
-                $"distance={live.distanceToGuide:F2}m " +
+            GeneralStallLog("TURN GUIDE FOCUSED", $"section={live.sectionIndex} spline={live.splineIndex} " + $"distance={live.distanceToGuide:F2}m " +
                 "next FixedUpdate will verify NEW-GUIDE-CAPTURED");
         if (reachedLane || duration >= 1.15f)
         {
@@ -8514,7 +5965,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return true;
     }
-
     void ResetGeneralStallRecovery(string why, bool clearHistory)
     {
         if (generalStallRecovering)
@@ -8530,20 +5980,15 @@ public float AdvancePredictedSplineDriveReadOnly(
             stallLastMovingAcceleration = Vector3.zero;
         }
     }
-
     void GeneralStallLog(string stage, string message)
     {
         if (logTurnTransition)
             Debug.Log($"[STALL SPLINE {stage}] t={Time.fixedTime:F3} {message}", this);
     }
-
-    // Keep only a light, bounded history of velocity changes while moving.
-    // The remembered acceleration is taken BEFORE horizontal Hold forces V=0.
+    // Keep only a light, bounded history of velocity changes while moving. The remembered acceleration is taken BEFORE horizontal Hold forces V=0.
     void CaptureSlopeReleaseBeforeStopMotion()
     {
-        if (!rb || rb.isKinematic || MainGameManager.OnDead ||
-            turnTransitionActive || slopeReleaseHoldHandoffHeld ||
-            slopeReleaseEscapeActive)
+        if (!rb || rb.isKinematic || MainGameManager.OnDead || turnTransitionActive || slopeReleaseHoldHandoffHeld || slopeReleaseEscapeActive)
         {
             slopeReleaseLastSampleValid = false;
             return;
@@ -8559,84 +6004,58 @@ public float AdvancePredictedSplineDriveReadOnly(
             Vector3 a = (planar - slopeReleaseLastSampleVelocity) /
                 Mathf.Max(.001f, Time.fixedDeltaTime);
             if (a.sqrMagnitude < 250f * 250f && IsFiniteVector(a))
-                slopeReleaseObservedAcceleration = Vector3.Lerp(
-                    slopeReleaseObservedAcceleration, a, .25f);
+                slopeReleaseObservedAcceleration = Vector3.Lerp( slopeReleaseObservedAcceleration, a, .25f);
         }
         else
-            slopeReleaseObservedAcceleration = Vector3.ProjectOnPlane(
-                acceleration, Vector3.up);
+            slopeReleaseObservedAcceleration = Vector3.ProjectOnPlane( acceleration, Vector3.up);
         slopeReleaseLastSampleVelocity = planar;
         slopeReleaseLastSampleValid = true;
     }
-
-    // A candidate is a cached lane on the IMMEDIATELY FOLLOWING flat, not an
-    // arbitrary globally nearest spline. Every lateral sample and an ahead
-    // sample must be on the same physically verified floor collider.
-    bool TryChooseSlopeReleaseEscapeLane(
-        out Vector3 linePoint, out Vector3 heading,
-        out NearestKnotDetector.FiveLineGroup chosenGroup)
+    // A candidate is a cached lane on the IMMEDIATELY FOLLOWING flat, not an arbitrary globally nearest spline. Every lateral sample and an ahead sample must be on the same
+    // physically verified floor collider.
+    bool TryChooseSlopeReleaseEscapeLane( out Vector3 linePoint, out Vector3 heading, out NearestKnotDetector.FiveLineGroup chosenGroup)
     {
         linePoint = default;
         heading = default;
         chosenGroup = NearestKnotDetector.FiveLineGroup.Center;
-        if (!rb || !knotDetector || !slopeReleaseHoldNextFlatCollider ||
-            !slopeReleaseHoldNextFlatCollider.enabled ||
-            !knotDetector.TryGetFollowingFlatStart(
-                slopeReleaseCommittedSlopeGuide, out Vector3 flatStart,
-                out Vector3 flatTangent))
+        if (!rb || !knotDetector || !slopeReleaseHoldNextFlatCollider || !slopeReleaseHoldNextFlatCollider.enabled || !knotDetector.TryGetFollowingFlatStart(
+                slopeReleaseCommittedSlopeGuide, out Vector3 flatStart, out Vector3 flatTangent))
             return false;
-
         heading = NormalizeFlat(flatTangent, autoHoldLastForward);
-        if (Vector3.Dot(heading,
-            NormalizeFlat(autoHoldLastForward, direction)) < .85f)
+        if (Vector3.Dot(heading, NormalizeFlat(autoHoldLastForward, direction)) < .85f)
             return false;
-        float along = Mathf.Max(.55f,
-            Vector3.Dot(rb.position - flatStart, heading) + .35f);
-        if (!knotDetector.TryGetFollowingFlatFiveLineFrame(
-                slopeReleaseCommittedSlopeGuide, heading, along,
-                out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
+        float along = Mathf.Max(.55f, Vector3.Dot(rb.position - flatStart, heading) + .35f);
+        if (!knotDetector.TryGetFollowingFlatFiveLineFrame( slopeReleaseCommittedSlopeGuide, heading, along, out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
         {
-            // A recently generated corridor may not have three parallel
-            // lanes cached yet. The very same slope's directly following
-            // flat segment is a real spline too; validate its whole footprint
-            // rather than inventing a center line or teleporting to it.
+            // A recently generated corridor may not have three parallel lanes cached yet. The very same slope's directly following flat segment is a real spline too; validate its whole
+            // footprint rather than inventing a center line or teleporting to it.
             Vector3 onlyLine = flatStart + heading * along;
-            if (!IsSlopeReleaseEscapePathSupported(
-                    rb.position, onlyLine, heading,
-                    slopeReleaseHoldNextFlatCollider))
+            if (!IsSlopeReleaseEscapePathSupported( rb.position, onlyLine, heading, slopeReleaseHoldNextFlatCollider))
                 return false;
             linePoint = onlyLine;
             chosenGroup = NearestKnotDetector.FiveLineGroup.Center;
             return true;
         }
-
         Vector3 side = Vector3.Cross(Vector3.up, heading).normalized;
         float beforeLateralSpeed = Vector3.Dot(slopeReleaseBeforeStopVelocity, side);
         float beforeLateralAccel = Vector3.Dot(slopeReleaseBeforeStopAcceleration, side);
-        // Short forecast: a strong previous outward push suggests an inward
-        // recovery lane. Score remains center-biased to avoid an edge trap.
+        // Short forecast: a strong previous outward push suggests an inward recovery lane. Score remains center-biased to avoid an edge trap.
         const float forecastSeconds = .24f;
-        float predicted = Vector3.Dot(rb.position - frame.center, side) +
-            beforeLateralSpeed * forecastSeconds +
+        float predicted = Vector3.Dot(rb.position - frame.center, side) + beforeLateralSpeed * forecastSeconds +
             .5f * beforeLateralAccel * forecastSeconds * forecastSeconds;
         predicted = Mathf.Clamp(predicted, -3.5f, 3.5f);
         float bestScore = float.PositiveInfinity;
         for (int i = 0; i < 3; ++i)
         {
-            NearestKnotDetector.FiveLineGroup group = i == 0
-                ? NearestKnotDetector.FiveLineGroup.Left
-                : i == 1 ? NearestKnotDetector.FiveLineGroup.Center
+            NearestKnotDetector.FiveLineGroup group = i == 0 ? NearestKnotDetector.FiveLineGroup.Left : i == 1 ? NearestKnotDetector.FiveLineGroup.Center
                     : NearestKnotDetector.FiveLineGroup.Right;
             Vector3 candidate = frame.GetPoint(group);
             // Verify floor under lane, and no gap while moving across to it.
-            if (!IsSlopeReleaseEscapePathSupported(
-                    rb.position, candidate, heading,
-                    slopeReleaseHoldNextFlatCollider))
+            if (!IsSlopeReleaseEscapePathSupported( rb.position, candidate, heading, slopeReleaseHoldNextFlatCollider))
                 continue;
             float offset = Vector3.Dot(candidate - frame.center, side);
             float now = Vector3.Dot(rb.position - frame.center, side);
-            float score = Mathf.Abs(offset - predicted) * .60f +
-                Mathf.Abs(offset) * .85f + // center has safer edge clearance
+            float score = Mathf.Abs(offset - predicted) * .60f + Mathf.Abs(offset) * .85f + // center has safer edge clearance
                 Mathf.Abs(offset - now) * .20f;
             if (score >= bestScore) continue;
             bestScore = score;
@@ -8645,59 +6064,42 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return !float.IsInfinity(bestScore);
     }
-
-    bool IsSlopeReleaseEscapePathSupported(
-        Vector3 from, Vector3 target, Vector3 heading, Collider slab)
+    bool IsSlopeReleaseEscapePathSupported( Vector3 from, Vector3 target, Vector3 heading, Collider slab)
     {
         if (!slab || !slab.enabled) return false;
         Vector3 destination = target + Vector3.up * (ProbeRadius + .30f);
         Vector3 planarDelta = Vector3.ProjectOnPlane(destination - from, Vector3.up);
         // Don't jump laterally over a gap or validate a distant unrelated line.
         if (planarDelta.magnitude > 4f) return false;
-        int samples = Mathf.Max(2,
-            Mathf.CeilToInt(planarDelta.magnitude / (ProbeRadius * .60f)));
+        int samples = Mathf.Max(2, Mathf.CeilToInt(planarDelta.magnitude / (ProbeRadius * .60f)));
         for (int i = 0; i <= samples; i++)
         {
-            Vector3 point = Vector3.Lerp(from, destination,
-                i / (float)samples);
-            if (!TryAutoHoldGroundRay(point, out RaycastHit hit) ||
-                hit.collider != slab ||
-                Vector3.Angle(hit.normal, Vector3.up) > 18f)
+            Vector3 point = Vector3.Lerp(from, destination, i / (float)samples);
+            if (!TryAutoHoldGroundRay(point, out RaycastHit hit) || hit.collider != slab || Vector3.Angle(hit.normal, Vector3.up) > 18f)
                 return false;
         }
         Vector3 ahead = destination + heading * (ProbeRadius + .35f);
-        return TryAutoHoldGroundRay(ahead, out RaycastHit front) &&
-            front.collider == slab &&
-            Vector3.Angle(front.normal, Vector3.up) <= 18f;
+        return TryAutoHoldGroundRay(ahead, out RaycastHit front) && front.collider == slab && Vector3.Angle(front.normal, Vector3.up) <= 18f;
     }
-
     bool TryStartSlopeReleaseTimedEscape()
     {
-        if (!slopeReleaseHoldHandoffHeld || !slopeReleaseHoldTurnPending ||
-            slopeReleaseEscapeActive || !rb || rb.isKinematic ||
-            MainGameManager.OnDead)
+        if (!slopeReleaseHoldHandoffHeld || !slopeReleaseHoldTurnPending || slopeReleaseEscapeActive || !rb || rb.isKinematic || MainGameManager.OnDead)
             return false;
-        if (!TryChooseSlopeReleaseEscapeLane(
-                out Vector3 target, out Vector3 heading,
-                out NearestKnotDetector.FiveLineGroup group))
+        if (!TryChooseSlopeReleaseEscapeLane( out Vector3 target, out Vector3 heading, out NearestKnotDetector.FiveLineGroup group))
         {
             if (Time.fixedTime >= slopeReleaseEscapeNextNoLaneLogFixedTime)
             {
                 slopeReleaseEscapeNextNoLaneLogFixedTime = Time.fixedTime + .25f;
-                SlopeReleaseHoldLog("ESCAPE NO SAFE LANE",
-                    $"stopped={Time.fixedTime - slopeReleaseStopStartFixedTime:F3}s " +
+                SlopeReleaseHoldLog("ESCAPE NO SAFE LANE", $"stopped={Time.fixedTime - slopeReleaseStopStartFixedTime:F3}s " +
                     "no continuous same-collider footprint; turn still pending");
             }
             return false;
         }
-        // Stop waiting for an unavailable turn, preserving a safe way forward.
-        // NEVER re-use old handoff position, force a blind 90deg turn, or snap
-        // the ball onto a spline without a matching real floor.
+        // Stop waiting for an unavailable turn, preserving a safe way forward. NEVER re-use old handoff position, force a blind 90deg turn, or snap the ball onto a spline without a
+        // matching real floor.
         Collider stableFloor = slopeReleaseHoldNextFlatCollider;
-        SlopeReleaseHoldLog("TIMED ESCAPE",
-            $"stopped={Time.fixedTime - slopeReleaseStopStartFixedTime:F3}s " +
-            $"lane={group} beforeVelocity={slopeReleaseBeforeStopVelocity:F3} " +
-            $"beforeAccel={slopeReleaseBeforeStopAcceleration:F3} " +
+        SlopeReleaseHoldLog("TIMED ESCAPE", $"stopped={Time.fixedTime - slopeReleaseStopStartFixedTime:F3}s " +
+            $"lane={group} beforeVelocity={slopeReleaseBeforeStopVelocity:F3} " + $"beforeAccel={slopeReleaseBeforeStopAcceleration:F3} " +
             $"target={target:F3}; pending turn canceled for safety");
         ExpirePendingTurnIntent(true);
         ClearPostAutoHoldLeftEdge();
@@ -8711,13 +6113,11 @@ public float AdvancePredictedSplineDriveReadOnly(
         slopeReleaseEscapeActive = true;
         return true;
     }
-
     bool StepSlopeReleaseTimedEscape()
     {
         if (!slopeReleaseEscapeActive || !rb) return false;
         var contact = HasGroundSupport();
-        if (MainGameManager.OnDead || rb.isKinematic ||
-            !contact.Item1 || contact.Item2.collider != slopeReleaseEscapeFloor ||
+        if (MainGameManager.OnDead || rb.isKinematic || !contact.Item1 || contact.Item2.collider != slopeReleaseEscapeFloor ||
             Vector3.Angle(contact.Item2.normal, Vector3.up) > 18f)
         {
             ResetSlopeReleaseTimedEscape("support lost / state changed");
@@ -8728,108 +6128,68 @@ public float AdvancePredictedSplineDriveReadOnly(
         float error = Vector3.Dot(slopeReleaseEscapeLinePoint - rb.position, side);
         float vSide = Vector3.Dot(rb.velocity, side);
         float vForward = Vector3.Dot(rb.velocity, heading);
-        float sidewaysCap = Mathf.Min(65f,
-            Mathf.Max(1f, slopeReleaseEscapeSideAcceleration));
-        float sideSpeed = Mathf.Sign(error) * Mathf.Min(3f,
-            Mathf.Min(Mathf.Abs(error) * 5f,
-                Mathf.Sqrt(2f * sidewaysCap * Mathf.Abs(error))));
-        float sideAccel = Mathf.Clamp((sideSpeed - vSide) * 12f,
-            -sidewaysCap, sidewaysCap);
-        float formerForwardSpeed = Mathf.Max(0f,
-            Vector3.Dot(slopeReleaseBeforeStopVelocity, heading));
-        float formerForwardAcceleration = Mathf.Max(0f,
-            Vector3.Dot(slopeReleaseBeforeStopAcceleration, heading));
-        float desiredForwardSpeed = Mathf.Clamp(
-            2.5f + formerForwardSpeed * .15f +
-            formerForwardAcceleration * .04f, 2.5f, 6.5f);
-        float forwardAccel = Mathf.Clamp(
-            (desiredForwardSpeed - vForward) * 8f,
-            -slopeReleaseEscapeForwardAcceleration,
-            slopeReleaseEscapeForwardAcceleration);
-
-        // Recheck the actual receiving slab just ahead, each physics frame.
-        // This prevents the recovery motor from accelerating off the next lip.
+        float sidewaysCap = Mathf.Min(65f, Mathf.Max(1f, slopeReleaseEscapeSideAcceleration));
+        float sideSpeed = Mathf.Sign(error) * Mathf.Min(3f, Mathf.Min(Mathf.Abs(error) * 5f, Mathf.Sqrt(2f * sidewaysCap * Mathf.Abs(error))));
+        float sideAccel = Mathf.Clamp((sideSpeed - vSide) * 12f, -sidewaysCap, sidewaysCap);
+        float formerForwardSpeed = Mathf.Max(0f, Vector3.Dot(slopeReleaseBeforeStopVelocity, heading));
+        float formerForwardAcceleration = Mathf.Max(0f, Vector3.Dot(slopeReleaseBeforeStopAcceleration, heading));
+        float desiredForwardSpeed = Mathf.Clamp( 2.5f + formerForwardSpeed * .15f + formerForwardAcceleration * .04f, 2.5f, 6.5f);
+        float forwardAccel = Mathf.Clamp( (desiredForwardSpeed - vForward) * 8f, -slopeReleaseEscapeForwardAcceleration, slopeReleaseEscapeForwardAcceleration);
+        // Recheck the actual receiving slab just ahead, each physics frame. This prevents the recovery motor from accelerating off the next lip.
         Vector3 ahead = rb.position + heading *
-            Mathf.Max(ProbeRadius + .25f,
-                Mathf.Max(0f, vForward) * .12f + ProbeRadius);
-        if (!TryAutoHoldGroundRay(ahead, out RaycastHit front) ||
-            front.collider != slopeReleaseEscapeFloor ||
-            Vector3.Angle(front.normal, Vector3.up) > 18f)
+            Mathf.Max(ProbeRadius + .25f, Mathf.Max(0f, vForward) * .12f + ProbeRadius);
+        if (!TryAutoHoldGroundRay(ahead, out RaycastHit front) || front.collider != slopeReleaseEscapeFloor || Vector3.Angle(front.normal, Vector3.up) > 18f)
             forwardAccel = Mathf.Min(0f, forwardAccel);
-        if (!IsSlopeReleaseEscapePathSupported(rb.position,
-            slopeReleaseEscapeLinePoint + heading *
-                Vector3.Dot(rb.position - slopeReleaseEscapeLinePoint, heading),
-            heading, slopeReleaseEscapeFloor))
+        if (!IsSlopeReleaseEscapePathSupported(rb.position, slopeReleaseEscapeLinePoint + heading *
+                Vector3.Dot(rb.position - slopeReleaseEscapeLinePoint, heading), heading, slopeReleaseEscapeFloor))
             sideAccel = -Mathf.Clamp(vSide * 10f, -sidewaysCap, sidewaysCap);
-
         Vector3 escapeForce = heading * forwardAccel + side * sideAccel -
             Vector3.up * Mathf.Max(0f, flatStick);
-        LateralAuditRecordOtherForce("SlopeReleaseEscape",
-            escapeForce, ForceMode.Acceleration);
+        LateralAuditRecordOtherForce("SlopeReleaseEscape", escapeForce, ForceMode.Acceleration);
         rb.AddForce(escapeForce, ForceMode.Acceleration);
         direction = heading;
-        // Keep flat drive history; controlled escape supplies its own force.
-        // Resume regular spline drive once the supported recovery lane is
-        // reached and the ball has recovered some forward speed.
+        // Keep flat drive history; controlled escape supplies its own force. Resume regular spline drive once the supported recovery lane is reached and the ball has recovered some
+        // forward speed.
         float elapsed = Time.fixedTime - slopeReleaseEscapeStartedFixedTime;
-        if ((Mathf.Abs(error) < .30f && Mathf.Abs(vSide) < .9f &&
-             vForward >= 2f) || elapsed > 1.20f)
+        if ((Mathf.Abs(error) < .30f && Mathf.Abs(vSide) < .9f && vForward >= 2f) || elapsed > 1.20f)
         {
             ResetSlopeReleaseTimedEscape("lane reached / bounded escape duration");
             return true;
         }
         return true;
     }
-
     void ResetSlopeReleaseTimedEscape(string reason)
     {
         if (slopeReleaseEscapeActive)
-            SlopeReleaseHoldLog("ESCAPE END",
-                $"reason={reason} lane={slopeReleaseEscapeGroup} " +
-                $"pos={(rb ? rb.position : Vector3.zero):F3}");
+            SlopeReleaseHoldLog("ESCAPE END", $"reason={reason} lane={slopeReleaseEscapeGroup} " + $"pos={(rb ? rb.position : Vector3.zero):F3}");
         slopeReleaseEscapeActive = false;
         slopeReleaseEscapeFloor = null;
         slopeReleaseCommittedSlopeGuide = default;
         slopeReleaseStopStartFixedTime = -1f;
     }
-
-    // Dedicated diagnostics, so a test run can be filtered without mixing
-    // it with existing flat-start Auto Hold or TAP EDGE logs.
+    // Dedicated diagnostics, so a test run can be filtered without mixing it with existing flat-start Auto Hold or TAP EDGE logs.
     void SlopeReleaseHoldLog(string phase, string details)
     {
         if (logTurnTransition)
             Debug.Log($"[SLOPE RELEASE HOLD {phase}] t={Time.time:F3} {details}", this);
     }
-
-    // A real receiving ArcSlab can be crossed in one physics step, while
-    // Evaluate() still returns the old stair or the next perpendicular line.
-    // Physical identity, distance and the following-flat sample must agree.
+    // A real receiving ArcSlab can be crossed in one physics step, while Evaluate() still returns the old stair or the next perpendicular line. Physical identity, distance and
+    // the following-flat sample must agree.
     bool TryObserveSlopeReleasePhysicalFlat()
     {
-        if (!slopeReleaseHoldArmed || !autoHoldSawSlope ||
-            !autoHoldLastHalfValid || !knotDetector || !rb)
+        if (!slopeReleaseHoldArmed || !autoHoldSawSlope || !autoHoldLastHalfValid || !knotDetector || !rb)
             return false;
-        if (!knotDetector.TryGetFollowingFlatStart(
-                slopeReleaseHoldStartGuide, out Vector3 flatStart,
-                out Vector3 flatTangent))
+        if (!knotDetector.TryGetFollowingFlatStart( slopeReleaseHoldStartGuide, out Vector3 flatStart, out Vector3 flatTangent))
             return false;
-        if (!TryFindVerifiedPhysicalReceivingFlat(flatStart.y,
-                slopeReleaseHoldNextFlatSeen ? slopeReleaseHoldNextFlatCollider : null,
-                out RaycastHit physical))
+        if (!TryFindVerifiedPhysicalReceivingFlat(flatStart.y, slopeReleaseHoldNextFlatSeen ? slopeReleaseHoldNextFlatCollider : null, out RaycastHit physical))
             return false;
-        if (slopeReleaseOriginStairFamily >= 0 &&
-            (!TryGetStageFamily(physical.collider, "ArcSlab", out int flatFamily) ||
-             flatFamily != slopeReleaseOriginStairFamily + 1))
+        if (slopeReleaseOriginStairFamily >= 0 && (!TryGetStageFamily(physical.collider, "ArcSlab", out int flatFamily) || flatFamily != slopeReleaseOriginStairFamily + 1))
             return false;
         Vector3 oldHeading = NormalizeFlat(autoHoldLastForward, direction);
-        if (Vector3.Dot(NormalizeFlat(flatTangent, oldHeading), oldHeading) <= .80f ||
-            Vector3.Dot(rb.position - flatStart, oldHeading) < -.45f)
+        if (Vector3.Dot(NormalizeFlat(flatTangent, oldHeading), oldHeading) <= .80f || Vector3.Dot(rb.position - flatStart, oldHeading) < -.45f)
             return false;
-        float forwardAtExit = Vector3.Dot(
-            rb.position - autoHoldExitPoint, oldHeading);
-        if (!slopeReleaseHoldNextFlatSeen &&
-            (forwardAtExit < -.40f ||
-             (slopeReleaseHoldMaxProgress < .80f && forwardAtExit < .15f)))
+        float forwardAtExit = Vector3.Dot( rb.position - autoHoldExitPoint, oldHeading);
+        if (!slopeReleaseHoldNextFlatSeen && (forwardAtExit < -.40f || (slopeReleaseHoldMaxProgress < .80f && forwardAtExit < .15f)))
             return false;
         bool firstVerified = !slopeReleaseHoldNextFlatSeen;
         slopeReleaseHoldNextFlatSeen = true;
@@ -8838,185 +6198,124 @@ public float AdvancePredictedSplineDriveReadOnly(
         slopeReleaseHoldLastFlatSupportTime = Time.time;
         slopeReleaseHoldLastFlatSupportPosition = rb.position;
         if (firstVerified)
-            SlopeReleaseHoldLog("NEXT FLAT VERIFIED",
-                $"collider={physical.collider.name} progress={slopeReleaseHoldMaxProgress:F3} " +
-                $"exit={forwardAtExit:F3}m source=physical ArcSlab " +
-                $"speed={rb.velocity.magnitude:F2}");
+            SlopeReleaseHoldLog("NEXT FLAT VERIFIED", $"collider={physical.collider.name} progress={slopeReleaseHoldMaxProgress:F3} " +
+                $"exit={forwardAtExit:F3}m source=physical ArcSlab " + $"speed={rb.velocity.magnitude:F2}");
         return true;
     }
-
     void ObserveSlopeReleaseHoldGuide(NearestKnotDetector.GuideFrame guide)
     {
         if (!slopeReleaseHoldArmed || !knotDetector || !rb)
             return;
         if (slopeReleaseTerminalReleaseAt >= 0f)
         {
-            // An early MouseUp is recorded, not consumed, until the exact
-            // succeeding physical stair takes ownership.
+            // An early MouseUp is recorded, not consumed, until the exact succeeding physical stair takes ownership.
             if (!slopeReleaseTerminalStairCollider)
             {
                 if (TryTransferSlopeHoldToPhysicalNextStair(guide))
                     return;
                 var actual = HasGroundSupport();
-                if (actual.Item1 && actual.Item2.collider &&
-                    IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass) &&
-                    IsAutoHoldStageHit(actual.Item2, float.NaN) &&
-                    (TryGetStageFamily(actual.Item2.collider,
-                         "StairWay", out int family) ||
-                     TryGetStageFamily(actual.Item2.collider,
-                         "ArcSlab", out family)) &&
-                    (family < slopeReleaseFirstStairFamily ||
-                     family > slopeReleaseFirstStairFamily + 1))
+                if (actual.Item1 && actual.Item2.collider && IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass) && IsAutoHoldStageHit(actual.Item2, float.NaN) &&
+                    (TryGetStageFamily(actual.Item2.collider, "StairWay", out int family) || TryGetStageFamily(actual.Item2.collider, "ArcSlab", out family)) &&
+                    (family < slopeReleaseFirstStairFamily || family > slopeReleaseFirstStairFamily + 1))
                     CancelAutoHold("released B reached unrelated stage");
             }
             return;
         }
-        // Actual StairWay(N+1) contact is stronger than an intermediate
-        // ArcSlab(N+1) ray, which may never become formally verified.
+        // Actual StairWay(N+1) contact is stronger than an intermediate ArcSlab(N+1) ray, which may never become formally verified.
         if (TryTransferSlopeHoldToPhysicalNextStair(guide))
             return;
         if (TryObserveSlopeReleasePhysicalFlat())
             return;
-        // Physical ownership can transfer one frame before the nearest
-        // Spline becomes a valid guide for StairWay(N+1). Keep the held
-        // gesture on that exact stair while acquiring its geometry; do not
-        // mistake the short transition for an unrelated new slope.
-        if (!slopeReleaseHoldStartGuide.valid &&
-            slopeReleaseOriginStairFamily >= 0 &&
-            slopeReleaseFirstStairFamily >= 0)
+        // Physical ownership can transfer one frame before the nearest Spline becomes a valid guide for StairWay(N+1). Keep the held gesture on that exact stair while acquiring its
+        // geometry; do not mistake the short transition for an unrelated new slope.
+        if (!slopeReleaseHoldStartGuide.valid && slopeReleaseOriginStairFamily >= 0 && slopeReleaseFirstStairFamily >= 0)
         {
             var owner = HasGroundSupport();
-            if (owner.Item1 && owner.Item2.collider &&
-                IsCloseGroundRay(owner.Item2, rb.worldCenterOfMass) &&
-                TryGetStageFamily(owner.Item2.collider,
-                    "StairWay", out int physicalFamily) &&
-                physicalFamily == slopeReleaseOriginStairFamily)
+            if (owner.Item1 && owner.Item2.collider && IsCloseGroundRay(owner.Item2, rb.worldCenterOfMass) && TryGetStageFamily(owner.Item2.collider,
+                    "StairWay", out int physicalFamily) && physicalFamily == slopeReleaseOriginStairFamily)
             {
-                bool localSlope = guide.valid && guide.isSlope &&
-                    Vector3.ProjectOnPlane(guide.point - rb.position,
-                        Vector3.up).magnitude <=
-                        Mathf.Max(4f, autoHoldExitWidthTolerance + ProbeRadius) &&
-                    Mathf.Abs(guide.point.y - rb.position.y) <= 3.0f;
+                bool localSlope = guide.valid && guide.isSlope && Vector3.ProjectOnPlane(guide.point - rb.position, Vector3.up).magnitude <=
+                        Mathf.Max(4f, autoHoldExitWidthTolerance + ProbeRadius) && Mathf.Abs(guide.point.y - rb.position.y) <= 3.0f;
                 if (localSlope)
                 {
-                    Vector3 signedTangent = guide.tangent.y > .02f
-                        ? -guide.tangent : guide.tangent;
-                    Vector3 heading = NormalizeFlat(
-                        signedTangent, autoHoldLastForward);
+                    Vector3 signedTangent = guide.tangent.y > .02f ? -guide.tangent : guide.tangent;
+                    Vector3 heading = NormalizeFlat( signedTangent, autoHoldLastForward);
                     slopeReleaseHoldStartGuide = guide;
                     slopeReleaseHoldMaxProgress = guide.sectionProgress01;
                     autoHoldLastSlopeGuide = guide;
                     ObserveAutoHoldSlope(guide);
                     autoHoldLastForward = heading;
-                    autoHoldLastLeft = Vector3.Cross(heading,
-                        Vector3.up).normalized;
-                    SlopeReleaseHoldLog("TRANSFER GUIDE ACQUIRED",
-                        $"stair={owner.Item2.collider.name} " +
-                        $"guideSection={guide.sectionIndex}");
+                    autoHoldLastLeft = Vector3.Cross(heading, Vector3.up).normalized;
+                    SlopeReleaseHoldLog("TRANSFER GUIDE ACQUIRED", $"stair={owner.Item2.collider.name} " + $"guideSection={guide.sectionIndex}");
                 }
                 return;
             }
         }
         if (!guide.valid) return;
-
         if (guide.isSlope)
         {
-            // A second slope means the one immediately following the held
-            // slope's flat was missed. Never arm a later accidental release.
-            // Three lane splines are different section IDs even when they
-            // represent the SAME physical stair. The left-edge approach can
-            // naturally change the nearest lane; do not treat it as the next
-            // stair merely because splineIndex changed.
-            bool sameLogicalSlope = knotDetector.IsSameSection(
-                slopeReleaseHoldStartGuide, guide);
+            // A second slope means the one immediately following the held slope's flat was missed. Never arm a later accidental release. Three lane splines are different section IDs even
+            // when they represent the SAME physical stair. The left-edge approach can naturally change the nearest lane; do not treat it as the next
+            bool sameLogicalSlope = knotDetector.IsSameSection( slopeReleaseHoldStartGuide, guide);
             if (!sameLogicalSlope)
             {
-                Vector3 from = NormalizeFlat(
-                    slopeReleaseHoldStartGuide.tangent, direction);
+                Vector3 from = NormalizeFlat( slopeReleaseHoldStartGuide.tangent, direction);
                 Vector3 to = NormalizeFlat(guide.tangent, direction);
                 bool aligned = Vector3.Dot(from, to) > .90f;
                 bool nearbyProgress = Mathf.Abs(guide.sectionProgress01 -
                     slopeReleaseHoldMaxProgress) <= .40f;
-                bool samePhysicalCorridor = Vector3.Distance(
-                    Vector3.ProjectOnPlane(guide.point, Vector3.up),
-                    Vector3.ProjectOnPlane(rb.position, Vector3.up)) <=
+                bool samePhysicalCorridor = Vector3.Distance( Vector3.ProjectOnPlane(guide.point, Vector3.up), Vector3.ProjectOnPlane(rb.position, Vector3.up)) <=
                     Mathf.Max(4f, autoHoldExitWidthTolerance + ProbeRadius);
-                sameLogicalSlope = aligned && nearbyProgress &&
-                    samePhysicalCorridor;
+                sameLogicalSlope = aligned && nearbyProgress && samePhysicalCorridor;
             }
             if (slopeReleaseHoldNextFlatSeen || !sameLogicalSlope)
             {
-                // On the exact StairWay(N+1), the held gesture belongs to the
-                // new physical leg. The player has NOT released: no turn yet.
-                // Do not equate a nearest-spline change with physical arrival.
+                // On the exact StairWay(N+1), the held gesture belongs to the new physical leg. The player has NOT released: no turn yet. Do not equate a nearest-spline change with physical
+                // arrival.
                 if (TryTransferSlopeHoldToPhysicalNextStair(guide))
                     return;
-                // A narrow flat/stair mesh seam can temporarily pick the new
-                // spline before actual contact. Do not discard the press for
-                // that single prediction, but never follow an unrelated stage.
-                if (slopeReleaseHoldNextFlatSeen &&
-                    slopeReleaseHoldLastFlatSupportTime >= 0f &&
-                    Time.time - slopeReleaseHoldLastFlatSupportTime <= .30f)
+                // A narrow flat/stair mesh seam can temporarily pick the new spline before actual contact. Do not discard the press for that single prediction, but never follow an unrelated
+                // stage.
+                if (slopeReleaseHoldNextFlatSeen && slopeReleaseHoldLastFlatSupportTime >= 0f && Time.time - slopeReleaseHoldLastFlatSupportTime <= .30f)
                 {
                     var physical = HasGroundSupport();
-                    if (!physical.Item1 || !IsCloseGroundRay(
-                            physical.Item2, rb.worldCenterOfMass) ||
-                        physical.Item2.collider == slopeReleaseHoldNextFlatCollider)
+                    if (!physical.Item1 || !IsCloseGroundRay( physical.Item2, rb.worldCenterOfMass) || physical.Item2.collider == slopeReleaseHoldNextFlatCollider)
                         return;
                 }
-                if (!slopeReleaseHoldNextFlatSeen && entryShockActive &&
-                    Time.fixedTime - entryShockDetectedAt <=
-                        EntryShockRouteProtectionSeconds &&
-                    TryAutoHoldGroundRay(rb.worldCenterOfMass,
-                        out RaycastHit shockedFloor) &&
-                    TryGetStageFamily(shockedFloor.collider,
-                        "StairWay", out int shockedFamily) &&
+                if (!slopeReleaseHoldNextFlatSeen && entryShockActive && Time.fixedTime - entryShockDetectedAt <= EntryShockRouteProtectionSeconds &&
+                    TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit shockedFloor) && TryGetStageFamily(shockedFloor.collider, "StairWay", out int shockedFamily) &&
                     shockedFamily == entryShockStairFamily)
                     return;
                 if (!slopeReleaseHoldNextFlatSeen)
                 {
-                    // A nearest-Spline jump alone cannot revoke a held B.
-                    // Only a different, CLOSE physical stair proves that
-                    // the player actually left the intended N -> N+1 route.
+                    // A nearest-Spline jump alone cannot revoke a held B. Only a different, CLOSE physical stair proves that the player actually left the intended N -> N+1 route.
                     var actual = HasGroundSupport();
-                    if (actual.Item1 && actual.Item2.collider &&
-                        IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass) &&
-                        IsAutoHoldStageHit(actual.Item2, float.NaN) &&
-                        TryGetStageFamily(actual.Item2.collider,
-                            "StairWay", out int actualFamily) &&
-                        actualFamily != slopeReleaseOriginStairFamily &&
+                    if (actual.Item1 && actual.Item2.collider && IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass) && IsAutoHoldStageHit(actual.Item2, float.NaN) &&
+                        TryGetStageFamily(actual.Item2.collider, "StairWay", out int actualFamily) && actualFamily != slopeReleaseOriginStairFamily &&
                         actualFamily != slopeReleaseOriginStairFamily + 1)
                         CancelAutoHold("verified unrelated physical stair");
                     return;
                 }
-                // A spline jump is NOT proof of an unrelated physical stair.
-                // A verified receiving ArcSlab can have a different nearest
-                // guide before the ball's support switches to StairWay(N+1).
+                // A spline jump is NOT proof of an unrelated physical stair. A verified receiving ArcSlab can have a different nearest guide before the ball's support switches to
+                // StairWay(N+1).
                 if (slopeReleaseHoldNextFlatSeen)
                 {
                     var actual = HasGroundSupport();
-                    if (actual.Item1 && actual.Item2.collider &&
-                        IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass))
+                    if (actual.Item1 && actual.Item2.collider && IsCloseGroundRay(actual.Item2, rb.worldCenterOfMass))
                     {
                         if (actual.Item2.collider == slopeReleaseHoldNextFlatCollider)
                             return;
-                        if (TryGetStageFamily(actual.Item2.collider,
-                                "StairWay", out int nextStair) &&
-                            nextStair == slopeReleaseOriginStairFamily + 1)
+                        if (TryGetStageFamily(actual.Item2.collider, "StairWay", out int nextStair) && nextStair == slopeReleaseOriginStairFamily + 1)
                         {
                             if (Time.fixedTime >= bReleaseNextLogTime)
                             {
                                 bReleaseNextLogTime = Time.fixedTime + .20f;
-                                SlopeReleaseHoldLog("TRANSFER GUIDE WAIT",
-                                    $"actual={actual.Item2.collider.name} " +
-                                    $"guideSlope={guide.isSlope} " +
+                                SlopeReleaseHoldLog("TRANSFER GUIDE WAIT", $"actual={actual.Item2.collider.name} " + $"guideSlope={guide.isSlope} " +
                                     $"guideSection={guide.sectionIndex}; physical owner retained");
                             }
                             return; // Do not revoke a physically continuous hold.
                         }
-                        if (TryGetStageFamily(actual.Item2.collider,
-                                "StairWay", out int unrelated) &&
-                            unrelated != slopeReleaseOriginStairFamily &&
+                        if (TryGetStageFamily(actual.Item2.collider, "StairWay", out int unrelated) && unrelated != slopeReleaseOriginStairFamily &&
                             unrelated != slopeReleaseOriginStairFamily + 1)
                         {
                             CancelAutoHold("verified unrelated physical stair during held B gesture");
@@ -9027,118 +6326,75 @@ public float AdvancePredictedSplineDriveReadOnly(
                 }
                 return;
             }
-            slopeReleaseHoldMaxProgress = Mathf.Max(
-                slopeReleaseHoldMaxProgress, guide.sectionProgress01);
+            slopeReleaseHoldMaxProgress = Mathf.Max( slopeReleaseHoldMaxProgress, guide.sectionProgress01);
             if (guide.sectionProgress01 >= TargetProgress)
                 slopeReleaseExtremeReachedWhileHeld = true;
             ObserveAutoHoldSlope(guide);
             return;
         }
-
         if (slopeReleaseHoldNextFlatSeen)
         {
             var stillSupported = HasGroundSupport();
-            if (stillSupported.Item1 &&
-                IsVerifiedPhysicalReceivingFlat(stillSupported.Item2,
-                    rb.worldCenterOfMass, slopeReleaseHoldNextFlatCollider,
+            if (stillSupported.Item1 && IsVerifiedPhysicalReceivingFlat(stillSupported.Item2, rb.worldCenterOfMass, slopeReleaseHoldNextFlatCollider,
                     slopeReleaseHoldNextFlatY))
             {
                 slopeReleaseHoldLastFlatSupportTime = Time.time;
                 slopeReleaseHoldLastFlatSupportPosition = rb.position;
             }
         }
-        // Never use nearest Spline alone to certify a receiving flat.
-        // TryObserveSlopeReleasePhysicalFlat above is the sole verifier.
+        // Never use nearest Spline alone to certify a receiving flat. TryObserveSlopeReleasePhysicalFlat above is the sole verifier.
     }
-
-    // The exact, CLOSE physical StairWay(N+1) can inherit a stair hold even
-    // when the preceding ArcSlab(N+1) was crossed without formal detection.
-    // A nearest-spline change alone never authorizes this transfer.
-    bool TryTransferSlopeHoldToPhysicalNextStair(
-        NearestKnotDetector.GuideFrame guide)
+    // The exact, CLOSE physical StairWay(N+1) can inherit a stair hold even when the preceding ArcSlab(N+1) was crossed without formal detection. A nearest-spline change alone
+    // never authorizes this transfer.
+    bool TryTransferSlopeHoldToPhysicalNextStair( NearestKnotDetector.GuideFrame guide)
     {
-        if (!slopeReleaseHoldArmed || slopeReleaseFirstStairFamily < 0 ||
-            slopeReleaseOriginStairFamily != slopeReleaseFirstStairFamily ||
-            !rb || !knotDetector)
+        if (!slopeReleaseHoldArmed || slopeReleaseFirstStairFamily < 0 || slopeReleaseOriginStairFamily != slopeReleaseFirstStairFamily || !rb || !knotDetector)
             return false;
         var physical = HasGroundSupport();
         RaycastHit owner = physical.Item2;
         bool seamCarry = false;
-        if (!physical.Item1 || !owner.collider ||
-            !IsCloseGroundRay(owner, rb.worldCenterOfMass) ||
-            !TryGetStageFamily(owner.collider, "StairWay", out int liveFamily) ||
+        if (!physical.Item1 || !owner.collider || !IsCloseGroundRay(owner, rb.worldCenterOfMass) || !TryGetStageFamily(owner.collider, "StairWay", out int liveFamily) ||
             liveFamily != slopeReleaseOriginStairFamily + 1)
         {
-            // MouseUp may land between FixedUpdates: the newest ray sees
-            // ArcSlab(N+2), while currentHit still contains the actually
-            // supported StairWay(N+1) from the preceding physics step.
-            // Both sides of that exact seam must be CLOSE; a stale stair
-            // hit or a later unrelated flat is not enough to transfer B.
-            if (!physical.Item1 || !physical.Item2.collider ||
-                !IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass) ||
-                Vector3.Angle(physical.Item2.normal, Vector3.up) > 18f ||
-                !TryGetStageFamily(physical.Item2.collider,
-                    "ArcSlab", out int flatFamily) ||
-                flatFamily != slopeReleaseOriginStairFamily + 2 ||
-                !currentSupported || !currentHit.collider ||
-                !IsCloseGroundRay(currentHit, rb.worldCenterOfMass) ||
-                Vector3.ProjectOnPlane(
-                    rb.worldCenterOfMass - currentHit.point,
-                    currentHit.normal).magnitude > ProbeRadius * 3f ||
-                !TryGetStageFamily(currentHit.collider,
-                    "StairWay", out int priorFamily) ||
-                priorFamily != slopeReleaseOriginStairFamily + 1)
+            // MouseUp may land between FixedUpdates: the newest ray sees ArcSlab(N+2), while currentHit still contains the actually supported StairWay(N+1) from the preceding physics
+            // step. Both sides of that exact seam must be CLOSE; a stale stair hit or a later unrelated flat is not enough to transfer B.
+            if (!physical.Item1 || !physical.Item2.collider || !IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass) ||
+                Vector3.Angle(physical.Item2.normal, Vector3.up) > 18f || !TryGetStageFamily(physical.Item2.collider, "ArcSlab", out int flatFamily) ||
+                flatFamily != slopeReleaseOriginStairFamily + 2 || !currentSupported || !currentHit.collider || !IsCloseGroundRay(currentHit, rb.worldCenterOfMass) ||
+                Vector3.ProjectOnPlane( rb.worldCenterOfMass - currentHit.point, currentHit.normal).magnitude > ProbeRadius * 3f || !TryGetStageFamily(currentHit.collider,
+                    "StairWay", out int priorFamily) || priorFamily != slopeReleaseOriginStairFamily + 1)
                 return false;
             owner = currentHit;
             seamCarry = true;
         }
-        if (!IsCloseGroundRay(owner, rb.worldCenterOfMass) ||
-            !TryGetStageFamily(owner.collider,
-                "StairWay", out int family) ||
-            family != slopeReleaseOriginStairFamily + 1)
+        if (!IsCloseGroundRay(owner, rb.worldCenterOfMass) || !TryGetStageFamily(owner.collider, "StairWay", out int family) || family != slopeReleaseOriginStairFamily + 1)
             return false;
-        // sectionIndex is a Spline-local ordinal, NOT a StairWay family ID.
-        // A REAL, close StairWay(N+1) is enough to transfer gesture
-        // ownership without a receiving-flat gate. Its nearest spline may still
-        // be flat or off-lane on the first few physics frames.
-        bool localSlopeGuide = guide.valid && guide.isSlope &&
-            Vector3.ProjectOnPlane(guide.point - rb.position,
-                Vector3.up).magnitude <=
-                    Mathf.Max(4f, autoHoldExitWidthTolerance + ProbeRadius) &&
-            Mathf.Abs(guide.point.y - rb.position.y) <= 3.0f;
+        // sectionIndex is a Spline-local ordinal, NOT a StairWay family ID. A REAL, close StairWay(N+1) is enough to transfer gesture ownership without a receiving-flat gate. Its
+        // nearest spline may still be flat or off-lane on the first few physics frames.
+        bool localSlopeGuide = guide.valid && guide.isSlope && Vector3.ProjectOnPlane(guide.point - rb.position, Vector3.up).magnitude <=
+                    Mathf.Max(4f, autoHoldExitWidthTolerance + ProbeRadius) && Mathf.Abs(guide.point.y - rb.position.y) <= 3.0f;
         Vector3 planarVelocity = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
-        Vector3 physicalDown = Vector3.ProjectOnPlane(
-            Physics.gravity, owner.normal);
-        bool validDownNormal = physicalDown.sqrMagnitude > Eps &&
-            Vector3.Angle(owner.normal, Vector3.up) >= 18f;
-        Vector3 signedTangent = localSlopeGuide && guide.tangent.y > .02f
-            ? -guide.tangent : (localSlopeGuide ? guide.tangent : Vector3.zero);
-        Vector3 guideHeading = localSlopeGuide
-            ? NormalizeFlat(signedTangent, direction)
-            : validDownNormal
-                ? NormalizeFlat(physicalDown, direction)
+        Vector3 physicalDown = Vector3.ProjectOnPlane( Physics.gravity, owner.normal);
+        bool validDownNormal = physicalDown.sqrMagnitude > Eps && Vector3.Angle(owner.normal, Vector3.up) >= 18f;
+        Vector3 signedTangent = localSlopeGuide && guide.tangent.y > .02f ? -guide.tangent : (localSlopeGuide ? guide.tangent : Vector3.zero);
+        Vector3 guideHeading = localSlopeGuide ? NormalizeFlat(signedTangent, direction) : validDownNormal ? NormalizeFlat(physicalDown, direction)
                 : NormalizeFlat(planarVelocity, autoHoldLastForward);
-        if (planarVelocity.magnitude > 2f &&
-            Vector3.Dot(planarVelocity.normalized, guideHeading) < -.30f)
+        if (planarVelocity.magnitude > 2f && Vector3.Dot(planarVelocity.normalized, guideHeading) < -.30f)
         {
             if (validDownNormal)
                 guideHeading = NormalizeFlat(physicalDown, guideHeading);
             else if (rb.velocity.y < -2f && planarVelocity.magnitude > 4f)
                 guideHeading = planarVelocity.normalized;
-            // The physical stair is still verified even if the nearest
-            // spline direction is temporarily ambiguous; do not discard B.
+            // The physical stair is still verified even if the nearest spline direction is temporarily ambiguous; do not discard B.
         }
-
         int previous = slopeReleaseOriginStairFamily;
         slopeReleaseOriginStairFamily = family;
-        // The verified *physical* StairWay(N+1) becomes the input owner NOW.
-        // Preserve this exact collider across a later one-frame ray miss on
-        // release; the eventual turn still requires close support.
+        // The verified *physical* StairWay(N+1) becomes the input owner NOW. Preserve this exact collider across a later one-frame ray miss on release; the eventual turn still
+        // requires close support.
         slopeReleaseTerminalStairCollider = owner.collider;
         slopeTerminalLastOwnerSupportAt = Time.time;
         slopeReleaseHoldStartGuide = localSlopeGuide ? guide : default;
-        slopeReleaseHoldMaxProgress = localSlopeGuide
-            ? guide.sectionProgress01 : 0f;
+        slopeReleaseHoldMaxProgress = localSlopeGuide ? guide.sectionProgress01 : 0f;
         slopeReleaseHoldNextFlatSeen = false;
         slopeReleaseHoldNextFlatCollider = null;
         slopeReleaseHoldLastFlatSupportTime = -1f;
@@ -9150,71 +6406,46 @@ public float AdvancePredictedSplineDriveReadOnly(
         autoHoldLastSlopeGuide = localSlopeGuide ? guide : default;
         if (localSlopeGuide)
             ObserveAutoHoldSlope(guide);
-        // ObserveAutoHoldSlope uses the old route's global direction before
-        // the turn. Restore this stair's physically signed downhill heading.
+        // ObserveAutoHoldSlope uses the old route's global direction before the turn. Restore this stair's physically signed downhill heading.
         autoHoldLastForward = guideHeading;
         autoHoldLastLeft = Vector3.Cross(guideHeading, Vector3.up).normalized;
-        SlopeReleaseHoldLog("STAIR OWNER TRANSFERRED",
-            $"from={previous} to={family} floor={owner.collider.name} " +
-            $"seamCarry={seamCarry} guideLocal={localSlopeGuide} " +
-            $"progress={(localSlopeGuide ? guide.sectionProgress01 : -1f):F3} " +
-            $"releasedEarly={slopeReleaseTerminalReleaseAt >= 0f}; " +
-            "no automatic turn");
+        SlopeReleaseHoldLog("STAIR OWNER TRANSFERRED", $"from={previous} to={family} floor={owner.collider.name} " + $"seamCarry={seamCarry} guideLocal={localSlopeGuide} " +
+            $"progress={(localSlopeGuide ? guide.sectionProgress01 : -1f):F3} " + $"releasedEarly={slopeReleaseTerminalReleaseAt >= 0f}; " + "no automatic turn");
         return true;
     }
-
-    // A three-lane stage may switch _0/_1/_2 colliders while staying on the
-    // SAME StairWay family. That is not an unrelated floor or a new request.
+    // A three-lane stage may switch _0/_1/_2 colliders while staying on the SAME StairWay family. That is not an unrelated floor or a new request.
     bool IsSameSlopeTerminalFamily(Collider candidate)
     {
-        return slopeReleaseTerminalStairCollider && candidate &&
-            TryGetStageFamily(slopeReleaseTerminalStairCollider,
-                "StairWay", out int expected) &&
-            TryGetStageFamily(candidate, "StairWay", out int actual) &&
-            actual == expected;
+        return slopeReleaseTerminalStairCollider && candidate && TryGetStageFamily(slopeReleaseTerminalStairCollider, "StairWay", out int expected) &&
+            TryGetStageFamily(candidate, "StairWay", out int actual) && actual == expected;
     }
-
-    // Only the physically supported, immediate flat AFTER the verified owner
-    // stair may finish the same turn. No spline-only or airborne permission.
+    // Only the physically supported, immediate flat AFTER the verified owner stair may finish the same turn. No spline-only or airborne permission.
     bool IsSlopeTerminalSuccessorFlat(RaycastHit hit)
     {
-        return rb && slopeReleaseTerminalStairCollider && hit.collider &&
-            IsCloseGroundRay(hit, rb.worldCenterOfMass) &&
-            Vector3.Angle(hit.normal, Vector3.up) <= 18f &&
-            TryGetStageFamily(slopeReleaseTerminalStairCollider,
-                "StairWay", out int stairFamily) &&
-            TryGetStageFamily(hit.collider, "ArcSlab", out int flatFamily) &&
+        return rb && slopeReleaseTerminalStairCollider && hit.collider && IsCloseGroundRay(hit, rb.worldCenterOfMass) && Vector3.Angle(hit.normal, Vector3.up) <= 18f &&
+            TryGetStageFamily(slopeReleaseTerminalStairCollider, "StairWay", out int stairFamily) && TryGetStageFamily(hit.collider, "ArcSlab", out int flatFamily) &&
             flatFamily == stairFamily + 1;
     }
-
     // The same verified staircase remains the owner until a turn begins.
     void RememberSlopeTerminalOwnerSupport()
     {
         slopeTerminalLastOwnerSupportAt = Time.time;
     }
-
-    // This checks ONLY the physically transferred StairWay's close support.
-    // A normal tread has a flat normal; stage identity and distance matter.
+    // This checks ONLY the physically transferred StairWay's close support. A normal tread has a flat normal; stage identity and distance matter.
     bool TryGetSlopeTerminalSupport(out RaycastHit floor)
     {
         floor = default;
-        if (!rb || !slopeReleaseTerminalStairCollider ||
-            !slopeReleaseTerminalStairCollider.enabled)
+        if (!rb || !slopeReleaseTerminalStairCollider || !slopeReleaseTerminalStairCollider.enabled)
             return false;
         var physical = HasGroundSupport();
-        if (physical.Item1 &&
-            IsSameSlopeTerminalFamily(physical.Item2.collider) &&
-            IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass) &&
+        if (physical.Item1 && IsSameSlopeTerminalFamily(physical.Item2.collider) && IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass) &&
             IsAutoHoldStageHit(physical.Item2, float.NaN))
         {
             floor = physical.Item2;
             RememberSlopeTerminalOwnerSupport();
             return true;
         }
-        if (TryAutoHoldGroundRay(rb.worldCenterOfMass,
-                out RaycastHit ray) &&
-            IsSameSlopeTerminalFamily(ray.collider) &&
-            IsCloseGroundRay(ray, rb.worldCenterOfMass) &&
+        if (TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit ray) && IsSameSlopeTerminalFamily(ray.collider) && IsCloseGroundRay(ray, rb.worldCenterOfMass) &&
             IsAutoHoldStageHit(ray, float.NaN))
         {
             floor = ray;
@@ -9223,111 +6454,78 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return false;
     }
-
-    // MouseUp owns the already VERIFIED next staircase even when the release
-    // occurs during one of the small airborne gaps between its steps.
-    // This only reserves B; physical execution is separately gated by close
-    // owner-stair contact in IsSlopeEarlyTurnReady().
+    // MouseUp owns the already VERIFIED next staircase even when the release occurs during one of the small airborne gaps between its steps. This only reserves B; physical
+    // execution is separately gated by close owner-stair contact in IsSlopeEarlyTurnReady().
     bool LatchSlopeReleaseTerminalGesture()
     {
-        if (!slopeReleaseHoldArmed || !autoHoldEligible ||
-            slopeReleaseFirstStairFamily < 0 ||
-            slopeReleaseOriginStairFamily <= slopeReleaseFirstStairFamily ||
-            !rb || rb.isKinematic || MainGameManager.OnDead ||
-            !slopeReleaseTerminalStairCollider ||
-            !slopeReleaseTerminalStairCollider.enabled ||
-            !TryGetStageFamily(slopeReleaseTerminalStairCollider,
-                "StairWay", out int family) ||
-            family != slopeReleaseOriginStairFamily)
+        if (!slopeReleaseHoldArmed || !autoHoldEligible || slopeReleaseFirstStairFamily < 0 || slopeReleaseOriginStairFamily <= slopeReleaseFirstStairFamily ||
+            !rb || rb.isKinematic || MainGameManager.OnDead || !slopeReleaseTerminalStairCollider || !slopeReleaseTerminalStairCollider.enabled ||
+            !TryGetStageFamily(slopeReleaseTerminalStairCollider, "StairWay", out int family) || family != slopeReleaseOriginStairFamily)
             return false;
         var physical = HasGroundSupport();
-        bool sameStair = physical.Item1 &&
-            IsSameSlopeTerminalFamily(physical.Item2.collider);
-        bool recentStair = slopeTerminalLastOwnerSupportAt >= 0f &&
-            Time.time - slopeTerminalLastOwnerSupportAt <= .55f;
-        bool immediateSuccessor = physical.Item1 && recentStair &&
-            Time.time - slopeTerminalLastOwnerSupportAt <=
-                SlopeTerminalSuccessorFlatGraceSeconds &&
+        bool sameStair = physical.Item1 && IsSameSlopeTerminalFamily(physical.Item2.collider);
+        bool recentStair = slopeTerminalLastOwnerSupportAt >= 0f && Time.time - slopeTerminalLastOwnerSupportAt <= .55f;
+        bool immediateSuccessor = physical.Item1 && recentStair && Time.time - slopeTerminalLastOwnerSupportAt <= SlopeTerminalSuccessorFlatGraceSeconds &&
             IsSlopeTerminalSuccessorFlat(physical.Item2);
-        // A clearly different CLOSE support means the player left the
-        // transferred stair. A distant ray hit is not physical evidence
-        // of another stage, and must not silently delete a held B gesture.
-        // Exception: MouseUp just after the owner's verified exit seam.
-        if (physical.Item1 && !sameStair && !immediateSuccessor &&
-            IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass))
+        // A clearly different CLOSE support means the player left the transferred stair. A distant ray hit is not physical evidence of another stage, and must not silently delete a
+        // held B gesture. Exception: MouseUp just after the owner's verified exit seam.
+        if (physical.Item1 && !sameStair && !immediateSuccessor && IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass))
             return false;
         if (!sameStair && !recentStair)
             return false;
-        if (sameStair && IsCloseGroundRay(physical.Item2,
-                rb.worldCenterOfMass))
+        if (sameStair && IsCloseGroundRay(physical.Item2, rb.worldCenterOfMass))
         {
             slopeReleaseTerminalStairCollider = physical.Item2.collider;
             RememberSlopeTerminalOwnerSupport();
         }
         slopeReleaseTerminalReleaseAt = Time.time;
         flickConsumed = true;
-        // Release is a command, not an automatic held turn. Do not freeze the
-        // stair descent or rotate the ball before close physical support.
-        SlopeReleaseHoldLog("EARLY RELEASE LATCHED",
-            $"stair={family} progress={slopeReleaseHoldMaxProgress:F3} " +
-            $"floor={(physical.Item2.collider ? physical.Item2.collider.name : "-")} " +
-            $"recentOwner={recentStair} successor={immediateSuccessor}; " +
+        // Release is a command, not an automatic held turn. Do not freeze the stair descent or rotate the ball before close physical support.
+        SlopeReleaseHoldLog("EARLY RELEASE LATCHED", $"stair={family} progress={slopeReleaseHoldMaxProgress:F3} " +
+            $"floor={(physical.Item2.collider ? physical.Item2.collider.name : "-")} " + $"recentOwner={recentStair} successor={immediateSuccessor}; " +
             "turn reserved for close owner/seam contact");
         return true;
     }
-
-    // Geometry decides the sign only when a perpendicular successor really
-    // belongs to this newly transferred stair. Otherwise the user's agreed
-    // default is LEFT. Direction evidence never delays the released turn.
+    // Geometry decides the sign only when a perpendicular successor really belongs to this newly transferred stair. Otherwise the user's agreed default is LEFT. Direction
+    // evidence never delays the released turn.
     void ResolveSlopeTerminalTurn(out float sign, out string source)
     {
         sign = -1f;
         source = "early B default LEFT";
-        if (!slopeReleaseHoldStartGuide.valid ||
-            !slopeReleaseHoldStartGuide.isSlope)
+        if (!slopeReleaseHoldStartGuide.valid || !slopeReleaseHoldStartGuide.isSlope)
             return;
-
-        Vector3 incoming = NormalizeFlat(autoHoldLastForward,
-            slopeReleaseHoldStartGuide.tangent);
+        Vector3 incoming = NormalizeFlat(autoHoldLastForward, slopeReleaseHoldStartGuide.tangent);
         Vector3 next = slopeReleaseHoldStartGuide.nextTangent;
         if (next.sqrMagnitude <= Eps)
             return;
-        float angle = Vector3.SignedAngle(incoming,
-            NormalizeFlat(next, incoming), Vector3.up);
+        float angle = Vector3.SignedAngle(incoming, NormalizeFlat(next, incoming), Vector3.up);
         if (Mathf.Abs(angle) >= 60f && Mathf.Abs(angle) <= 120f)
         {
             sign = Mathf.Sign(angle);
             source = "next tangent of transferred stair";
         }
     }
-
-    // MouseUp owns a single B request. Queue it immediately after the real
-    // StairWay handoff; keep ordinary gravity/Drive until the same staircase
-    // is closely supported and the visual turn handoff has finished.
+    // MouseUp owns a single B request. Queue it immediately after the real StairWay handoff; keep ordinary gravity/Drive until the same staircase is closely supported and the
+    // visual turn handoff has finished.
     void StepSlopeReleaseTerminalIntent()
     {
-        if (slopeReleaseTerminalReleaseAt < 0f ||
-            !slopeReleaseTerminalStairCollider || HasPendingTurnIntent)
+        if (slopeReleaseTerminalReleaseAt < 0f || !slopeReleaseTerminalStairCollider || HasPendingTurnIntent)
             return;
         if (!rb || rb.isKinematic || MainGameManager.OnDead)
         {
             CancelAutoHold("early B release lost its physical stair");
             return;
         }
-        // This is optional evidence for RIGHT/LEFT, never a condition for
-        // accepting MouseUp. A brief gap or stale spline must not cancel B.
-        if (!slopeReleaseHoldStartGuide.valid ||
-            !slopeReleaseHoldStartGuide.isSlope)
+        // This is optional evidence for RIGHT/LEFT, never a condition for accepting MouseUp. A brief gap or stale spline must not cancel B.
+        if (!slopeReleaseHoldStartGuide.valid || !slopeReleaseHoldStartGuide.isSlope)
             TryRefreshSlopeTerminalStairGuide();
         ResolveSlopeTerminalTurn(out float sign, out string signSource);
-
         slopeReleaseHoldTurnPending = true;
         autoHoldTurnPending = true;
         slopeReleaseCommittedSlopeGuide = slopeReleaseHoldStartGuide;
         autoHoldTurnSign = sign;
         autoHoldTurnLeft = sign < 0f ? autoHoldLastLeft : Vector3.zero;
-        autoHoldInnerErrorAtCommit = Vector3.Dot(
-            rb.position - autoHoldLastInnerLinePoint, autoHoldLastLeft);
+        autoHoldInnerErrorAtCommit = Vector3.Dot( rb.position - autoHoldLastInnerLinePoint, autoHoldLastLeft);
         autoHoldEdgeSampleValid = false;
         pendingTurnFromPassedSlope = false;
         pendingTurnDegrees = sign * QuarterTurnDegrees;
@@ -9336,13 +6534,10 @@ public float AdvancePredictedSplineDriveReadOnly(
         StopEdgeCruise("early B release");
         ClearPostAutoHoldLeftEdge();
         CapturePendingTurnSnapshot();
-        // A correction belonging to the PREVIOUS turn must not veto the
-        // newly released B command. Relinquish only its controller state;
-        // do not reposition the ball or overwrite Rigidbody velocity.
+        // A correction belonging to the PREVIOUS turn must not veto the newly released B command. Relinquish only its controller state; do not reposition the ball or overwrite
+        // Rigidbody velocity.
         if (fiveLineCorrectionActive || fiveLineCorrectionPending)
-            SlopeReleaseHoldLog("EARLY PRIOR FIVELINE RELEASED",
-                $"active={fiveLineCorrectionActive} " +
-                $"pending={fiveLineCorrectionPending}; velocity untouched");
+            SlopeReleaseHoldLog("EARLY PRIOR FIVELINE RELEASED", $"active={fiveLineCorrectionActive} " + $"pending={fiveLineCorrectionPending}; velocity untouched");
         fiveLineCorrectionActive = false;
         fiveLineCorrectionPending = false;
         fiveLineCorrectionElapsed = 0f;
@@ -9350,92 +6545,71 @@ public float AdvancePredictedSplineDriveReadOnly(
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
         RequestTurnHandoffForPendingIntent();
-        SlopeReleaseHoldLog("EARLY TURN QUEUED",
-            $"stair={slopeReleaseTerminalStairCollider.name} " +
-            $"sign={sign:+0;-0} source={signSource}; " +
-            "physical support and visual readiness control execution; " +
-            "no exit-line/window/ray search");
+        SlopeReleaseHoldLog("EARLY TURN QUEUED", $"stair={slopeReleaseTerminalStairCollider.name} " + $"sign={sign:+0;-0} source={signSource}; " +
+            "physical support and visual readiness control execution; " + "no exit-line/window/ray search");
         ResetAutoHoldObservation(false);
     }
-
-    // A verified owner stair can be left during the visual pose handoff.
-    // Its immediate, supported exit flat can finish that SAME reservation
-    // for a short time; otherwise wait for owner-stair contact as before.
+    // A verified owner stair can be left during the visual pose handoff. Its immediate, supported exit flat can finish that SAME reservation for a short time; otherwise wait for
+    // owner-stair contact as before.
     bool IsSlopeEarlyTurnReady(out string reason)
     {
         reason = "waiting for close physical support on transferred stair";
-        if (!rb || !slopeReleaseTerminalStairCollider ||
-            !slopeReleaseTerminalStairCollider.enabled)
+        if (!rb || !slopeReleaseTerminalStairCollider || !slopeReleaseTerminalStairCollider.enabled)
             return false;
         if (TryGetSlopeTerminalSupport(out RaycastHit floor))
         {
             reason = $"physical owner={floor.collider.name}; close support confirmed";
             return true;
         }
-        if (slopeTerminalLastOwnerSupportAt < 0f ||
-            Time.time - slopeTerminalLastOwnerSupportAt >
+        if (slopeTerminalLastOwnerSupportAt < 0f || Time.time - slopeTerminalLastOwnerSupportAt >
                 SlopeTerminalSuccessorFlatGraceSeconds)
             return false;
         var successor = HasGroundSupport();
-        if (!successor.Item1 ||
-            !IsSlopeTerminalSuccessorFlat(successor.Item2))
+        if (!successor.Item1 || !IsSlopeTerminalSuccessorFlat(successor.Item2))
             return false;
-        reason = $"verified owner exit onto {successor.Item2.collider.name}; " +
-            "short visual handoff grace";
+        reason = $"verified owner exit onto {successor.Item2.collider.name}; " + "short visual handoff grace";
         return true;
     }
-
     bool IsSlopeReleaseHoldOnVerifiedFlat(bool grounded, RaycastHit hit)
     {
         if (!slopeReleaseHoldNextFlatCollider || !rb)
             return false;
-        if (grounded &&
-            IsVerifiedPhysicalReceivingFlat(hit, rb.worldCenterOfMass,
-                slopeReleaseHoldNextFlatCollider, slopeReleaseHoldNextFlatY))
+        if (grounded && IsVerifiedPhysicalReceivingFlat(hit, rb.worldCenterOfMass, slopeReleaseHoldNextFlatCollider, slopeReleaseHoldNextFlatY))
             return true;
-
-        // From the successful flat->slope->flat hold experiments: a ball can
-        // briefly be above its landing flat. Permit ONLY a very short grace
-        // after confirmed support and only while a stage floor is still below.
-        if (slopeReleaseHoldLastFlatSupportTime < 0f ||
-            Time.time - slopeReleaseHoldLastFlatSupportTime > .10f ||
-            !slopeReleaseHoldNextFlatCollider.enabled)
+        // From the successful flat->slope->flat hold experiments: a ball can briefly be above its landing flat. Permit ONLY a very short grace after confirmed support and only while
+        // a stage floor is still below.
+        if (slopeReleaseHoldLastFlatSupportTime < 0f || Time.time - slopeReleaseHoldLastFlatSupportTime > .10f || !slopeReleaseHoldNextFlatCollider.enabled)
             return false;
         Vector3 delta = rb.position - slopeReleaseHoldLastFlatSupportPosition;
-        if (Vector3.ProjectOnPlane(delta, Vector3.up).magnitude > 2.8f ||
-            Mathf.Abs(delta.y) > 1.2f)
+        if (Vector3.ProjectOnPlane(delta, Vector3.up).magnitude > 2.8f || Mathf.Abs(delta.y) > 1.2f)
             return false;
-        return TryFindVerifiedPhysicalReceivingFlat(
-            slopeReleaseHoldNextFlatY,
-            slopeReleaseHoldNextFlatCollider, out _);
+        return TryFindVerifiedPhysicalReceivingFlat( slopeReleaseHoldNextFlatY, slopeReleaseHoldNextFlatCollider, out _);
     }
-
     bool TryCommitSlopeReleaseHoldOnFlat()
     {
-        if (!slopeReleaseHoldArmed || !autoHoldEligible || !rb ||
-            rb.isKinematic || MainGameManager.OnDead ||
-            !BeginCommandOnTouch || !Earliest || !AcceleFirstTurn ||
+        if (!slopeReleaseHoldArmed || !autoHoldEligible || !rb || rb.isKinematic || MainGameManager.OnDead || !BeginCommandOnTouch || !Earliest || !AcceleFirstTurn ||
             turnTransitionActive || waitingForTurnGuide || HasPendingTurnIntent)
             return false;
-
-        // Update may receive MouseUp/Touch.Ended before the next FixedUpdate.
-        // Re-evaluate at the physical release position to avoid a lost frame.
+        // Update may receive MouseUp/Touch.Ended before the next FixedUpdate. Re-evaluate at the physical release position to avoid a lost frame.
         if (knotDetector)
             ObserveSlopeReleaseHoldGuide(knotDetector.Evaluate(rb.position));
-        if (!slopeReleaseHoldNextFlatSeen || !slopeReleaseHoldNextFlatCollider)
+        // The collision observer already proved entry to ArcSlab(N+1). A later floor ray may hit an edge of that same physical phase.
+        bool observedNextFlat = autoHoldNextFlatReady && TryGetStageFamily(autoHoldNextFlatCollider, "ArcSlab", out int observedFamily) &&
+            observedFamily == slopeReleaseOriginStairFamily + 1;
+        if ((!slopeReleaseHoldNextFlatSeen || !slopeReleaseHoldNextFlatCollider) && !observedNextFlat)
             return false;
-
         var support = HasGroundSupport();
-        if (!IsSlopeReleaseHoldOnVerifiedFlat(support.Item1, support.Item2))
+        bool supportedNextPhase = observedNextFlat && support.Item1 && TryGetStageFamily(support.Item2.collider, "ArcSlab", out int supportedFamily) &&
+            supportedFamily == slopeReleaseOriginStairFamily + 1;
+        if (!IsSlopeReleaseHoldOnVerifiedFlat(support.Item1, support.Item2) && !supportedNextPhase)
         {
-            SlopeReleaseHoldLog("RELEASE REJECTED",
-                $"not on verified next flat; hit={(support.Item2.collider ? support.Item2.collider.name : "-")}");
+            SlopeReleaseHoldLog("RELEASE REJECTED", $"not on verified next flat; hit={(support.Item2.collider ? support.Item2.collider.name : "-")}");
             return false;
         }
-
-        // The release on a verified receiving flat owns this B command.
-        // Prefer the known next-slope sign, but a brief Guide disagreement
-        // must not turn an accepted MouseUp into an indefinite hold.
+        if (supportedNextPhase)
+            slopeReleaseHoldNextFlatCollider = autoHoldNextFlatCollider;
+        // The release on a verified receiving flat owns this B command. Prefer the known next-slope sign, but a brief Guide disagreement must not turn an accepted MouseUp into an
+        // indefinite hold.
         if (!TryResolveAutoHoldTurnSign(out float sign, out string signSource))
         {
             sign = -1f;
@@ -9445,34 +6619,26 @@ public float AdvancePredictedSplineDriveReadOnly(
         bool innerTurn = sign < 0f;
         autoHoldTurnSign = sign;
         autoHoldTurnLeft = innerTurn ? autoHoldLastLeft : Vector3.zero;
-        autoHoldInnerErrorAtCommit = Vector3.Dot(
-            rb.position - autoHoldLastInnerLinePoint, autoHoldLastLeft);
+        autoHoldInnerErrorAtCommit = Vector3.Dot( rb.position - autoHoldLastInnerLinePoint, autoHoldLastLeft);
         autoHoldEdgeSampleValid = false;
-        if (innerTurn && TryResolveAutoHoldEdge(autoHoldTurnLeft, out Vector3 edge))
+        if (innerTurn && !IsPostExtremeNoLeftEdgeActive(support.Item2.collider) && TryResolveAutoHoldEdge(autoHoldTurnLeft, out Vector3 edge))
         {
             autoHoldEdgeSample = edge;
             autoHoldEdgeSampleValid = true;
         }
-
-        // The original long-hold commit preserves its edge snapshot through
-        // Handoff, and the post-turn correction is limited to the next slope.
+        // The original long-hold commit preserves its edge snapshot through Handoff, and the post-turn correction is limited to the next slope.
         slopeReleaseHoldTurnPending = true;
         autoHoldTurnPending = true;
         slopeReleaseCommittedSlopeGuide = slopeReleaseHoldStartGuide;
         slopeReleaseStopStartFixedTime = -1f;
         slopeReleaseEscapeNextNoLaneLogFixedTime = 0f;
         slopeReleaseBeforeStopVelocity = rb.velocity;
-        // Use the actual measured pre-stop acceleration when available,
-        // blended with this frame's physical drive/steering demand.
+        // Use the actual measured pre-stop acceleration when available, blended with this frame's physical drive/steering demand.
         Vector3 commanded = Vector3.ProjectOnPlane(acceleration, Vector3.up);
-        slopeReleaseBeforeStopAcceleration = slopeReleaseLastSampleValid
-            ? Vector3.Lerp(commanded, slopeReleaseObservedAcceleration, .40f)
-            : commanded;
-        slopeReleaseBeforeStopAcceleration = Vector3.ClampMagnitude(
-            slopeReleaseBeforeStopAcceleration, 120f);
+        slopeReleaseBeforeStopAcceleration = slopeReleaseLastSampleValid ? Vector3.Lerp(commanded, slopeReleaseObservedAcceleration, .40f) : commanded;
+        slopeReleaseBeforeStopAcceleration = Vector3.ClampMagnitude( slopeReleaseBeforeStopAcceleration, 120f);
         bool committedAfterExtreme = slopeReleaseStartedAfterExtreme;
         bool reachedExtreme = slopeReleaseExtremeReachedWhileHeld;
-
         pendingTurnFromPassedSlope = false;
         pendingTurnDegrees = sign * QuarterTurnDegrees;
         pendingTurnQueuedTime = Time.time;
@@ -9482,123 +6648,84 @@ public float AdvancePredictedSplineDriveReadOnly(
         ClearPostAutoHoldLeftEdge();
         flickConsumed = true;
         CapturePendingTurnSnapshot();
-
-        // This release was made ON ArcSlab(N+1). The previously transferred
-        // StairWay(N) is no longer its physical turn owner. Reusing that old
-        // collider used to wait forever while the ball crossed StairWay(N+1).
+        // This release was made ON ArcSlab(N+1). The previously transferred StairWay(N) is no longer its physical turn owner. Reusing that old collider used to wait forever while the
+        // ball crossed StairWay(N+1).
         slopeReleaseTerminalStairCollider = null;
         slopeTerminalLastOwnerSupportAt = -1f;
-        // Share the existing B release's flat/seam handoff. This keeps one
-        // released reservation across a short visual wait and permits the
-        // physically adjacent StairWay(N+1), without waiting for its end.
+        // Share the existing B release's flat/seam handoff. This keeps one released reservation across a short visual wait and permits the physically adjacent StairWay(N+1), without
+        // waiting for its end.
         bReleaseHandoffFlat = slopeReleaseHoldNextFlatCollider;
         bReleaseOriginalHeading = NormalizeFlat(autoHoldLastForward, direction);
-        bReleaseForwardSpeed = Mathf.Clamp(
-            Vector3.Dot(rb.velocity, bReleaseOriginalHeading), 0f,
-            Mathf.Max(0f, maxGroundSpeed));
+        bReleaseForwardSpeed = Mathf.Clamp( Vector3.Dot(rb.velocity, bReleaseOriginalHeading), 0f, Mathf.Max(0f, maxGroundSpeed));
         bReleaseHandoffTime = Time.time;
         bReleaseLastVerifiedPosition = rb.position;
         bReleaseHandoffActive = bReleaseHandoffFlat;
         bReleaseNextLogTime = 0f;
-
-        // The old turn's lateral correction has no authority over a newly
-        // released B. Keep Rigidbody velocity and gravity untouched.
+        // The old turn's lateral correction has no authority over a newly released B. Keep Rigidbody velocity and gravity untouched.
         fiveLineCorrectionActive = false;
         fiveLineCorrectionPending = false;
         fiveLineCorrectionElapsed = 0f;
         fiveLineCorrectionTargetOffset = 0f;
         RequestTurnHandoffForPendingIntent();
-        ShowRouteGameSign("TURN QUEUED", "Verified flat - normal 90 deg turn",
-            new Color(.20f, 1f, .48f), 1.6f);
-        SlopeReleaseHoldLog("TURN QUEUED",
-            $"corner={(innerTurn ? "InCorner" : "OutCorner")} " +
-            $"half={(autoHoldLeftHalf ? "LEFT" : "RIGHT")} " +
-            $"sign={sign:+0;-0} signSource={signSource} angle=90 " +
-            $"postExtremePress={committedAfterExtreme} " +
-            $"extremeReached={reachedExtreme} " +
-            $"leftOffset={autoHoldLeftOffset:F3}m " +
-            $"innerError={autoHoldInnerErrorAtCommit:F3}m " +
-            $"velocity={rb.velocity:F3} " +
+        ShowRouteGameSign("TURN QUEUED", "Verified flat - normal 90 deg turn", new Color(.20f, 1f, .48f), 1.6f);
+        SlopeReleaseHoldLog("TURN QUEUED", $"corner={(innerTurn ? "InCorner" : "OutCorner")} " + $"half={(autoHoldLeftHalf ? "LEFT" : "RIGHT")} " +
+            $"sign={sign:+0;-0} signSource={signSource} angle=90 " + $"postExtremePress={committedAfterExtreme} " + $"extremeReached={reachedExtreme} " +
+            $"leftOffset={autoHoldLeftOffset:F3}m " + $"innerError={autoHoldInnerErrorAtCommit:F3}m " + $"velocity={rb.velocity:F3} " +
             $"preStopAccel={slopeReleaseBeforeStopAcceleration:F3}");
         ResetAutoHoldObservation(false);
         return true;
     }
-
-    // Other legacy edge/contact helpers below remain for the original
-    // physics support and downhill recovery; B phase timing uses collision
-    // family progression and release ownership alone.
-
+    // Other legacy edge/contact helpers below remain for the original physics support and downhill recovery; B phase timing uses collision family progression and release
+    // ownership alone.
     bool TryGetAutoHoldReceivingFlat(out Vector3 flatStart, out Vector3 forward)
     {
         flatStart = default;
         forward = Vector3.zero;
-        if (!knotDetector || !rb || !autoHoldLastSlopeGuide.valid ||
-            !knotDetector.TryGetFollowingFlatStart(autoHoldLastSlopeGuide,
-                out flatStart, out Vector3 flatTangent))
+        if (!knotDetector || !rb || !autoHoldLastSlopeGuide.valid || !knotDetector.TryGetFollowingFlatStart(autoHoldLastSlopeGuide, out flatStart, out Vector3 flatTangent))
             return false;
         forward = NormalizeFlat(autoHoldLastForward, direction);
         return Vector3.Dot(NormalizeFlat(flatTangent, forward), forward) > .80f;
     }
-
-    // Shared receiving-flat evidence. It verifies a real ArcSlab, never an
-    // upward-facing StairWay tread. No new turn intent is created here.
-    bool IsVerifiedPhysicalReceivingFlat(RaycastHit hit, Vector3 sample,
-        Collider expected, float physicalFlatY, float gapAllowance = .40f)
+    // Shared receiving-flat evidence. It verifies a real ArcSlab, never an upward-facing StairWay tread. No new turn intent is created here.
+    bool IsVerifiedPhysicalReceivingFlat(RaycastHit hit, Vector3 sample, Collider expected, float physicalFlatY, float gapAllowance = .40f)
     {
-        if (!TryGetStageFamily(hit.collider, "ArcSlab", out _) ||
-            (expected && hit.collider != expected) ||
-            Vector3.Angle(hit.normal, Vector3.up) > 18f ||
+        if (!TryGetStageFamily(hit.collider, "ArcSlab", out _) || (expected && hit.collider != expected) || Vector3.Angle(hit.normal, Vector3.up) > 18f ||
             Mathf.Abs(hit.point.y - physicalFlatY) > .32f)
             return false;
         float separation = Vector3.Dot(sample - hit.point, hit.normal);
-        return separation >= -.10f &&
-            separation <= ProbeRadius + gapAllowance;
+        return separation >= -.10f && separation <= ProbeRadius + gapAllowance;
     }
-
-    bool TryFindVerifiedPhysicalReceivingFlat(float physicalFlatY,
-        Collider expected, out RaycastHit verified)
+    bool TryFindVerifiedPhysicalReceivingFlat(float physicalFlatY, Collider expected, out RaycastHit verified)
     {
         verified = default;
         if (!rb) return false;
         Vector3 centre = rb.worldCenterOfMass;
-        int count = Physics.RaycastNonAlloc(centre + Vector3.up * .05f,
-            Vector3.down, strictGroundCastHits,
-            probeDistance + ProbeRadius + .25f,
+        int count = Physics.RaycastNonAlloc(centre + Vector3.up * .05f, Vector3.down, strictGroundCastHits, probeDistance + ProbeRadius + .25f,
             groundMask, QueryTriggerInteraction.Ignore);
         float nearest = float.PositiveInfinity;
         for (int i = 0; i < count; ++i)
         {
             RaycastHit hit = strictGroundCastHits[i];
-            if (hit.distance >= nearest ||
-                !IsVerifiedPhysicalReceivingFlat(hit, centre, expected,
-                    physicalFlatY)) continue;
+            if (hit.distance >= nearest || !IsVerifiedPhysicalReceivingFlat(hit, centre, expected, physicalFlatY)) continue;
             nearest = hit.distance;
             verified = hit;
         }
         return verified.collider;
     }
-
-    // A physical new-stair guide becomes reliable after the flat/stair seam.
-    // Neither an old flat tangent nor a guessed left/right direction is used.
+    // A physical new-stair guide becomes reliable after the flat/stair seam. Neither an old flat tangent nor a guessed left/right direction is used.
     bool TryRefreshSlopeTerminalStairGuide()
     {
-        if (!rb || !knotDetector || !slopeReleaseTerminalStairCollider ||
-            !TryGetSlopeTerminalSupport(out RaycastHit floor))
+        if (!rb || !knotDetector || !slopeReleaseTerminalStairCollider || !TryGetSlopeTerminalSupport(out RaycastHit floor))
             return false;
         NearestKnotDetector.GuideFrame live = knotDetector.Evaluate(rb.position);
-        if (!live.valid || !live.isSlope ||
-            Vector3.ProjectOnPlane(live.point - rb.position,
-                Vector3.up).magnitude >
-                    Mathf.Max(4f, autoHoldExitWidthTolerance + ProbeRadius) ||
-            Mathf.Abs(live.point.y - rb.position.y) > 3.0f)
+        if (!live.valid || !live.isSlope || Vector3.ProjectOnPlane(live.point - rb.position, Vector3.up).magnitude >
+                    Mathf.Max(4f, autoHoldExitWidthTolerance + ProbeRadius) || Mathf.Abs(live.point.y - rb.position.y) > 3.0f)
             return false;
-        Vector3 tangent = live.tangent.y > .02f
-            ? -live.tangent : live.tangent;
+        Vector3 tangent = live.tangent.y > .02f ? -live.tangent : live.tangent;
         Vector3 downhill = NormalizeFlat(tangent, Vector3.down);
         if (downhill.sqrMagnitude < Eps)
             return false;
-        bool changed = !slopeReleaseHoldStartGuide.valid ||
-            !knotDetector.IsSameSection(slopeReleaseHoldStartGuide, live);
+        bool changed = !slopeReleaseHoldStartGuide.valid || !knotDetector.IsSameSection(slopeReleaseHoldStartGuide, live);
         if (changed)
         {
             slopeReleaseHoldStartGuide = live;
@@ -9610,14 +6737,10 @@ public float AdvancePredictedSplineDriveReadOnly(
             autoHoldLastInnerLinePoint = live.point;
             autoHoldPredictedTurnSignValid = false;
             slopeReleaseHoldMaxProgress = live.sectionProgress01;
-            SlopeReleaseHoldLog("TERMINAL STAIR GUIDE VERIFIED",
-                $"stair={floor.collider.name} " +
-                $"guideSection={live.sectionIndex} progress={live.sectionProgress01:F3}");
+            SlopeReleaseHoldLog("TERMINAL STAIR GUIDE VERIFIED", $"stair={floor.collider.name} " + $"guideSection={live.sectionIndex} progress={live.sectionProgress01:F3}");
         }
         return true;
     }
-
-
     void ClearBReleaseHandoff()
     {
         bReleasePhaseTurnCommitted = false;
@@ -9629,53 +6752,36 @@ public float AdvancePredictedSplineDriveReadOnly(
         bReleaseLastVerifiedPosition = Vector3.zero;
         bReleaseNextLogTime = 0f;
     }
-
-    // Legacy physical handoff witness for slope-start fallback transitions.
-    // A B request committed by a real phase change bypasses this floor gate.
+    // Legacy physical handoff witness for slope-start fallback transitions. A B request committed by a real phase change bypasses this floor gate.
     bool TryGetBReleaseReceivingSupport(out RaycastHit verified)
     {
         verified = default;
         bool queued = autoHoldTurnPending && bReleaseHandoffActive;
         Collider expected = queued ? bReleaseHandoffFlat : autoHoldNextFlatCollider;
-        if (!rb || !expected || !expected.enabled ||
-            !TryGetStageFamily(expected, "ArcSlab", out _) ||
-            (!queued && (!autoHoldNextFlatReady ||
-             autoHoldNextFlatLastSupportTime < 0f ||
-             Time.time - autoHoldNextFlatLastSupportTime > .20f)))
+        if (!rb || !expected || !expected.enabled || !TryGetStageFamily(expected, "ArcSlab", out _) || (!queued && (!autoHoldNextFlatReady ||
+             autoHoldNextFlatLastSupportTime < 0f || Time.time - autoHoldNextFlatLastSupportTime > .20f)))
             return false;
-
         Vector3 flatStart = default;
         Vector3 forward;
         if (!queued)
         {
-            if (!TryGetAutoHoldReceivingFlat(out flatStart, out forward) ||
-                Vector3.Dot(rb.position - flatStart, forward) < -ProbeRadius)
+            if (!TryGetAutoHoldReceivingFlat(out flatStart, out forward) || Vector3.Dot(rb.position - flatStart, forward) < -ProbeRadius)
                 return false;
         }
         else
             forward = NormalizeFlat(bReleaseOriginalHeading, direction);
-
         Vector3 centre = rb.worldCenterOfMass;
         Vector3 side = Vector3.Cross(Vector3.up, forward).normalized;
         for (int i = 0; i < 4; ++i)
         {
-            Vector3 offset = i == 0 ? Vector3.zero :
-                i == 1 ? -forward * (ProbeRadius * .35f) :
-                i == 2 ? side * (ProbeRadius * .35f) :
-                         -side * (ProbeRadius * .35f);
+            Vector3 offset = i == 0 ? Vector3.zero : i == 1 ? -forward * (ProbeRadius * .35f) : i == 2 ? side * (ProbeRadius * .35f) : -side * (ProbeRadius * .35f);
             Vector3 sample = centre + offset;
             Ray ray = new Ray(sample + Vector3.up * .45f, Vector3.down);
-            if (!expected.Raycast(ray, out RaycastHit hit,
-                    probeDistance + ProbeRadius + .95f) ||
-                hit.collider != expected ||
-                !IsAutoHoldStageHit(hit, float.NaN) ||
-                !IsVerifiedPhysicalReceivingFlat(hit, sample, expected,
-                    queued ? hit.point.y : flatStart.y))
+            if (!expected.Raycast(ray, out RaycastHit hit, probeDistance + ProbeRadius + .95f) || hit.collider != expected || !IsAutoHoldStageHit(hit, float.NaN) ||
+                !IsVerifiedPhysicalReceivingFlat(hit, sample, expected, queued ? hit.point.y : flatStart.y))
                 continue;
-
             verified = hit;
-            // Reuse the existing B timestamp as last *verified* support time.
-            // The original queue time remains in pendingTurnQueuedTime.
+            // Reuse the existing B timestamp as last *verified* support time. The original queue time remains in pendingTurnQueuedTime.
             if (queued)
             {
                 bReleaseHandoffTime = Time.time;
@@ -9685,57 +6791,37 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return false;
     }
-
-    // The release gesture and turn sign were verified ONCE on an exact ArcSlab.
-    // After that, the nearest Guide/SphereCast may oscillate between that slab
-    // and StairWay(N). Only real contact with the SAME stage family extends the
-    // verified corridor. Do not invalidate a turn on elapsed 0.18s or 0.85m
-    // alone, and never accept another stage or a free-floating spline.
-    bool TryGetCommittedBReleaseTurnSupport(out RaycastHit support,
-        out bool onSeam)
+    // The release gesture and turn sign were verified ONCE on an exact ArcSlab. and StairWay(N). Only real contact with the SAME stage family extends the verified corridor. Do
+    // not invalidate a turn on elapsed 0.18s or 0.85m alone, and never accept another stage or a free-floating spline.
+    bool TryGetCommittedBReleaseTurnSupport(out RaycastHit support, out bool onSeam)
     {
         support = default;
         onSeam = false;
-        if (!autoHoldTurnPending || !bReleaseHandoffActive ||
-            !rb || rb.isKinematic ||
-            !bReleaseHandoffFlat || !bReleaseHandoffFlat.enabled ||
-            pendingTurnQueuedTime < 0f ||
-            Time.time - pendingTurnQueuedTime > BReleaseCommittedHandoffMaxSeconds ||
-            !TryGetStageFamily(bReleaseHandoffFlat, "ArcSlab", out int family))
+        if (!autoHoldTurnPending || !bReleaseHandoffActive || !rb || rb.isKinematic || !bReleaseHandoffFlat || !bReleaseHandoffFlat.enabled || pendingTurnQueuedTime < 0f ||
+            Time.time - pendingTurnQueuedTime > BReleaseCommittedHandoffMaxSeconds || !TryGetStageFamily(bReleaseHandoffFlat, "ArcSlab", out int family))
             return false;
-
         // The exact receiving flat remains the strongest evidence.
         if (TryGetBReleaseReceivingSupport(out support))
             return true;
-
-        // A genuine adjacent stair is valid only near the original physical
-        // flat, within the short *total* visual wait, and while still moving
-        // in the old authorized heading (not backwards to an old stair).
+        // A genuine adjacent stair is valid only near the original physical flat, within the short *total* visual wait, and while still moving in the old authorized heading (not
+        // backwards to an old stair).
         Vector3 heading = NormalizeFlat(bReleaseOriginalHeading, direction);
         Vector3 centre = rb.worldCenterOfMass;
         var physical = HasGroundSupport();
         RaycastHit physicalHit = physical.Item2;
-        bool close = physical.Item1 && physicalHit.collider &&
-            IsCloseGroundRay(physicalHit, centre);
-
-        // A SphereCast may choose a mesh seam with a distant contact point,
-        // even while its collider name is correct. Verify nearby real stage
-        // surface with existing stage-filtered ground rays instead.
+        bool close = physical.Item1 && physicalHit.collider && IsCloseGroundRay(physicalHit, centre);
+        // A SphereCast may choose a mesh seam with a distant contact point, even while its collider name is correct. Verify nearby real stage surface with existing stage-filtered
+        // ground rays instead.
         if (!close || !IsCommittedBReceivingFamilyHit(physicalHit, family))
         {
             close = false;
             Vector3 side = Vector3.Cross(Vector3.up, heading).normalized;
             for (int i = 0; i < 5; ++i)
             {
-                Vector3 offset = i == 0 ? Vector3.zero :
-                    i == 1 ? heading * (ProbeRadius * .30f) :
-                    i == 2 ? -heading * (ProbeRadius * .30f) :
-                    i == 3 ? side * (ProbeRadius * .30f) :
-                             -side * (ProbeRadius * .30f);
+                Vector3 offset = i == 0 ? Vector3.zero : i == 1 ? heading * (ProbeRadius * .30f) : i == 2 ? -heading * (ProbeRadius * .30f) :
+                    i == 3 ? side * (ProbeRadius * .30f) : -side * (ProbeRadius * .30f);
                 Vector3 sample = centre + offset;
-                if (!TryAutoHoldGroundRay(sample, out RaycastHit ray) ||
-                    !IsCloseGroundRay(ray, sample) ||
-                    !IsCommittedBReceivingFamilyHit(ray, family))
+                if (!TryAutoHoldGroundRay(sample, out RaycastHit ray) || !IsCloseGroundRay(ray, sample) || !IsCommittedBReceivingFamilyHit(ray, family))
                     continue;
                 physicalHit = ray;
                 close = true;
@@ -9744,68 +6830,46 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         if (!close)
             return false;
-
         Vector3 movement = rb.position - bReleaseLastVerifiedPosition;
         float along = Vector3.Dot(movement, heading);
-        float lateral = Vector3.Dot(movement,
-            Vector3.Cross(Vector3.up, heading).normalized);
-        float planarDistance = Vector3.ProjectOnPlane(movement,
-            Vector3.up).magnitude;
-        float reverseSpeed = Vector3.Dot(Vector3.ProjectOnPlane(
-            rb.velocity, Vector3.up), heading);
-
-        if (planarDistance > BReleaseCommittedPhysicalCorridorMeters ||
-            Mathf.Abs(lateral) > BReleaseCommittedLateralDriftMeters ||
-            Mathf.Abs(movement.y) > BReleaseCommittedVerticalMeters ||
-            along < -ProbeRadius ||
-            along > BReleaseCommittedPhysicalCorridorMeters ||
-            reverseSpeed < -2f)
+        float lateral = Vector3.Dot(movement, Vector3.Cross(Vector3.up, heading).normalized);
+        float planarDistance = Vector3.ProjectOnPlane(movement, Vector3.up).magnitude;
+        float reverseSpeed = Vector3.Dot(Vector3.ProjectOnPlane( rb.velocity, Vector3.up), heading);
+        if (planarDistance > BReleaseCommittedPhysicalCorridorMeters || Mathf.Abs(lateral) > BReleaseCommittedLateralDriftMeters ||
+            Mathf.Abs(movement.y) > BReleaseCommittedVerticalMeters || along < -ProbeRadius || along > BReleaseCommittedPhysicalCorridorMeters || reverseSpeed < -2f)
             return false;
-
         support = physicalHit;
         onSeam = physicalHit.collider != bReleaseHandoffFlat;
         return true;
     }
-
-    // Only the committed flat (N) or its immediately receiving stair (N)
-    // can prove continuation. Stage-family comparison is based on a real
-    // collider hit, never a nearest-Spline suggestion.
+    // Only the committed flat (N) or its immediately receiving stair (N) can prove continuation. Stage-family comparison is based on a real collider hit, never a nearest-Spline
+    // suggestion.
     bool IsCommittedBReceivingFamilyHit(RaycastHit hit, int family)
     {
-        if (!hit.collider ||
-            Vector3.Angle(hit.normal, Vector3.up) > maxSlopeAngle)
+        if (!hit.collider || Vector3.Angle(hit.normal, Vector3.up) > maxSlopeAngle)
             return false;
         if (hit.collider == bReleaseHandoffFlat)
             return Vector3.Angle(hit.normal, Vector3.up) <= 18f;
-        return TryGetStageFamily(hit.collider, "StairWay", out int stair) &&
-            stair == family;
+        return TryGetStageFamily(hit.collider, "StairWay", out int stair) && stair == family;
     }
-
-    // On an actual verified ArcSlab, estimate the nearest physical forward
-    // exit. Do not use Spline length as a fake collision distance. The scan
-    // is only performed while one committed B turn awaits the visual handoff.
-    bool TryMeasureBReleaseFlatExitDistance(Collider expected,
-        Vector3 heading, out float edgeDistance)
+    // Measure the actual ArcSlab forward lip for committed B handoff or a released flat-tap micro nearing its turn. Do not use Spline length as collision distance.
+    bool TryMeasureBReleaseFlatExitDistance(Collider expected, Vector3 heading, out float edgeDistance, float maxLookAhead = 1.50f, bool requireCentreOnSlab = false)
     {
         edgeDistance = 0f;
         if (!expected || !rb) return false;
         Vector3 centre = rb.worldCenterOfMass;
         const float step = .15f;
-        const float maxLookAhead = 1.50f;
         bool confirmedInside = false;
         for (float d = 0f; d <= maxLookAhead + .001f; d += step)
         {
             Vector3 origin = centre + heading * d + Vector3.up * .45f;
             RaycastHit hit;
-            bool onSlab = expected.Raycast(new Ray(origin, Vector3.down),
-                    out hit, probeDistance + ProbeRadius + 1.0f) &&
-                hit.collider == expected &&
+            bool onSlab = expected.Raycast(new Ray(origin, Vector3.down), out hit, probeDistance + ProbeRadius + 1.0f) && hit.collider == expected &&
                 Vector3.Angle(hit.normal, Vector3.up) <= 18f;
             if (!onSlab)
             {
-                // The verified support can be at the rear/side of the
-                // sphere while its centre already overhangs the lip.
-                // In that case the remaining central braking room is zero.
+                if (!confirmedInside && requireCentreOnSlab) return false;
+                // The verified support can be at the rear/side of the sphere while its centre already overhangs the lip. In that case the remaining central braking room is zero.
                 edgeDistance = confirmedInside ? Mathf.Max(0f, d - step) : 0f;
                 return true;
             }
@@ -9813,158 +6877,109 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         return false; // No physical exit within 1.5m: ordinary speed remains.
     }
-
-    // Waiting for BallVisual/Handoff is NOT an opportunity to steer with an
-    // old perpendicular spline or to brake both components to zero.
-    // This handles only the genuine, still-supported receiving flat.
+    // Waiting for BallVisual/Handoff is NOT an opportunity to steer with an old perpendicular spline or to brake both components to zero. This handles only the genuine,
+    // still-supported receiving flat.
     bool StepPendingBReleaseHandoff()
     {
-        // Phase-authorized B owns its timing. In particular, do not use the
-        // old five-ray floor/edge search to hold or expire this turn.
+        // Phase-authorized B owns its timing. In particular, do not use the old five-ray floor/edge search to hold or expire this turn.
         if (bReleasePhaseTurnCommitted)
             return false;
-        if (!bReleaseHandoffActive || !autoHoldTurnPending ||
-            !HasPendingTurnIntent || turnTransitionActive ||
-            waitingForTurnGuide || !BeginCommandOnTouch ||
+        if (!bReleaseHandoffActive || !autoHoldTurnPending || !HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide || !BeginCommandOnTouch ||
             !rb || rb.isKinematic)
             return false;
-
-        if (!TryGetCommittedBReleaseTurnSupport(out RaycastHit floor,
-                out bool onSeam))
+        if (!TryGetCommittedBReleaseTurnSupport(out RaycastHit floor, out bool onSeam))
         {
             float elapsed = Time.time - pendingTurnQueuedTime;
-            // This is a real route conflict, unlike a temporary missed ray.
-            // Do not wait for an unrelated stage or allow a turn in freefall.
-            bool differentStage = TryGetRouteContact(out RaycastHit witness) &&
-                TryGetStageFamily(bReleaseHandoffFlat, "ArcSlab", out int expected) &&
-                ((TryGetStageFamily(witness.collider, "StairWay", out int actualStair) &&
-                  actualStair != expected && actualStair != expected - 1) ||
-                 (TryGetStageFamily(witness.collider, "ArcSlab", out int actualFlat) &&
-                  actualFlat != expected));
-            bool beyondBudget = pendingTurnQueuedTime < 0f ||
-                elapsed > BReleaseCommittedHandoffMaxSeconds;
+            // This is a real route conflict, unlike a temporary missed ray. Do not wait for an unrelated stage or allow a turn in freefall.
+            bool differentStage = TryGetRouteContact(out RaycastHit witness) && TryGetStageFamily(bReleaseHandoffFlat, "ArcSlab", out int expected) &&
+                ((TryGetStageFamily(witness.collider, "StairWay", out int actualStair) && actualStair != expected && actualStair != expected - 1) ||
+                 (TryGetStageFamily(witness.collider, "ArcSlab", out int actualFlat) && actualFlat != expected));
+            bool beyondBudget = pendingTurnQueuedTime < 0f || elapsed > BReleaseCommittedHandoffMaxSeconds;
             if (!differentStage && !beyondBudget)
             {
-                SetRouteRecognitionState(RouteRecognitionState.TemporarilyLost,
-                    verifiedRouteFlat, "Committed B: awaiting same-stage physical proof");
+                SetRouteRecognitionState(RouteRecognitionState.TemporarilyLost, verifiedRouteFlat, "Committed B: awaiting same-stage physical proof");
                 if (Time.fixedTime >= bReleaseNextLogTime)
                 {
                     bReleaseNextLogTime = Time.fixedTime + .08f;
-                    AutoHoldLog("B COMMITTED SUPPORT WAIT",
-                        $"queuedAge={elapsed:F3}s " +
-                        $"expected={(bReleaseHandoffFlat ? bReleaseHandoffFlat.name : "-")} " +
-                        $"actual={(witness.collider ? witness.collider.name : "-")} " +
-                        $"pos={rb.position:F3}");
+                    AutoHoldLog("B COMMITTED SUPPORT WAIT", $"queuedAge={elapsed:F3}s " + $"expected={(bReleaseHandoffFlat ? bReleaseHandoffFlat.name : "-")} " +
+                        $"actual={(witness.collider ? witness.collider.name : "-")} " + $"pos={rb.position:F3}");
                 }
                 return true; // Preserve inertia/gravity; no blind turn.
             }
-            AutoHoldLog("B COMMITTED SUPPORT EXPIRED",
-                $"queuedAge={elapsed:F3}s differentStage={differentStage} " +
-                $"actual={(witness.collider ? witness.collider.name : "-")} " +
-                $"pos={rb.position:F3}; no unverified turn");
+            AutoHoldLog("B COMMITTED SUPPORT EXPIRED", $"queuedAge={elapsed:F3}s differentStage={differentStage} " +
+                $"actual={(witness.collider ? witness.collider.name : "-")} " + $"pos={rb.position:F3}; no unverified turn");
             ExpirePendingTurnIntent();
             return false;
         }
-
         if (onSeam)
         {
-            // This is the physically contiguous next stair, not a distant
-            // guide. Preserve gravity/descent; the turn can begin as soon as
-            // the existing visual handoff is ready.
+            // This is the physically contiguous next stair, not a distant guide. Preserve gravity/descent; the turn can begin as soon as the existing visual handoff is ready.
             if (Time.fixedTime >= bReleaseNextLogTime)
             {
                 bReleaseNextLogTime = Time.fixedTime + .08f;
-                AutoHoldLog("B COMMITTED SEAM WAIT",
-                    $"stair={floor.collider.name} " +
-                    $"queuedAge={Time.time - pendingTurnQueuedTime:F3}s " +
-                    $"pos={rb.position:F3}");
+                AutoHoldLog("B COMMITTED SEAM WAIT", $"stair={floor.collider.name} " + $"queuedAge={Time.time - pendingTurnQueuedTime:F3}s " + $"pos={rb.position:F3}");
             }
             return true;
         }
-
-        // Do not apply flat-floor braking after the ball actually entered
-        // StairWay(N), even if one rear ray still hits ArcSlab(N).
+        // Do not apply flat-floor braking after the ball actually entered StairWay(N), even if one rear ray still hits ArcSlab(N).
         var currentContact = HasGroundSupport();
-        if (!currentContact.Item1 ||
-            currentContact.Item2.collider != bReleaseHandoffFlat ||
-            !IsCloseGroundRay(currentContact.Item2, rb.worldCenterOfMass) ||
+        if (!currentContact.Item1 || currentContact.Item2.collider != bReleaseHandoffFlat || !IsCloseGroundRay(currentContact.Item2, rb.worldCenterOfMass) ||
             Vector3.Angle(currentContact.Item2.normal, Vector3.up) > 18f)
             return true;
-
         Vector3 heading = NormalizeFlat(bReleaseOriginalHeading, direction);
         Vector3 planar = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
         float along = Vector3.Dot(planar, heading);
-        float target = Mathf.Clamp(bReleaseForwardSpeed, 0f,
-            Mathf.Min(BReleaseHandoffSpeedCeiling,
-                Mathf.Max(0f, maxGroundSpeed)));
-
-        // Former handoff maintained full forward speed even within centimetres
-        // of the lip. Brake only when the exact physical flat has a measured
-        // exit nearby, allowing the visual handoff to finish before departure.
+        float target = Mathf.Clamp(bReleaseForwardSpeed, 0f, Mathf.Min(BReleaseHandoffSpeedCeiling, Mathf.Max(0f, maxGroundSpeed)));
+        // Former handoff maintained full forward speed even within centimetres of the lip. Brake only when the exact physical flat has a measured exit nearby, allowing the visual
+        // handoff to finish before departure.
         float edgeDistance = -1f;
-        if (TryMeasureBReleaseFlatExitDistance(bReleaseHandoffFlat,
-                heading, out float measuredEdge))
+        if (TryMeasureBReleaseFlatExitDistance(bReleaseHandoffFlat, heading, out float measuredEdge))
         {
             edgeDistance = measuredEdge;
-            float brakingRoom = Mathf.Max(0f,
-                measuredEdge - ProbeRadius * .70f);
+            float brakingRoom = Mathf.Max(0f, measuredEdge - ProbeRadius * .70f);
             float safeSpeed = Mathf.Sqrt(2f *
                 BReleaseHandoffBrakeAcceleration * brakingRoom);
             target = Mathf.Min(target, safeSpeed);
         }
-        float forward = Mathf.MoveTowards(along, target,
-            BReleaseHandoffBrakeAcceleration * Time.fixedDeltaTime);
+        float forward = Mathf.MoveTowards(along, target, BReleaseHandoffBrakeAcceleration * Time.fixedDeltaTime);
         Vector3 sideVelocity = planar - heading * along;
-        Vector3 side = Vector3.MoveTowards(sideVelocity, Vector3.zero,
-            BReleaseHandoffSideAcceleration * Time.fixedDeltaTime);
-        rb.velocity = heading * Mathf.Max(0f, forward) + side +
-            Vector3.up * rb.velocity.y;
+        Vector3 side = Vector3.MoveTowards(sideVelocity, Vector3.zero, BReleaseHandoffSideAcceleration * Time.fixedDeltaTime);
+        rb.velocity = heading * Mathf.Max(0f, forward) + side + Vector3.up * rb.velocity.y;
         LateralAuditMarkVelocityWriter("BReleaseHandoff");
         GuideWaitBalanceSpin(true, floor.normal);
         stickState = Mathf.Min(stickState, Mathf.Max(0f, flatStick));
         if (Time.fixedTime >= bReleaseNextLogTime)
         {
             bReleaseNextLogTime = Time.fixedTime + .08f;
-            Debug.Log($"[B RELEASE HANDOFF] t={Time.fixedTime:F3} " +
-                $"forward={forward:F2} target={target:F2} " +
-                $"edge={edgeDistance:F2}m " +
-                $"sideBefore={sideVelocity.magnitude:F2} sideAfter={side.magnitude:F2} " +
-                $"floor={floor.collider.name} queuedAt={pendingTurnQueuedTime:F3} " +
+            Debug.Log($"[B RELEASE HANDOFF] t={Time.fixedTime:F3} " + $"forward={forward:F2} target={target:F2} " + $"edge={edgeDistance:F2}m " +
+                $"sideBefore={sideVelocity.magnitude:F2} sideAfter={side.magnitude:F2} " + $"floor={floor.collider.name} queuedAt={pendingTurnQueuedTime:F3} " +
                 $"lastVerified={bReleaseHandoffTime:F3}", this);
         }
         return true;
     }
-
     // B-only entry: authorized inside a mouse/touch release transaction.
-
     void ObserveAutoHoldGuide(NearestKnotDetector.GuideFrame guide)
     {
         if (!autoHoldEligible) return;
-        // A released flat B or stair micro waits for its physical next stage.
-        // Neither needs the finger held after MouseUp; the phase observer
-        // already owns the single pending release and its cancel conditions.
-        if (bHoldOriginFlatFamily >= 0 &&
-            (autoHoldNextFlatReady || flatStartReleaseCommitInProgress) &&
-            (!slopeReleaseHoldArmed || stairMicroPhaseTurnPending))
+        // A released flat B or stair micro waits for its physical next stage. Neither needs the finger held after MouseUp; the phase observer already owns the single pending release
+        // and its cancel conditions.
+        if (bHoldOriginFlatFamily >= 0 && (autoHoldNextFlatReady || flatStartReleaseCommitInProgress) && (!slopeReleaseHoldArmed || stairMicroPhaseTurnPending))
             return;
         if (slopeReleaseTerminalReleaseAt >= 0f)
         {
-            // Before the next stair arrives, the terminal observer has no
-            // owner yet. Keep watching physical contact despite MouseUp.
+            // Before the next stair arrives, the terminal observer has no owner yet. Keep watching physical contact despite MouseUp.
             if (slopeReleaseHoldArmed && !slopeReleaseTerminalStairCollider)
                 ObserveSlopeReleaseHoldGuide(guide);
             return;
         }
-        if (!autoInCornerHoldEnabled || !BeginCommandOnTouch || !Earliest ||
-            MainGameManager.OnDead || turnTransitionActive || waitingForTurnGuide ||
+        if (!autoInCornerHoldEnabled || !BeginCommandOnTouch || !Earliest || MainGameManager.OnDead || turnTransitionActive || waitingForTurnGuide ||
             HasPendingTurnIntent || generalStallRecovering)
         {
             CancelAutoHold("input/status changed");
             return;
         }
-        // In FixedUpdate the mouse button (or touch) can already be released
-        // before Update processes MouseUp/Ended. Do not erase the sequence
-        // just before the release handler has a chance to commit it.
+        // In FixedUpdate the mouse button (or touch) can already be released before Update processes MouseUp/Ended. Do not erase the sequence just before the release handler has a
+        // chance to commit it.
         if (!IsAutoHoldInputStillDown() && !IsAutoHoldReleaseAwaitingUpdate())
         {
             CancelAutoHold("input no longer down / canceled");
@@ -9978,44 +6993,33 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         if (bHoldOriginFlatFamily >= 0)
         {
-            // Once the original flat's family is known, the phase observer
-            // alone recognizes ArcSlab(N+1). Spline switches and downward
-            // rays may still guide normal motion, but cannot approve B.
-            if (guide.valid && guide.isSlope &&
-                (!autoHoldSawSlope || !autoHoldLastSlopeGuide.valid ||
-                 knotDetector.IsSameSection(autoHoldLastSlopeGuide, guide)))
+            // Once the original flat's family is known, the phase observer alone recognizes ArcSlab(N+1). Spline switches and downward rays may still guide normal motion, but cannot
+            // approve B.
+            if (guide.valid && guide.isSlope && (!autoHoldSawSlope || !autoHoldLastSlopeGuide.valid || knotDetector.IsSameSection(autoHoldLastSlopeGuide, guide)))
                 ObserveAutoHoldSlope(guide);
             return;
         }
-        // Unknown press family: retain normal slope observation, but never
-        // invent a B phase from a receiving-floor search.
+        // Unknown press family: retain normal slope observation, but never invent a B phase from a receiving-floor search.
         if (guide.valid && guide.isSlope)
             ObserveAutoHoldSlope(guide);
     }
-
-    // Both physical halves can authorize a hold. A left geometric turn uses
-    // the successful InCorner UTurn; a right turn takes the OutCorner FiveLine
-    // path, preserving lateral position instead of snapping to the LEFT lip.
+    // Both physical halves can authorize a hold. A left geometric turn uses the successful InCorner UTurn; a right turn takes the OutCorner FiveLine path, preserving lateral
+    // position instead of snapping to the LEFT lip.
     void QueueAutoHoldHeldTurn(float lateral)
     {
-        // A execution is removed. The surviving observer is B's precondition;
-        // only MouseUp / Touch.Ended may queue a physical turn here.
+        // A execution is removed. The surviving observer is B's precondition; only MouseUp / Touch.Ended may queue a physical turn here.
         if (!flatStartReleaseCommitInProgress)
         {
             AutoHoldLog("A AUTO EXECUTION BLOCKED", "no B release event");
             return;
         }
-        if (!autoHoldEligible ||
-            (!autoHoldSawSlope && !bReleasePhaseTurnCommitted) ||
-            !autoHoldLastHalfValid ||
-            !rb || rb.isKinematic || HasPendingTurnIntent || turnTransitionActive ||
-            waitingForTurnGuide)
+        if (!autoHoldEligible || (!autoHoldSawSlope && !bReleasePhaseTurnCommitted) || !autoHoldLastHalfValid ||
+            !rb || rb.isKinematic || HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide)
         {
             CancelAutoHold("turn blocked");
             return;
         }
-        if (!TryResolveAutoHoldTurnSign(out float resolvedSign,
-                out string signSource))
+        if (!TryResolveAutoHoldTurnSign(out float resolvedSign, out string signSource))
         {
             resolvedSign = -1f;
             signSource = "B release default LEFT";
@@ -10023,13 +7027,11 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         autoHoldTurnSign = resolvedSign;
         bool innerTurn = autoHoldTurnSign < 0f;
-        autoHoldInnerErrorAtCommit = Vector3.Dot(
-            rb.position - autoHoldLastInnerLinePoint, autoHoldLastLeft);
+        autoHoldInnerErrorAtCommit = Vector3.Dot( rb.position - autoHoldLastInnerLinePoint, autoHoldLastLeft);
         autoHoldTurnLeft = innerTurn ? autoHoldLastLeft : Vector3.zero;
         autoHoldEdgeSampleValid = false;
         // Only the InCorner route uses a pre-turn LEFT physical edge.
-        if (innerTurn && !bReleasePhaseTurnCommitted &&
-            TryResolveAutoHoldEdge(autoHoldTurnLeft, out Vector3 edge))
+        if (innerTurn && !IsPostExtremeNoLeftEdgeActive(currentHit.collider) && !bReleasePhaseTurnCommitted && TryResolveAutoHoldEdge(autoHoldTurnLeft, out Vector3 edge))
         {
             autoHoldEdgeSample = edge;
             autoHoldEdgeSampleValid = true;
@@ -10043,81 +7045,57 @@ public float AdvancePredictedSplineDriveReadOnly(
         ResetTapEdge(); // Long Hold wins; no competing tap turn.
         flickConsumed = true; // A release must never generate another turn.
         CapturePendingTurnSnapshot();
-        // This MouseUp already won B ownership. A correction from the
-        // previous turn must not block its visual/physics handoff.
-        // No position or velocity snap is performed here.
+        // This MouseUp already won B ownership. A correction from the previous turn must not block its visual/physics handoff. No position or velocity snap is performed here.
         fiveLineCorrectionActive = false;
         fiveLineCorrectionPending = false;
         fiveLineCorrectionElapsed = 0f;
         fiveLineCorrectionTargetOffset = 0f;
         // This is the ONLY place an authorized B-release handoff is armed.
         bReleaseHandoffFlat = autoHoldNextFlatCollider;
-        bReleaseOriginalHeading = NormalizeFlat(
-            autoHoldPressConfirmedHeading, autoHoldLastForward);
-        bReleaseForwardSpeed = Mathf.Clamp(Vector3.Dot(
-            rb.velocity, bReleaseOriginalHeading), 0f,
-            Mathf.Max(0f, maxGroundSpeed));
+        bReleaseOriginalHeading = NormalizeFlat( autoHoldPressConfirmedHeading, autoHoldLastForward);
+        bReleaseForwardSpeed = Mathf.Clamp(Vector3.Dot( rb.velocity, bReleaseOriginalHeading), 0f, Mathf.Max(0f, maxGroundSpeed));
         bReleaseHandoffTime = Time.time;
         bReleaseLastVerifiedPosition = rb.position;
         bReleaseHandoffActive = bReleaseHandoffFlat;
         bReleaseNextLogTime = 0f;
         RequestTurnHandoffForPendingIntent();
-        AutoHoldLog(innerTurn ? "INCORNER COMMIT" : "OUTCORNER COMMIT",
-            $"direction={autoHoldTurnSign:+0;-0} signSource={signSource} " +
-            $"half={(autoHoldLeftHalf ? "LEFT" : "RIGHT")} " +
-            $"leftOffset={lateral:F3} innerError={autoHoldInnerErrorAtCommit:F3} " +
+        AutoHoldLog(innerTurn ? "INCORNER COMMIT" : "OUTCORNER COMMIT", $"direction={autoHoldTurnSign:+0;-0} signSource={signSource} " +
+            $"half={(autoHoldLeftHalf ? "LEFT" : "RIGHT")} " + $"leftOffset={lateral:F3} innerError={autoHoldInnerErrorAtCommit:F3} " +
             $"pos={rb.position:F3} vel={rb.velocity:F3}");
         ResetAutoHoldObservation(false);
     }
-
     public void TurnPlayerAndStageLeft()
     {
         QueueQuarterTurn(-1f);
     }
-
     public void TurnPlayerAndStageRight()
     {
         QueueQuarterTurn(1f);
     }
-
     // 既存UI/APIからfloat角度で呼ばれても、符号だけを使い必ず90度へ正規化する。
     public void BeginPlayerAndStageTurn(float playerAngle)
     {
         QueueQuarterTurn(playerAngle);
     }
-
-    // ================================================================
     // Pre-extreme steering: lateral acceleration only, no position teleport
-    // ================================================================
-    bool CanQueueEarlyFlick(bool pressStartedBeforeExtreme,
-        bool verifiedFlatStartOriginalStair = false)
+    bool CanQueueEarlyFlick(bool pressStartedBeforeExtreme, bool verifiedFlatStartOriginalStair = false)
     {
-        return (!flickStartedOnFlat || verifiedFlatStartOriginalStair) &&
-               rb && !rb.isKinematic && BeginCommandOnTouch && Earliest &&
-               !MainGameManager.OnDead && currentSupported &&
-               currentGuideValid && currentSurfaceValid && currentGuide.isSlope &&
-               (pressStartedBeforeExtreme ||
-                (currentGuide.sectionProgress01 < TargetProgress && !extremePointFiredInSection)) &&
-               !turnTransitionActive && !waitingForTurnGuide &&
-               !fiveLineCorrectionActive && !fiveLineCorrectionPending &&
-               !HasPendingTurnIntent &&
-               (!correspondSubject || !correspondSubject.IsVisualFrameTurning);
+        return (!flickStartedOnFlat || verifiedFlatStartOriginalStair) && rb && !rb.isKinematic && BeginCommandOnTouch && Earliest &&
+               !MainGameManager.OnDead && currentSupported && currentGuideValid && currentSurfaceValid && currentGuide.isSlope && (pressStartedBeforeExtreme ||
+                (currentGuide.sectionProgress01 < TargetProgress && !extremePointFiredInSection)) && !turnTransitionActive && !waitingForTurnGuide &&
+               !fiveLineCorrectionActive && !fiveLineCorrectionPending && !HasPendingTurnIntent && (!correspondSubject || !correspondSubject.IsVisualFrameTurning);
     }
-
     void QueueEarlyFlick(float x)
     {
         if (Mathf.Abs(x) <= Eps) return;
-        // Micro-flick is lateral steering. Its extra 90-degree permission,
-        // when present, belongs exclusively to the shared next-StairWay
-        // physical-phase reservation in TryQueueFlickFromPosition.
+        // Micro-flick is lateral steering. Its extra 90-degree permission, when present, belongs exclusively to the shared next-StairWay physical-phase reservation in
+        // TryQueueFlickFromPosition.
         if (flickStartedBeforeExtreme && currentGuide.sectionProgress01 >= TargetProgress)
             earlyFlickStartedAfterTarget = true;
-        pendingEarlyFlickSteps = Mathf.Clamp(
-            pendingEarlyFlickSteps + (x > 0f ? 1 : -1), -2, 2);
+        pendingEarlyFlickSteps = Mathf.Clamp( pendingEarlyFlickSteps + (x > 0f ? 1 : -1), -2, 2);
         if (logEarlyFlick)
             Debug.Log($"[EARLY FLICK] accepted x={x:F1} progress={currentGuide.sectionProgress01:F3}", this);
     }
-
     void ClearEarlyFlick()
     {
         pendingEarlyFlickSteps = 0;
@@ -10128,32 +7106,24 @@ public float AdvancePredictedSplineDriveReadOnly(
         earlyFlickInitialOffset = 0f;
         earlyFlickTargetOffset = 0f;
     }
-
     float StepEarlyFlick(NearestKnotDetector.GuideFrame guide, Surface surface, bool grounded)
     {
         float normalDamping = -surface.lateralSpeed * ResponseInverse;
-
-        if (!grounded || !guide.isSlope || waitingForTurnGuide || turnTransitionActive ||
-            (!earlyFlickStartedAfterTarget &&
+        if (!grounded || !guide.isSlope || waitingForTurnGuide || turnTransitionActive || (!earlyFlickStartedAfterTarget &&
              (guide.sectionProgress01 >= TargetProgress || extremePointFiredInSection)))
         {
             if (earlyFlickMoving && logEarlyFlick)
-                Debug.Log($"[EARLY FLICK END] sideOffset=" +
-                          $"{Vector3.Dot(rb.position - guide.point, surface.side):F3}m " +
-                          $"target={earlyFlickTargetOffset:F3}m", this);
-            // Normal early steering stops at the target; late-started steering
-            // can run only until the slope ends. Keep visual history until flat.
+                Debug.Log($"[EARLY FLICK END] sideOffset=" + $"{Vector3.Dot(rb.position - guide.point, surface.side):F3}m " + $"target={earlyFlickTargetOffset:F3}m", this);
+            // Normal early steering stops at the target; late-started steering can run only until the slope ends. Keep visual history until flat.
             pendingEarlyFlickSteps = 0;
             earlyFlickMoving = false;
             return normalDamping;
         }
-        if (earlyFlickSession &&
-            (!knotDetector || !knotDetector.IsSameSection(earlyFlickGuide, guide)))
+        if (earlyFlickSession && (!knotDetector || !knotDetector.IsSameSection(earlyFlickGuide, guide)))
         {
             ClearEarlyFlick();
             return normalDamping;
         }
-
         float sideOffset = Vector3.Dot(rb.position - guide.point, surface.side);
         int steps = pendingEarlyFlickSteps;
         pendingEarlyFlickSteps = 0;
@@ -10167,9 +7137,7 @@ public float AdvancePredictedSplineDriveReadOnly(
                 earlyFlickTargetOffset = sideOffset;
             }
             float maxTotal = Mathf.Max(0.2f, earlyFlickTotalMeters);
-            earlyFlickTargetOffset = Mathf.Clamp(
-                earlyFlickTargetOffset + steps * Mathf.Max(0.1f, earlyFlickStepMeters),
-                earlyFlickInitialOffset - maxTotal,
+            earlyFlickTargetOffset = Mathf.Clamp( earlyFlickTargetOffset + steps * Mathf.Max(0.1f, earlyFlickStepMeters), earlyFlickInitialOffset - maxTotal,
                 earlyFlickInitialOffset + maxTotal);
             earlyFlickMoving = true;
             if (logEarlyFlick)
@@ -10182,73 +7150,60 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
         }
         if (!earlyFlickMoving) return normalDamping;
-
         float difference = earlyFlickTargetOffset - sideOffset;
         float gain = Mathf.Max(1f, earlyFlickResponse);
         float maxSpeed = Mathf.Max(.2f, earlyFlickMaxSideSpeed);
         float maxAccel = Mathf.Max(1f, earlyFlickMaxSideAcceleration);
-
         float desiredSpeed = Mathf.Clamp(difference * gain, -maxSpeed, maxSpeed);
         float endProgress = earlyFlickStartedAfterTarget ? 1f : TargetProgress;
         float timeLeft = (endProgress - guide.sectionProgress01) *
                          Mathf.Max(0f, guide.sectionLength) /
                          Mathf.Max(0.1f, surface.tangentSpeed);
         desiredSpeed *= Mathf.Clamp01(timeLeft / Mathf.Max(.02f, earlyFlickEndBrakeSeconds));
-
         // 目標を越える惰性を抑える。追加の固定時間ロックは使用しない。
         float approaching = Mathf.Sign(difference) * surface.lateralSpeed;
-        if (approaching > 0f && Mathf.Abs(difference) <=
-            approaching * approaching / (2f * maxAccel) + approaching * .01f)
+        if (approaching > 0f && Mathf.Abs(difference) <= approaching * approaching / (2f * maxAccel) + approaching * .01f)
             desiredSpeed = 0f;
-
-        float lateralAccel = Mathf.Clamp(
-            (desiredSpeed - surface.lateralSpeed) * gain, -maxAccel, maxAccel);
+        float lateralAccel = Mathf.Clamp( (desiredSpeed - surface.lateralSpeed) * gain, -maxAccel, maxAccel);
         if (Mathf.Abs(difference) < .02f && Mathf.Abs(surface.lateralSpeed) < .12f)
             earlyFlickMoving = false;
         return lateralAccel;
     }
-
-    // 極限ポイント通過済みの階段か、従来の平面旋回かを先に確定する。
-    // 通過瞬間のOnInifniteは使わず、区間内で保持されるフラグを使う。
-    // A single authorization policy for physics and external visual turns.
-    // Do not use the old flat-only StickBeforeNextTurn latch.
+    // 極限ポイント通過済みの階段か、従来の平面旋回かを先に確定する。 通過瞬間のOnInifniteは使わず、区間内で保持されるフラグを使う。 A single authorization policy for physics and external visual turns. Do not use the old flat-only
+    // StickBeforeNextTurn latch.
     public bool CanAcceptVisualFrameTurn => CanAcceptQuarterTurn(out _);
-
     bool CanAcceptQuarterTurn(out bool passedSlopeTurn)
     {
         passedSlopeTurn = false;
         if (MainGameManager.OnDead)
             return false;
-
-        bool slopeSection =
-            (currentGuideValid && currentGuide.isSlope) ||
-            (extremePointSectionValid && !BallVisualIsOnFlat);
-
+        bool slopeSection = (currentGuideValid && currentGuide.isSlope) || (extremePointSectionValid && !BallVisualIsOnFlat);
         if (slopeSection)
         {
-            // A dropped -/+ target-crossing sample must not prevent a valid turn.
-            // Keep the extreme-point effect's crossing event independent.
-            passedSlopeTurn = extremePointFiredInSection ||
-                (currentSupported && currentGuideValid && currentGuide.isSlope &&
+            // A dropped -/+ target-crossing sample must not prevent a valid turn. Keep the extreme-point effect's crossing event independent.
+            passedSlopeTurn = extremePointFiredInSection || (currentSupported && currentGuideValid && currentGuide.isSlope &&
                  currentGuide.sectionProgress01 >= TargetProgress);
             return passedSlopeTurn;
         }
-
         return BallVisualIsOnFlat && AcceleFirstTurn;
     }
-
-    bool QueueQuarterTurn(float directionSign, bool sameFlatTapTurn = false)
+    bool QueueQuarterTurn(float directionSign, bool sameFlatTapTurn = false, bool authorizedPostExtremeHold = false)
     {
         if (!Earliest)
             return false;
         if (Mathf.Abs(directionSign) <= Eps)
             return false;
-
-        // The physical slab is authoritative for this specific tap+flick.
-        // Normal turns retain their existing authorization policy.
+        // The physical slab is authoritative for this specific tap+flick. Normal turns retain their existing authorization policy.
         bool canTurn = CanAcceptQuarterTurn(out bool passedSlopeTurn);
-        if (sameFlatTapTurn && AcceleFirstTurn &&
-            BeginCommandOnTouch && !MainGameManager.OnDead)
+        // A real, supported post-extreme stair press was already verified at MouseDown. A one-frame flat/guide transition at MouseUp cannot revoke that same long-press command. Still
+        // respect game state.
+        if (authorizedPostExtremeHold && AcceleFirstTurn && BeginCommandOnTouch && !MainGameManager.OnDead && !HasPendingTurnIntent && !turnTransitionActive &&
+            !waitingForTurnGuide)
+        {
+            canTurn = true;
+            passedSlopeTurn = true;
+        }
+        if (sameFlatTapTurn && AcceleFirstTurn && BeginCommandOnTouch && !MainGameManager.OnDead)
         {
             canTurn = true;
             passedSlopeTurn = false;
@@ -10256,28 +7211,23 @@ public float AdvancePredictedSplineDriveReadOnly(
         if (!canTurn)
         {
             if (logTurnTransition)
-                Debug.Log($"[CORE TURN DENIED] slope={currentGuideValid && currentGuide.isSlope} " +
-                          $"extremePassed={extremePointFiredInSection} " +
+                Debug.Log($"[CORE TURN DENIED] slope={currentGuideValid && currentGuide.isSlope} " + $"extremePassed={extremePointFiredInSection} " +
                           $"acceleFirst={AcceleFirstTurn} stickSlopePhase={StickSlopePharse} " +
                           $"flat={BallVisualIsOnFlat} progress={(currentGuideValid ? currentGuide.sectionProgress01 : -1f):F3}", this);
             return false;
         }
-
-        // An independently authorized normal/TapEdge turn supersedes a
-        // not-yet-committed B release. One input owner, never two turns.
+        // An independently authorized normal/TapEdge turn supersedes a not-yet-committed B release. One input owner, never two turns.
         if (flatStartReleaseCommitInProgress && autoHoldEligible)
         {
             flatStartReleaseCommitInProgress = false;
             CancelAutoHold("another authorized quarter-turn took priority");
             ClearBReleaseHandoff();
         }
-
         if (sameFlatTapTurn)
         {
             tapEdgeState = TapEdgeState.TurnQueued;
             tapEdgeFastTurnQueued = true;
-            TapEdgeLog("SAME FLAT TURN QUEUED",
-                $"collider={tapEdgeFlatCollider.name} sign={Mathf.Sign(directionSign):+0;-0}");
+            TapEdgeLog("SAME FLAT TURN QUEUED", $"collider={tapEdgeFlatCollider.name} sign={Mathf.Sign(directionSign):+0;-0}");
         }
         else
             CancelTapEdge("ordinary 90-degree turn");
@@ -10287,69 +7237,43 @@ public float AdvancePredictedSplineDriveReadOnly(
         pendingTurnFromPassedSlope = passedSlopeTurn;
         if (passedSlopeTurn && logTurnTransition)
             Debug.Log("[CORE TURN AFTER EXTREME QUEUED] waiting for safe handoff", this);
-        pendingTurnDegrees =
-            Mathf.Sign(directionSign) * QuarterTurnDegrees;
+        pendingTurnDegrees = Mathf.Sign(directionSign) * QuarterTurnDegrees;
         pendingTurnQueuedTime = Time.time;
-
-        // Updateで入力を受理した瞬間のPhysics状態を保存する。
-        // Turn Handoff後の位置・Targetで判定をすり替えない。
+        // Updateで入力を受理した瞬間のPhysics状態を保存する。 Turn Handoff後の位置・Targetで判定をすり替えない。
         CapturePendingTurnSnapshot();
-
         // BallVisualが独立Pose Authority中なら、通常Recoveryを待たず短いTurn Handoffへ入れる。
         RequestTurnHandoffForPendingIntent();
-
         return true;
     }
-
-    bool HasPendingTurnIntent =>
-        Mathf.Abs(pendingTurnDegrees) > Eps;
-
+    bool HasPendingTurnIntent => Mathf.Abs(pendingTurnDegrees) > Eps;
     bool IsPendingTurnIntentExpired()
     {
         if (!HasPendingTurnIntent || pendingTurnQueuedTime < 0f)
             return false;
-
-        float bufferSeconds = slopeReleaseHoldTurnPending
-            ? (slopeReleaseTerminalStairCollider
-                ? Mathf.Max(4.0f, slopeExtremeTurnBufferSeconds)
-                : Mathf.Max(.5f, slopeExtremeTurnBufferSeconds))
-            : autoHoldTurnPending
-            ? Mathf.Max(2f, slopeExtremeTurnBufferSeconds)
-            : pendingTurnFromPassedSlope
-                ? Mathf.Max(0.25f, slopeExtremeTurnBufferSeconds)
-                : Mathf.Max(0.05f, turnInputBufferSeconds);
+        float bufferSeconds = slopeReleaseHoldTurnPending ? (slopeReleaseTerminalStairCollider ? Mathf.Max(4.0f, slopeExtremeTurnBufferSeconds)
+                : Mathf.Max(.5f, slopeExtremeTurnBufferSeconds)) : autoHoldTurnPending ? Mathf.Max(2f, slopeExtremeTurnBufferSeconds) : pendingTurnFromPassedSlope
+                ? Mathf.Max(0.25f, slopeExtremeTurnBufferSeconds) : Mathf.Max(0.05f, turnInputBufferSeconds);
         return Time.time - pendingTurnQueuedTime > bufferSeconds;
     }
-
     void ExpirePendingTurnIntent(bool escapingToSafeSpline = false)
     {
         if (!HasPendingTurnIntent)
             return;
         if (autoHoldTurnPending)
             ClearBReleaseHandoff();
-
         if (pendingTurnFromPassedSlope && logTurnTransition)
         {
-            bool handoffReady = !ballVisualSlopeDrive ||
-                                ballVisualSlopeDrive.IsReadyForTurnTransition;
-            Debug.LogWarning(
-                $"[CORE TURN AFTER EXTREME EXPIRED] " +
-                $"wait={Time.time - pendingTurnQueuedTime:F3}s " +
-                $"handoffReady={handoffReady} " +
-                $"turnActive={turnTransitionActive} " +
-                $"waitingGuide={waitingForTurnGuide}", this);
+            bool handoffReady = !ballVisualSlopeDrive || ballVisualSlopeDrive.IsReadyForTurnTransition;
+            Debug.LogWarning( $"[CORE TURN AFTER EXTREME EXPIRED] " + $"wait={Time.time - pendingTurnQueuedTime:F3}s " + $"handoffReady={handoffReady} " +
+                $"turnActive={turnTransitionActive} " + $"waitingGuide={waitingForTurnGuide}", this);
         }
-
         if (tapEdgeState == TapEdgeState.TurnQueued)
             CancelTapEdge("pending Handoff expired");
         if (autoHoldTurnPending)
         {
             if (slopeReleaseHoldTurnPending)
-                SlopeReleaseHoldLog(
-                    escapingToSafeSpline ? "TURN ABANDONED FOR SAFE LANE" : "CANCEL",
-                    escapingToSafeSpline
-                        ? "stalled beyond configured seconds; verified spline escape takes priority"
-                        : "pending Handoff expired / invalidated");
+                SlopeReleaseHoldLog( escapingToSafeSpline ? "TURN ABANDONED FOR SAFE LANE" : "CANCEL", escapingToSafeSpline
+                        ? "stalled beyond configured seconds; verified spline escape takes priority" : "pending Handoff expired / invalidated");
             else
                 AutoHoldLog("CANCEL", "pending Handoff expired / invalidated");
             autoHoldTurnPending = false;
@@ -10358,6 +7282,17 @@ public float AdvancePredictedSplineDriveReadOnly(
         }
         autoHoldTurnPending = false;
         slopeReleaseHoldTurnPending = false;
+        ClearCommittedBReleaseMetadata();
+        pendingTurnDegrees = 0f;
+        stairMicroFlatTapLeftEdgeStage = -1;
+        pendingTurnQueuedTime = -1f;
+        pendingTurnFromPassedSlope = false;
+        ClearPendingTurnSnapshot();
+        ballVisualSlopeDrive?.CancelTurnHandoffRequest();
+    }
+    // B旋回の失効・実行完了で共通する保留状態だけを解除する。位置・速度・視覚座標系は変更しない。
+    void ClearCommittedBReleaseMetadata()
+    {
         slopeReleaseHoldHandoffHeld = false;
         slopeReleaseStopStartFixedTime = -1f;
         slopeReleaseCommittedSlopeGuide = default;
@@ -10367,75 +7302,52 @@ public float AdvancePredictedSplineDriveReadOnly(
         slopeTerminalLastOwnerSupportAt = -1f;
         slopeReleaseHoldLastFlatSupportTime = -1f;
         slopeReleaseHoldLastFlatSupportPosition = default;
-        pendingTurnDegrees = 0f;
-        stairMicroFlatTapLeftEdgeStage = -1;
-        pendingTurnQueuedTime = -1f;
-        pendingTurnFromPassedSlope = false;
-        ClearPendingTurnSnapshot();
-        ballVisualSlopeDrive?.CancelTurnHandoffRequest();
     }
-
     void RequestTurnHandoffForPendingIntent()
     {
         if (!HasPendingTurnIntent || !ballVisualSlopeDrive)
             return;
-
-        // MouseUp has already authorized B. Start the same visual handoff
-        // used by normal 90-degree turns immediately, while physical support
-        // independently decides when the actual rotation may run.
+        // MouseUp has already authorized B. Start the same visual handoff used by normal 90-degree turns immediately, while physical support independently decides when the actual
+        // rotation may run.
         if (ballVisualSlopeDrive.OwnsBallVisualPose)
             ballVisualSlopeDrive.RequestTurnHandoff();
     }
-
     // 新しい旋回を「今このFixedUpdateで開始してよいか」だけ判定する。
     bool IsTurnExecutionBlocked()
     {
         if (turnTransitionActive || waitingForTurnGuide)
             return true;
-
         if (fiveLineCorrectionActive || fiveLineCorrectionPending)
             return true;
-
         // Turn Handoffが完了してBallVisualのPose Authorityが同期側へ戻るまで待つ。
-        if (ballVisualSlopeDrive &&
-            !ballVisualSlopeDrive.IsReadyForTurnTransition)
+        if (ballVisualSlopeDrive && !ballVisualSlopeDrive.IsReadyForTurnTransition)
         {
             return true;
         }
-
         if (correspondSubject && correspondSubject.IsVisualFrameTurning)
             return true;
-
         return false;
     }
-
     void ApplyPendingQuarterTurn()
     {
         if (!HasPendingTurnIntent)
             return;
-
         // Recovery終了後に古い入力が突然実行されることを防ぐ。
         if (IsPendingTurnIntentExpired())
         {
             ExpirePendingTurnIntent();
             return;
         }
-
-        // Authorization was checked when the flick was queued. Changing from
-        // slope to flat during Handoff must not invalidate that accepted input.
+        // Authorization was checked when the flick was queued. Changing from slope to flat during Handoff must not invalidate that accepted input.
         if (MainGameManager.OnDead)
         {
             ExpirePendingTurnIntent();
             return;
         }
-
-        // Committed B support is handled by one shared physical verifier.
-        // Do not repeat the old 0.12s flat-only expiration here: a verified
-        // adjoining StairWay can briefly own the same real mesh seam.
-
-        // A released B turn is held inactive during a short airborne step,
-        // but its reservation is NEVER erased merely by a spline/route miss.
-        // This contact check precedes visual and FiveLine turn gating.
+        // Committed B support is handled by one shared physical verifier. Do not repeat the old 0.12s flat-only expiration here: a verified adjoining StairWay can briefly own the
+        // same real mesh seam.
+        // A released B turn is held inactive during a short airborne step, but its reservation is NEVER erased merely by a spline/route miss. This contact check precedes visual and
+        // FiveLine turn gating.
         bool earlyTurnReady = false;
         string earlyTurnReason = "-";
         if (slopeReleaseHoldTurnPending && slopeReleaseTerminalStairCollider)
@@ -10443,54 +7355,38 @@ public float AdvancePredictedSplineDriveReadOnly(
             earlyTurnReady = IsSlopeEarlyTurnReady(out earlyTurnReason);
         }
         RequestTurnHandoffForPendingIntent();
-
         if (IsTurnExecutionBlocked())
         {
-            if (slopeReleaseHoldTurnPending &&
-                slopeReleaseTerminalStairCollider &&
-                Time.fixedTime >= bReleaseNextLogTime)
+            if (slopeReleaseHoldTurnPending && slopeReleaseTerminalStairCollider && Time.fixedTime >= bReleaseNextLogTime)
             {
                 bReleaseNextLogTime = Time.fixedTime + .20f;
-                SlopeReleaseHoldLog("EARLY TURN HOLD",
-                    $"owner={slopeReleaseTerminalStairCollider.name} " +
-                    $"physicalReady={earlyTurnReady} " +
+                SlopeReleaseHoldLog("EARLY TURN HOLD", $"owner={slopeReleaseTerminalStairCollider.name} " + $"physicalReady={earlyTurnReady} " +
                     $"visualReady={(!ballVisualSlopeDrive || ballVisualSlopeDrive.IsReadyForTurnTransition)} " +
-                    $"fiveLine={fiveLineCorrectionActive || fiveLineCorrectionPending} " +
-                    $"waitingGuide={waitingForTurnGuide}; reservation retained");
+                    $"fiveLine={fiveLineCorrectionActive || fiveLineCorrectionPending} " + $"waitingGuide={waitingForTurnGuide}; reservation retained");
             }
-            if (autoHoldTurnPending && bReleaseHandoffActive &&
-                Time.fixedTime >= bReleaseNextLogTime)
+            if (autoHoldTurnPending && bReleaseHandoffActive && Time.fixedTime >= bReleaseNextLogTime)
             {
                 bReleaseNextLogTime = Time.fixedTime + .10f;
-                AutoHoldLog("B COMMITTED VISUAL WAIT",
-                    $"age={Time.time - pendingTurnQueuedTime:F3}s " +
+                AutoHoldLog("B COMMITTED VISUAL WAIT", $"age={Time.time - pendingTurnQueuedTime:F3}s " +
                     $"visualReady={(!ballVisualSlopeDrive || ballVisualSlopeDrive.IsReadyForTurnTransition)} " +
                     $"visualOwnsPose={(ballVisualSlopeDrive && ballVisualSlopeDrive.OwnsBallVisualPose)} " +
-                    $"frameTurning={(correspondSubject && correspondSubject.IsVisualFrameTurning)} " +
-                    $"fiveLineActive={fiveLineCorrectionActive} " +
-                    $"fiveLinePending={fiveLineCorrectionPending} " +
-                    $"floor={(bReleaseHandoffFlat ? bReleaseHandoffFlat.name : "-")}");
+                    $"frameTurning={(correspondSubject && correspondSubject.IsVisualFrameTurning)} " + $"fiveLineActive={fiveLineCorrectionActive} " +
+                    $"fiveLinePending={fiveLineCorrectionPending} " + $"floor={(bReleaseHandoffFlat ? bReleaseHandoffFlat.name : "-")}");
             }
-            if (slopeReleaseHoldTurnPending && rb && !rb.isKinematic &&
-                slopeReleaseHoldNextFlatCollider)
+            if (slopeReleaseHoldTurnPending && rb && !rb.isKinematic && slopeReleaseHoldNextFlatCollider)
             {
                 var contact = HasGroundSupport();
-                if (contact.Item1 &&
-                    contact.Item2.collider == slopeReleaseHoldNextFlatCollider &&
-                    IsAutoHoldStageHit(contact.Item2, float.NaN) &&
+                if (contact.Item1 && contact.Item2.collider == slopeReleaseHoldNextFlatCollider && IsAutoHoldStageHit(contact.Item2, float.NaN) &&
                     Vector3.Angle(contact.Item2.normal, Vector3.up) <= 18f)
                 {
                     if (!slopeReleaseHoldHandoffHeld)
                     {
                         slopeReleaseStopStartFixedTime = -1f;
-                        SlopeReleaseHoldLog("HANDOFF FLAT HOLD",
-                            $"savedVelocity={slopeReleaseBeforeStopVelocity:F3} " +
-                            $"preStopAccel={slopeReleaseBeforeStopAcceleration:F3} " +
-                            $"pos={rb.position:F3}");
+                        SlopeReleaseHoldLog("HANDOFF FLAT HOLD", $"savedVelocity={slopeReleaseBeforeStopVelocity:F3} " +
+                            $"preStopAccel={slopeReleaseBeforeStopAcceleration:F3} " + $"pos={rb.position:F3}");
                     }
                     slopeReleaseHoldHandoffHeld = true;
-                    float horizontalSpeed = Vector3.ProjectOnPlane(
-                        rb.velocity, Vector3.up).magnitude;
+                    float horizontalSpeed = Vector3.ProjectOnPlane( rb.velocity, Vector3.up).magnitude;
                     if (horizontalSpeed <= slopeReleaseStopSpeedThreshold)
                     {
                         if (slopeReleaseStopStartFixedTime < 0f)
@@ -10498,21 +7394,17 @@ public float AdvancePredictedSplineDriveReadOnly(
                     }
                     else
                         slopeReleaseStopStartFixedTime = -1f;
-                    float stoppedFor = slopeReleaseStopStartFixedTime < 0f
-                        ? 0f : Time.fixedTime - slopeReleaseStopStartFixedTime;
-                    if (stoppedFor >= slopeReleaseStoppedSecondsToEscape &&
-                        TryStartSlopeReleaseTimedEscape())
+                    float stoppedFor = slopeReleaseStopStartFixedTime < 0f ? 0f : Time.fixedTime - slopeReleaseStopStartFixedTime;
+                    if (stoppedFor >= slopeReleaseStoppedSecondsToEscape && TryStartSlopeReleaseTimedEscape())
                         return;
                     // Do not zero X/Z speed while waiting on a real flat.
                     return;
                 }
             }
-            if (tapEdgeFastTurnQueued && tapEdgeState == TapEdgeState.TurnQueued &&
-                rb && !rb.isKinematic && tapEdgeFlatCollider)
+            if (tapEdgeFastTurnQueued && tapEdgeState == TapEdgeState.TurnQueued && rb && !rb.isKinematic && tapEdgeFlatCollider)
             {
                 var contact = HasGroundSupport();
-                if (contact.Item2.collider == tapEdgeFlatCollider &&
-                    IsTapEdgeSupportedFlat(contact.Item1, contact.Item2))
+                if (contact.Item2.collider == tapEdgeFlatCollider && IsTapEdgeSupportedFlat(contact.Item1, contact.Item2))
                 {
                     if (!tapEdgeHandoffHeld)
                         TapEdgeLog("HANDOFF HOLD", $"position={rb.position:F3}");
@@ -10523,33 +7415,24 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             return;
         }
-
-        if (tapEdgeFastTurnQueued && tapEdgeState == TapEdgeState.TurnQueued &&
-            logTurnTransition)
-            TapEdgeLog("HANDOFF READY",
-                $"wait={Mathf.Max(0f, Time.time - pendingTurnQueuedTime):F3}s " +
+        if (tapEdgeFastTurnQueued && tapEdgeState == TapEdgeState.TurnQueued && logTurnTransition)
+            TapEdgeLog("HANDOFF READY", $"wait={Mathf.Max(0f, Time.time - pendingTurnQueuedTime):F3}s " +
                 $"visualReady={!ballVisualSlopeDrive || ballVisualSlopeDrive.IsReadyForTurnTransition} " +
                 $"correspondReady={!correspondSubject || !correspondSubject.IsVisualFrameTurning}");
-
-        // For the same-flat gesture do not commit the turn after leaving the
-        // original slab. In particular, never turn while falling in midair.
+        // For the same-flat gesture do not commit the turn after leaving the original slab. In particular, never turn while falling in midair.
         if (tapEdgeFastTurnQueued && tapEdgeState == TapEdgeState.TurnQueued)
         {
             var contact = HasGroundSupport();
-            if (contact.Item2.collider != tapEdgeFlatCollider ||
-                !IsTapEdgeSupportedFlat(contact.Item1, contact.Item2))
+            if (contact.Item2.collider != tapEdgeFlatCollider || !IsTapEdgeSupportedFlat(contact.Item1, contact.Item2))
             {
-                TapEdgeLog("TURN CANCELED SUPPORT",
-                    $"position={rb.position:F3} supported={contact.Item1} " +
+                TapEdgeLog("TURN CANCELED SUPPORT", $"position={rb.position:F3} supported={contact.Item1} " +
                     $"collider={(contact.Item2.collider ? contact.Item2.collider.name : "-")} " +
-                    $"angle={(contact.Item2.collider ? Vector3.Angle(contact.Item2.normal, Vector3.up) : -1f):F1} " +
-                    $"guideFlat={BallVisualIsOnFlat}");
+                    $"angle={(contact.Item2.collider ? Vector3.Angle(contact.Item2.normal, Vector3.up) : -1f):F1} " + $"guideFlat={BallVisualIsOnFlat}");
                 ExpirePendingTurnIntent();
                 return;
             }
             ReleaseTapEdgeHandoffHold();
         }
-
         if (slopeReleaseHoldTurnPending && slopeReleaseTerminalStairCollider)
         {
             if (!earlyTurnReady)
@@ -10558,279 +7441,173 @@ public float AdvancePredictedSplineDriveReadOnly(
                 {
                     bReleaseNextLogTime = Time.fixedTime + .20f;
                     var latest = HasGroundSupport();
-                    SlopeReleaseHoldLog("EARLY TURN WAIT",
-                        $"stair={slopeReleaseTerminalStairCollider.name} " +
-                        $"age={Time.time - pendingTurnQueuedTime:F2}s " +
-                        $"floor={(latest.Item2.collider ? latest.Item2.collider.name : "-")} " +
-                        $"reason={earlyTurnReason}; B reservation remains active");
+                    SlopeReleaseHoldLog("EARLY TURN WAIT", $"stair={slopeReleaseTerminalStairCollider.name} " + $"age={Time.time - pendingTurnQueuedTime:F2}s " +
+                        $"floor={(latest.Item2.collider ? latest.Item2.collider.name : "-")} " + $"reason={earlyTurnReason}; B reservation remains active");
                 }
                 return;
             }
-            SlopeReleaseHoldLog("EARLY TURN READY",
-                $"stair={slopeReleaseTerminalStairCollider.name} " +
-                $"reason={earlyTurnReason} " +
-                $"pos={rb.position:F3}");
+            SlopeReleaseHoldLog("EARLY TURN READY", $"stair={slopeReleaseTerminalStairCollider.name} " + $"reason={earlyTurnReason} " + $"pos={rb.position:F3}");
         }
         else if (slopeReleaseHoldTurnPending && !bReleaseHandoffActive)
         {
-            // Handoff may require several physics frames. Do not start a
-            // high-speed right-angle turn after leaving the receiving flat.
+            // Handoff may require several physics frames. Do not start a high-speed right-angle turn after leaving the receiving flat.
             var flatSupport = HasGroundSupport();
-            bool stillOnNextFlat = IsSlopeReleaseHoldOnVerifiedFlat(
-                flatSupport.Item1, flatSupport.Item2);
+            bool stillOnNextFlat = IsSlopeReleaseHoldOnVerifiedFlat( flatSupport.Item1, flatSupport.Item2);
             if (!stillOnNextFlat)
             {
-                SlopeReleaseHoldLog("TURN CANCELED SUPPORT",
-                    $"after handoff: pos={rb.position:F3} " +
+                SlopeReleaseHoldLog("TURN CANCELED SUPPORT", $"after handoff: pos={rb.position:F3} " +
                     $"hit={(flatSupport.Item2.collider ? flatSupport.Item2.collider.name : "-")}");
                 ExpirePendingTurnIntent();
                 return;
             }
             if (slopeReleaseHoldHandoffHeld)
             {
-                // Restore a SAFE planar component only when the original flat
-                // still supports the body. Old sideways drift is not restored.
-                float savedSpeed = Vector3.ProjectOnPlane(
-                    pendingTurnFlickVelocity, Vector3.up).magnitude;
+                // Restore a SAFE planar component only when the original flat still supports the body. Old sideways drift is not restored.
+                float savedSpeed = Vector3.ProjectOnPlane( pendingTurnFlickVelocity, Vector3.up).magnitude;
                 Vector3 forward = NormalizeFlat(autoHoldLastForward, direction);
-                rb.velocity = forward * Mathf.Min(savedSpeed, maxGroundSpeed) +
-                    Vector3.up * rb.velocity.y;
+                rb.velocity = forward * Mathf.Min(savedSpeed, maxGroundSpeed) + Vector3.up * rb.velocity.y;
                 LateralAuditMarkVelocityWriter("SlopeReleaseHandoff");
                 slopeReleaseHoldHandoffHeld = false;
                 slopeReleaseStopStartFixedTime = -1f;
-                SlopeReleaseHoldLog("HANDOFF READY",
-                    $"restoredSpeed={Mathf.Min(savedSpeed, maxGroundSpeed):F2} " +
-                    $"wait={Time.time - pendingTurnQueuedTime:F3}s");
+                SlopeReleaseHoldLog("HANDOFF READY", $"restoredSpeed={Mathf.Min(savedSpeed, maxGroundSpeed):F2} " + $"wait={Time.time - pendingTurnQueuedTime:F3}s");
             }
         }
-
-        if (autoHoldTurnPending && bReleaseHandoffActive &&
-            !bReleasePhaseTurnCommitted &&
-            !TryGetCommittedBReleaseTurnSupport(out _, out _))
+        if (autoHoldTurnPending && bReleaseHandoffActive && !bReleasePhaseTurnCommitted && !TryGetCommittedBReleaseTurnSupport(out _, out _))
         {
-            // Preserve the intent while the exact floor / adjacent physical
-            // seam is being rechecked. Never turn on a distant spline alone.
+            // Preserve the intent while the exact floor / adjacent physical seam is being rechecked. Never turn on a distant spline alone.
             return;
         }
-
-        float turnDegrees =
-            Mathf.Sign(pendingTurnDegrees) * QuarterTurnDegrees;
-        // Keep the release request alive until BeginTurnTransition actually
-        // succeeds. A failed transition must never silently consume the turn.
+        float turnDegrees = Mathf.Sign(pendingTurnDegrees) * QuarterTurnDegrees;
+        // Keep the release request alive until BeginTurnTransition actually succeeds. A failed transition must never silently consume the turn.
         if (!rb || rb.isKinematic)
             return;
         ApplyQuarterTurn(turnDegrees);
         if (!turnTransitionActive)
         {
-            if (autoHoldTurnPending && bReleaseHandoffActive &&
-                Time.fixedTime >= bReleaseNextLogTime)
+            if (autoHoldTurnPending && bReleaseHandoffActive && Time.fixedTime >= bReleaseNextLogTime)
             {
                 bReleaseNextLogTime = Time.fixedTime + .10f;
-                AutoHoldLog("B COMMITTED TURN WAIT",
-                    "physics transition not started; preserving accepted input");
+                AutoHoldLog("B COMMITTED TURN WAIT", "physics transition not started; preserving accepted input");
             }
             return;
         }
         pendingTurnDegrees = 0f;
         pendingTurnQueuedTime = -1f;
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
-        // The accepted turn's physics snapshot now owns this motion; the
-        // queued B state must never leak into a later unrelated turn.
+        // The accepted turn's physics snapshot now owns this motion; the queued B state must never leak into a later unrelated turn.
         ClearBReleaseHandoff();
         pendingTurnFromPassedSlope = false;
         autoHoldTurnPending = false;
         slopeReleaseHoldTurnPending = false;
-        slopeReleaseHoldHandoffHeld = false;
-        slopeReleaseStopStartFixedTime = -1f;
-        slopeReleaseCommittedSlopeGuide = default;
-        slopeReleaseHoldNextFlatCollider = null;
-        slopeReleaseTerminalStairCollider = null;
-        slopeReleaseTerminalReleaseAt = -1f;
-        slopeTerminalLastOwnerSupportAt = -1f;
-        slopeReleaseHoldLastFlatSupportTime = -1f;
-        slopeReleaseHoldLastFlatSupportPosition = default;
+        ClearCommittedBReleaseMetadata();
         autoHoldEdgeSampleValid = false;
         autoHoldEdgeCollider = null;
     }
-
     void ApplyQuarterTurn(float turnDegrees)
     {
         if (!rb || turnTransitionActive)
             return;
-
-        // Collect the previous physical leg BEFORE deleting the old witness.
-        // The same logic applies to every turn initiator (B, slope, flick).
+        // Collect the previous physical leg BEFORE deleting the old witness. The same logic applies to every turn initiator (B, slope, flick).
         bool hasTurnFloor = TryGetRouteContact(out RaycastHit preTurnFloor);
+        bool noLeftEdgeThisTurn = IsPostExtremeNoLeftEdgeActive( hasTurnFloor ? preTurnFloor.collider : currentHit.collider);
         int lastStair = -1;
         int nextStair = -1;
-        if (hasTurnFloor &&
-            TryGetStageFamily(preTurnFloor.collider, "StairWay", out int stair))
+        if (hasTurnFloor && TryGetStageFamily(preTurnFloor.collider, "StairWay", out int stair))
         {
             lastStair = stair;
             nextStair = stair + 1;
         }
-        else if (hasTurnFloor &&
-            TryGetStageFamily(preTurnFloor.collider, "ArcSlab", out int flat))
+        else if (hasTurnFloor && TryGetStageFamily(preTurnFloor.collider, "ArcSlab", out int flat))
         {
             lastStair = flat - 1;
             nextStair = flat;
         }
-        else if (verifiedRouteCommitted &&
-            routeLastNearTime >= 0f &&
-            Time.fixedTime - routeLastNearTime < .24f)
+        else if (verifiedRouteCommitted && routeLastNearTime >= 0f && Time.fixedTime - routeLastNearTime < .24f)
         {
             lastStair = verifiedRouteStair;
             nextStair = verifiedRouteFlat;
         }
-        // A committed B turn may begin on the StairWay(N) side of the
-        // verified ArcSlab(N) boundary. That is STILL the turn from stair
-        // N-1 to N, not a newly requested turn from N to N+1.
-        bool onCommittedBSeam = !bReleasePhaseTurnCommitted &&
-            autoHoldTurnPending && bReleaseHandoffActive &&
+        // A committed B turn may begin on the StairWay(N) side of the verified ArcSlab(N) boundary. That is STILL the turn from stair N-1 to N, not a newly requested turn from N to
+        // N+1.
+        bool onCommittedBSeam = !bReleasePhaseTurnCommitted && autoHoldTurnPending && bReleaseHandoffActive &&
             TryGetCommittedBReleaseTurnSupport(out _, out bool seam) && seam;
-        bool stairPhaseB = bReleasePhaseTurnCommitted &&
-            TryGetStageFamily(bReleaseHandoffFlat, "StairWay", out _);
-        if (bReleasePhaseTurnCommitted &&
-            (TryGetStageFamily(bReleaseHandoffFlat, "ArcSlab",
-                 out int phaseFamily) ||
-             TryGetStageFamily(bReleaseHandoffFlat, "StairWay",
+        bool stairPhaseB = bReleasePhaseTurnCommitted && TryGetStageFamily(bReleaseHandoffFlat, "StairWay", out _);
+        if (bReleasePhaseTurnCommitted && (TryGetStageFamily(bReleaseHandoffFlat, "ArcSlab", out int phaseFamily) || TryGetStageFamily(bReleaseHandoffFlat, "StairWay",
                  out phaseFamily)))
         {
             lastStair = phaseFamily - 1;
             nextStair = phaseFamily;
         }
-        if (onCommittedBSeam && TryGetStageFamily(bReleaseHandoffFlat,
-                "ArcSlab", out int committedFlatFamily))
+        if (onCommittedBSeam && TryGetStageFamily(bReleaseHandoffFlat, "ArcSlab", out int committedFlatFamily))
         {
             lastStair = committedFlatFamily - 1;
             nextStair = committedFlatFamily;
-            AutoHoldLog("B COMMITTED SEAM PROVEN",
-                $"turnFrom={lastStair} to={nextStair} " +
-                $"floor={(preTurnFloor.collider ? preTurnFloor.collider.name : "-")} " +
+            AutoHoldLog("B COMMITTED SEAM PROVEN", $"turnFrom={lastStair} to={nextStair} " + $"floor={(preTurnFloor.collider ? preTurnFloor.collider.name : "-")} " +
                 $"pos={rb.position:F3}");
         }
         ClearPostBDownhillGuard("new turn");
         ClearEarlyFlick();
         turnDegrees = Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
-
         if (rb.isKinematic)
         {
             ClearPendingTurnSnapshot();
-            Debug.LogError(
-                "[CORE TURN TRANSITION FAILED] InSubject Rigidbodyは通常走行時Dynamicである必要があります。",
-                rb);
+            Debug.LogError( "[CORE TURN TRANSITION FAILED] InSubject Rigidbodyは通常走行時Dynamicである必要があります。", rb);
             return;
         }
-
-        Quaternion fullDirectionTurn =
-            Quaternion.AngleAxis(turnDegrees, Vector3.up);
-
-        Vector3 directionBefore =
-            NormalizeFlat(direction, travelDirection);
-        bool verifiedB = autoHoldTurnPending && bReleaseHandoffActive &&
-            (bReleasePhaseTurnCommitted ||
-             TryGetCommittedBReleaseTurnSupport(out _, out _));
-        directionBefore = slopeReleaseTerminalStairCollider
-            ? NormalizeFlat(autoHoldLastForward, directionBefore)
-            : verifiedB
-                ? NormalizeFlat(bReleaseOriginalHeading, directionBefore)
-                : ResolveAuthoritativeTurnBasis(
-                    directionBefore, verifiedB,
+        Quaternion fullDirectionTurn = Quaternion.AngleAxis(turnDegrees, Vector3.up);
+        Vector3 directionBefore = NormalizeFlat(direction, travelDirection);
+        bool verifiedB = autoHoldTurnPending && bReleaseHandoffActive && (bReleasePhaseTurnCommitted || TryGetCommittedBReleaseTurnSupport(out _, out _));
+        directionBefore = slopeReleaseTerminalStairCollider ? NormalizeFlat(autoHoldLastForward, directionBefore) : verifiedB
+                ? NormalizeFlat(bReleaseOriginalHeading, directionBefore) : ResolveAuthoritativeTurnBasis( directionBefore, verifiedB,
                     hasTurnFloor ? preTurnFloor : default);
         // Keep control and approved turn basis coherent through the snapshot.
         direction = directionBefore;
-        // A new command discards the previous physical descent witness;
-        // the epoch guard below outlives this reset and prevents re-locking.
+        // A new command discards the previous physical descent witness; the epoch guard below outlives this reset and prevents re-locking.
         ClearVerifiedStairCorrection();
-
-        // Only committed Auto Hold can force final edge alignment.
-        // Position must be corrected BEFORE the freeze snapshot is captured.
-        if (autoHoldTurnPending && turnDegrees < 0f &&
-            !bReleasePhaseTurnCommitted &&
-            !onCommittedBSeam && !slopeReleaseTerminalStairCollider)
+        // Only committed Auto Hold can force final edge alignment. Position must be corrected BEFORE the freeze snapshot is captured.
+        if (autoHoldTurnPending && !noLeftEdgeThisTurn && turnDegrees < 0f && !bReleasePhaseTurnCommitted && !onCommittedBSeam && !slopeReleaseTerminalStairCollider)
             SetAutoHoldTurnAtPhysicalEdge();
-        // Never position-snap backward onto the former flat after the ball
-        // physically reached its verified adjacent StairWay seam.
-        if (verifiedB && !bReleasePhaseTurnCommitted && turnDegrees < 0f &&
-            Vector3.Dot(bReleaseOriginalHeading, directionBefore) > .95f)
+        // Never position-snap backward onto the former flat after the ball physically reached its verified adjacent StairWay seam.
+        if (verifiedB && !bReleasePhaseTurnCommitted && turnDegrees < 0f && Vector3.Dot(bReleaseOriginalHeading, directionBefore) > .95f)
         {
-            // Edge locking removes sideways inertia, including nearly all
-            // horizontal motion when the old guide is momentarily sideways.
-            // Rebuild ONLY the confirmed old-heading component, with a strict
-            // turn speed ceiling, before the one-time 90-degree rotation.
-            float naturalForward = Mathf.Max(0f,
-                Vector3.Dot(rb.velocity, directionBefore));
-            float boundedRelease = Mathf.Min(bReleaseForwardSpeed,
-                Mathf.Min(BReleaseHandoffSpeedCeiling,
-                    Mathf.Max(0f, maxGroundSpeed)));
+            // Edge locking removes sideways inertia, including nearly all horizontal motion when the old guide is momentarily sideways. Rebuild ONLY the confirmed old-heading component,
+            // with a strict turn speed ceiling, before the one-time 90-degree rotation.
+            float naturalForward = Mathf.Max(0f, Vector3.Dot(rb.velocity, directionBefore));
+            float boundedRelease = Mathf.Min(bReleaseForwardSpeed, Mathf.Min(BReleaseHandoffSpeedCeiling, Mathf.Max(0f, maxGroundSpeed)));
             float restored = Mathf.Max(naturalForward, boundedRelease);
             Vector3 prior = rb.velocity;
-            rb.velocity = directionBefore * restored +
-                Vector3.up * prior.y;
+            rb.velocity = directionBefore * restored + Vector3.up * prior.y;
             LateralAuditMarkVelocityWriter("BReleaseTurnSnapshot");
-            Debug.Log($"[B RELEASE TURN SNAPSHOT] t={Time.fixedTime:F3} " +
-                $"releaseForward={bReleaseForwardSpeed:F2} " +
-                $"before={prior:F3} restored={rb.velocity:F3} " +
+            Debug.Log($"[B RELEASE TURN SNAPSHOT] t={Time.fixedTime:F3} " + $"releaseForward={bReleaseForwardSpeed:F2} " + $"before={prior:F3} restored={rb.velocity:F3} " +
                 $"heading={directionBefore:F3}", this);
         }
-
         Vector3 velocityBefore = rb.velocity;
         Vector3 angularVelocityBefore = rb.angularVelocity;
-
-        turnTargetDirection =
-            NormalizeFlat(
-                fullDirectionTurn * directionBefore,
-                directionBefore);
-
+        turnTargetDirection = NormalizeFlat( fullDirectionTurn * directionBefore, directionBefore);
         // 旋回種別の判定は一度だけ。Flatではフリック時の凍結Snapshotを使う。
         CaptureTurnLandingIntent();
         bool tapEdgeSelected = tapEdgeState == TapEdgeState.TurnQueued;
-        // Resolve the one-shot flat-tap reward before choosing the physical
-        // turn mode. A normal turn must actually be on its receiving flat;
-        // only an already verified StairWay(N+1) rescue may use the other path.
-        bool verifiedReceivingFlat = hasTurnFloor &&
-            TryGetStageFamily(preTurnFloor.collider, "ArcSlab", out int realFlat) &&
-            realFlat == stairMicroFlatTapLeftEdgeStage;
-        bool verifiedReceivingStairRescue = stairPhaseB && autoHoldTurnPending &&
-            bReleasePhaseTurnCommitted && nextStair == stairMicroFlatTapLeftEdgeStage;
-        bool tapStairMicroLeftEdge =
-            nextStair == stairMicroFlatTapLeftEdgeStage &&
-            turnDegrees < 0f &&
+        // Resolve the one-shot flat-tap reward before choosing the physical turn mode. A normal turn must actually be on its receiving flat; only an already verified StairWay(N+1)
+        // rescue may use the other path.
+        bool verifiedReceivingFlat = hasTurnFloor && TryGetStageFamily(preTurnFloor.collider, "ArcSlab", out int realFlat) && realFlat == stairMicroFlatTapLeftEdgeStage;
+        bool verifiedReceivingStairRescue = stairPhaseB && autoHoldTurnPending && bReleasePhaseTurnCommitted && nextStair == stairMicroFlatTapLeftEdgeStage;
+        bool tapStairMicroLeftEdge = !noLeftEdgeThisTurn && nextStair == stairMicroFlatTapLeftEdgeStage && turnDegrees < 0f &&
             (verifiedReceivingFlat || verifiedReceivingStairRescue);
-        activeTurnMode = autoHoldTurnPending
-            ? (turnDegrees < 0f
-                ? TurnResolutionMode.UTurnBeforeEnergyTarget
-                : TurnResolutionMode.FiveLineAfterEnergyTarget)
-            : tapEdgeSelected
-                ? TurnResolutionMode.UTurnBeforeEnergyTarget
-            : pendingTurnFromPassedSlope
-                ? TurnResolutionMode.FiveLineAfterPop
+        activeTurnMode = autoHoldTurnPending ? (turnDegrees < 0f ? TurnResolutionMode.UTurnBeforeEnergyTarget : TurnResolutionMode.FiveLineAfterEnergyTarget)
+            : tapEdgeSelected ? TurnResolutionMode.UTurnBeforeEnergyTarget : pendingTurnFromPassedSlope ? TurnResolutionMode.FiveLineAfterPop
                 : ResolveTurnResolutionMode(directionBefore);
         if (tapStairMicroLeftEdge)
             activeTurnMode = TurnResolutionMode.UTurnBeforeEnergyTarget;
         bool autoHoldSelected = autoHoldTurnPending;
         ClearPendingTurnSnapshot();
         LogDropAuditTurn("ACCEPTED", velocityBefore, turnDegrees);
-
         if (pendingTurnFromPassedSlope && logTurnTransition)
             Debug.Log("[CORE TURN AFTER EXTREME] slope flick accepted, mode=FiveLineAfterPop", this);
         flatEntryFrame = default; // 次のFlatで新しいEntryを採取する。
-
-        bool fiveLineMode =
-            activeTurnMode == TurnResolutionMode.FiveLineAfterPop ||
-            activeTurnMode == TurnResolutionMode.FiveLineAfterEnergyTarget;
-
-        // OutCorner側の外ラインに既に乗っている場合は、
-        // FiveLineで中央側へ取り直さず、その横位置を旋回後ラインとして残す。
-        // InCorner(UTurnBeforeEnergyTarget)には一切入らない。
-        bool preserveOutCornerLine =
-            fiveLineMode &&
-            ShouldPreserveOutCornerLine(turnDegrees);
-
-        fiveLineCorrectionPending =
-            fiveLineMode &&
-            !preserveOutCornerLine;
-
+        bool fiveLineMode = activeTurnMode == TurnResolutionMode.FiveLineAfterPop || activeTurnMode == TurnResolutionMode.FiveLineAfterEnergyTarget;
+        // OutCorner側の外ラインに既に乗っている場合は、 FiveLineで中央側へ取り直さず、その横位置を旋回後ラインとして残す。 InCorner(UTurnBeforeEnergyTarget)には一切入らない。
+        bool preserveOutCornerLine = fiveLineMode && ShouldPreserveOutCornerLine(turnDegrees);
+        fiveLineCorrectionPending = fiveLineMode && !preserveOutCornerLine;
         if (!BeginTurnTransition(turnDegrees))
         {
             if (autoHoldSelected)
@@ -10838,22 +7615,17 @@ public float AdvancePredictedSplineDriveReadOnly(
             if (tapEdgeSelected) CancelTapEdge("could not begin physics turn");
             return;
         }
-        bool resumedFromRouteHold = routeRecognitionState !=
-            RouteRecognitionState.Confirmed;
+        bool resumedFromRouteHold = routeRecognitionState != RouteRecognitionState.Confirmed;
         ArmRouteIntegrityForTurn(turnTargetDirection, lastStair, nextStair);
-        SetRouteRecognitionState(RouteRecognitionState.Confirmed,
-            nextStair, "player-authorized turn");
+        SetRouteRecognitionState(RouteRecognitionState.Confirmed, nextStair, "player-authorized turn");
         if (resumedFromRouteHold)
-            ShowRouteGameSign("90 DEG TURN", "Normal turn controller engaged",
-                new Color(.20f, 1f, .48f), 1.8f);
-        if (verifiedB && turnDegrees < 0f &&
-            activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
+            ShowRouteGameSign("90 DEG TURN", "Normal turn controller engaged", new Color(.20f, 1f, .48f), 1.8f);
+        if (verifiedB && turnDegrees < 0f && activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget)
         {
             postBDownhillArmed = true;
             postBDownhillSawSlope = false;
             postBDownhillWrongGuideLogged = false;
-            postBDownhillCommittedHeading = NormalizeFlat(
-                turnTargetDirection, direction);
+            postBDownhillCommittedHeading = NormalizeFlat( turnTargetDirection, direction);
             postBDownhillArmedAt = Time.fixedTime;
             postBDownhillSectionIndex = -1;
             postBDownhillLastSupportTime = -1f;
@@ -10863,35 +7635,24 @@ public float AdvancePredictedSplineDriveReadOnly(
             postBDownhillLastLoggedSection = -1;
             postBEdgeAnchorValid = false;
             postBEdgeReacquireUntil = -1f;
-            Debug.Log($"[B DOWNHILL ARMED] t={Time.fixedTime:F3} " +
-                $"heading={postBDownhillCommittedHeading:F3}; " +
-                $"first receiving stair only", this);
+            Debug.Log($"[B DOWNHILL ARMED] t={Time.fixedTime:F3} " + $"heading={postBDownhillCommittedHeading:F3}; " + $"first receiving stair only", this);
         }
-        bool normalInCornerTurn = !autoHoldSelected && !tapEdgeSelected &&
-            activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
+        bool normalInCornerTurn = !autoHoldSelected && !tapEdgeSelected && activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
         bool heldOutCorner = autoHoldSelected && turnDegrees > 0f;
-        bool terminalB = slopeReleaseHoldTurnPending &&
-            slopeReleaseTerminalStairCollider;
-        // The short flat-tap + LEFT micro-flick keeps one edge approach:
-        // either the verified next-stair rescue or a NORMAL turn on the
-        // intervening flat. Stage identity prevents leaking to later turns.
-        if ((!stairPhaseB || tapStairMicroLeftEdge) && !terminalB && !heldOutCorner &&
+        bool terminalB = slopeReleaseHoldTurnPending && slopeReleaseTerminalStairCollider;
+        // The short flat-tap + LEFT micro-flick keeps one edge approach: either the verified next-stair rescue or a NORMAL turn on the intervening flat. Stage identity prevents
+        // leaking to later turns.
+        if (!noLeftEdgeThisTurn && (!stairPhaseB || tapStairMicroLeftEdge) && !terminalB && !heldOutCorner &&
             (autoHoldSelected || tapEdgeSelected || normalInCornerTurn || tapStairMicroLeftEdge))
         {
-            StartPostAutoHoldLeftEdge(turnTargetDirection,
-                tapEdgeSelected && tapEdgeFastTurnQueued,
-                (normalInCornerTurn || autoHoldSelected) && !tapEdgeSelected,
+            StartPostAutoHoldLeftEdge(turnTargetDirection, tapEdgeSelected && tapEdgeFastTurnQueued, (normalInCornerTurn || autoHoldSelected) && !tapEdgeSelected,
                 tapStairMicroLeftEdge ? nextStair : -1);
             if (tapStairMicroLeftEdge)
-                AutoHoldLog("STAIR TAP MICRO LEFT EDGE",
-                    $"receivingStage={nextStair} " +
-                    "post-turn physical left edge; B timing unchanged");
+                AutoHoldLog("STAIR TAP MICRO LEFT EDGE", $"receivingStage={nextStair} " + "post-turn physical left edge; B timing unchanged");
             if (autoHoldSelected)
             {
                 if (slopeReleaseHoldTurnPending)
-                    SlopeReleaseHoldLog("TURN EXECUTED",
-                        $"pos={rb.position:F3} heading={turnTargetDirection:F3} " +
-                        $"velocityBefore={velocityBefore:F3} " +
+                    SlopeReleaseHoldLog("TURN EXECUTED", $"pos={rb.position:F3} heading={turnTargetDirection:F3} " + $"velocityBefore={velocityBefore:F3} " +
                         $"innerError={autoHoldInnerErrorAtCommit:F3}");
                 else
                     AutoHoldLog("INCORNER EXECUTED", $"innerErrorAtCommit={autoHoldInnerErrorAtCommit:F3} " +
@@ -10900,47 +7661,35 @@ public float AdvancePredictedSplineDriveReadOnly(
             else if (tapEdgeSelected)
                 TapEdgeLog("TURN EXECUTED", $"position={rb.position:F3}");
             else if (normalInCornerTurn && logTurnTransition)
-                Debug.Log($"[INCORNER GOAL LOCKED] mode={activeTurnMode} " +
-                    $"target=next physical left-edge / leftSpline " +
-                    $"speed={rb.velocity.magnitude:F2}", this);
+                Debug.Log($"[INCORNER GOAL LOCKED] mode={activeTurnMode} " + $"target=next physical left-edge / leftSpline " + $"speed={rb.velocity.magnitude:F2}", this);
         }
         else
         {
-            // An OutCorner must NOT be forced onto the post-turn LEFT edge.
-            // Its FiveLine continuation handles the chosen lateral corridor.
+            if (noLeftEdgeThisTurn)
+                AutoHoldLog("POST-EXTREME TURN NO LEFT", "turn remains authorized; no edge snap or new edge follower");
+            // An OutCorner must NOT be forced onto the post-turn LEFT edge. Its FiveLine continuation handles the chosen lateral corridor.
             ClearPostAutoHoldLeftEdge();
             if (stairPhaseB)
-                AutoHoldLog("STAIR PHASE TURN EXECUTED",
-                    $"stair={(bReleaseHandoffFlat ? bReleaseHandoffFlat.name : "-")} " +
-                    $"direction={turnTargetDirection:F3} " +
+                AutoHoldLog("STAIR PHASE TURN EXECUTED", $"stair={(bReleaseHandoffFlat ? bReleaseHandoffFlat.name : "-")} " + $"direction={turnTargetDirection:F3} " +
                     $"velocityBefore={velocityBefore:F3}; no edge chase");
             else if (terminalB)
-                SlopeReleaseHoldLog("EARLY TURN EXECUTED",
-                    $"stair={slopeReleaseTerminalStairCollider.name} " +
-                    $"direction={turnTargetDirection:F3} " +
+                SlopeReleaseHoldLog("EARLY TURN EXECUTED", $"stair={slopeReleaseTerminalStairCollider.name} " + $"direction={turnTargetDirection:F3} " +
                     $"velocityBefore={velocityBefore:F3}; no old-flat snap");
             else if (heldOutCorner)
-                AutoHoldLog("OUTCORNER EXECUTED",
-                    $"mode={activeTurnMode} " +
-                    $"position={rb.position:F3} direction={turnTargetDirection:F3} " +
+                AutoHoldLog("OUTCORNER EXECUTED", $"mode={activeTurnMode} " + $"position={rb.position:F3} direction={turnTargetDirection:F3} " +
                     $"velocityBefore={velocityBefore:F3}");
         }
         stairMicroFlatTapLeftEdgeStage = -1;
         if (tapEdgeSelected) ResetTapEdge();
-
-        // FiveLine補正を使わないので、この旋回だけModeを消費済みにする。
-        // ReleaseTurnBodyToMotionではUTurn以外が既存のDirectFiveLineTurnへ流れるため、
-        // 位置を飛ばさず速度方向だけ90度変える現在仕様をそのまま使える。
+        // FiveLine補正を使わないので、この旋回だけModeを消費済みにする。 ReleaseTurnBodyToMotionではUTurn以外が既存のDirectFiveLineTurnへ流れるため、 位置を飛ばさず速度方向だけ90度変える現在仕様をそのまま使える。
         if (preserveOutCornerLine)
         {
             activeTurnMode = TurnResolutionMode.None;
-
             if (logCore || logTurnPolicy)
             {
                 ;
             }
         }
-
         // 旋回後Splineへ切り替わるまでは通常Driveを再開しない。
         waitingForTurnGuide = true;
         turnGuideCapturedAt = -1f;
@@ -10951,129 +7700,83 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnGuideCrawlLogged = false;
         if (currentGuideValid && currentGuide.isSlope) driveState = 0f;
         ResetBallVisualSplineSession();
-
         FindMapFrameReferences();
         BindCoordinateFrames();
-
-        float visualAngle =
-            turnDegrees *
+        float visualAngle = turnDegrees *
             (visualRootTurnsOppositeToInput ? -1f : 1f);
-
         bool visualTurnStarted = false;
-
         if (correspondSubject && visualPlayerRoot )
         {
-            Vector3 pivot =
-                visualRotationPivot
-                    ? visualRotationPivot.position
-                    : visualPlayerRoot.position;
-
-            Quaternion visualTurn =
-                Quaternion.AngleAxis(visualAngle, Vector3.up);
-
-            visualTurnStarted =
-                correspondSubject.RotateVisualFrameAround(
-                    pivot,
-                    visualTurn,
-                    true,
-                    OnVisualTurnProgress,
-                    CompleteTurnTransition,
-                    turnVisualDurationSeconds,
+            Vector3 pivot = visualRotationPivot ? visualRotationPivot.position : visualPlayerRoot.position;
+            Quaternion visualTurn = Quaternion.AngleAxis(visualAngle, Vector3.up);
+            visualTurnStarted = correspondSubject.RotateVisualFrameAround( pivot, visualTurn, true, OnVisualTurnProgress, CompleteTurnTransition, turnVisualDurationSeconds,
                     true); // SlopeStickCoreの許可判定を通過済み
         }
-
         // 古いScene向けfallback。Direct回転は同一FixedUpdateで完了する。
         if (!visualTurnStarted)
         {
             visualTurnStarted = RotateVisualMapFrameDirect(visualAngle);
-
             if (visualTurnStarted)
                 CompleteTurnTransition();
         }
-
         if (!visualTurnStarted)
         {
             AbortTurnTransitionAndRestoreOriginal("VisualTurnStartFailed");
             return;
         }
-
+        // Both asynchronous visual turns and synchronous fallback rotations have now started successfully. Only now consume this corner's ban.
+        postExtremeNoLeftEdgeStage = -1;
         if (logCore || logTurnPolicy || logTurnTransition)
         {
             ;
         }
     }
-
     bool BeginTurnTransition(float turnDegrees)
     {
         if (!rb || rb.isKinematic || turnTransitionActive)
             return false;
-
         turnTransitionSnapshot = new TurnTransitionSnapshot
         {
-            valid = true,
-            position = rb.position,
-            rotation = rb.rotation,
-          
-            direction = direction,
-            velocity = rb.velocity,
-            angularVelocity = rb.angularVelocity,
+            valid = true, position = rb.position, rotation = rb.rotation, direction = direction, velocity = rb.velocity, angularVelocity = rb.angularVelocity,
             useGravity = rb.useGravity
         };
-        activeTurnDegrees =
-            Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
-
-        // The turn snapshot stores velocity and angular velocity. Pause pose
-        // integration briefly without ever erasing those physical values.
+        activeTurnDegrees = Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
+        // The turn snapshot stores velocity and angular velocity. Pause pose integration briefly without ever erasing those physical values.
         rb.isKinematic = true;
-
         turnTransitionActive = true;
         turnBodyFrozen = true;
         turnTransitionStartTime = Time.fixedTime;
         LogDropAuditTurn("FREEZE", turnTransitionSnapshot.velocity);
-
         ResetBallVisualSplineSession();
         return true;
     }
-
     // FixedUpdateとCorrespondSubjectのTween tickの両方から呼ばれる時間基準の解除判定。
     void AdvanceTurnTransition()
     {
         if (!turnTransitionActive || !turnBodyFrozen)
             return;
-
         float hardFreeze = Mathf.Max(0f, turnHardFreezeSeconds);
         float elapsed = Mathf.Max(0f, Time.fixedTime - turnTransitionStartTime);
-
         if (elapsed + Eps < hardFreeze)
             return;
-        
         if(BeginCommandOnTouch)
           ReleaseTurnBodyToMotion("HardFreezeElapsed");
     }
-
     void OnVisualTurnProgress(float visualProgress01)
     {
         if (!turnTransitionActive)
             return;
-
         AdvanceTurnTransition();
     }
-
     void ReleaseTurnBodyToMotion(string reason)
     {
-        if (!turnTransitionActive ||
-            !turnBodyFrozen ||
-            !turnTransitionSnapshot.valid ||
-            !rb)
+        if (!turnTransitionActive || !turnBodyFrozen || !turnTransitionSnapshot.valid || !rb)
         {
             return;
         }
-
         TurnTransitionSnapshot snapshot = turnTransitionSnapshot;
         LogDropAuditTurn("RELEASE-BEGIN", snapshot.velocity);
-        Quaternion physicsTurn =
-            Quaternion.AngleAxis(activeTurnDegrees, Vector3.up);
-
+        Quaternion physicsTurn = Quaternion.AngleAxis(activeTurnDegrees, Vector3.up);
         // Freezeした地点から再開する。
         rb.position = snapshot.position;
         LateralAuditMarkPositionWriter("HardFreezeReleasePose");
@@ -11084,21 +7787,16 @@ public float AdvancePredictedSplineDriveReadOnly(
         LateralAuditMarkVelocityWriter("HardFreezeReleaseVelocity");
         rb.angularVelocity = snapshot.angularVelocity;
         rb.WakeUp();
-
         turnBodyFrozen = false;
         turnGuideReleasedAt = Time.fixedTime;
         turnHandoffNextAuditTime = 0f;
         turnGuideGuardBraking = false;
         turnGuideCrawlLogged = false;
         driveState = 0f;
-
-        bool useUTurn =
-            activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
-
+        bool useUTurn = activeTurnMode == TurnResolutionMode.UTurnBeforeEnergyTarget;
         if (useUTurn)
         {
-            // 旋回種別の確定時にFiveLine予約済み状態を決定している。
-            // ここでは重複したPending解除をせず、InCornerの運動だけを実行する。
+            // 旋回種別の確定時にFiveLine予約済み状態を決定している。 ここでは重複したPending解除をせず、InCornerの運動だけを実行する。
             ApplyDirectInCornerTurn(snapshot.velocity);
             rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
         }
@@ -11111,53 +7809,42 @@ public float AdvancePredictedSplineDriveReadOnly(
             rb.angularVelocity = physicsTurn * snapshot.angularVelocity;
         }
         LogDropAuditTurn("RELEASE-END", snapshot.velocity);
-
         ResetBallVisualSplineSession();
         Physics.SyncTransforms();
         correspondSubject?.ResetDerivedVelocitySample();
         correspondSubject?.SynchronizeNow(true);
-
         if (logCore || logTurnTransition)
         {
             ;
         }
     }
-
     void CompleteTurnTransition()
     {
         if (!turnTransitionActive || !turnTransitionSnapshot.valid || !rb)
             return;
-
         float completedTurnDegrees = activeTurnDegrees;
-
         // Visual TweenがFreeze時間より短い設定でも必ずDynamicへ戻す。
         if (turnBodyFrozen)
         {
             ReleaseTurnBodyToMotion("VisualTurnCompleted");
         }
-
         LogDropAuditTurn("VISUAL-COMPLETE", turnTransitionSnapshot.velocity);
         turnTransitionActive = false;
         turnBodyFrozen = false;
         turnTransitionStartTime = -1f;
         activeTurnDegrees = 0f;
         turnTransitionSnapshot = default;
-
-        // waitingForTurnGuideはApplyQuarterTurn開始時からtrueのまま。
-        // InCornerは既に新方向へ切り替え済み。Spline捕捉へ進む。
+        // waitingForTurnGuideはApplyQuarterTurn開始時からtrueのまま。 InCornerは既に新方向へ切り替え済み。Spline捕捉へ進む。
         if (currentGuideValid && currentGuide.isSlope) driveState = 0f;
         ResetBallVisualSplineSession();
-
         Physics.SyncTransforms();
         correspondSubject?.ResetDerivedVelocitySample();
         correspondSubject?.SynchronizeNow(true);
-
         if (logCore || logTurnTransition)
         {
             ;
         }
     }
-
     void AbortTurnTransitionAndRestoreOriginal(string reason)
     {
         ResetRouteIntegritySupervisor("aborted turn");
@@ -11169,8 +7856,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         ClearPostAutoHoldLeftEdge();
         StopEdgeCruise("turn aborted");
         TurnTransitionSnapshot snapshot = turnTransitionSnapshot;
-
-
         if (rb)
         {
             if (snapshot.valid)
@@ -11178,10 +7863,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                 rb.position = snapshot.position;
                 LateralAuditMarkPositionWriter("AbortTurnRestorePose");
                 rb.rotation = snapshot.rotation;
-
                 if (rb.isKinematic)
                     rb.isKinematic = false;
-
                 rb.useGravity = snapshot.useGravity;
                 rb.velocity = snapshot.velocity;
                 LateralAuditMarkVelocityWriter("AbortTurnRestoreVelocity");
@@ -11195,7 +7878,6 @@ public float AdvancePredictedSplineDriveReadOnly(
                 rb.isKinematic = false;
             }
         }
-
         turnTransitionActive = false;
         turnBodyFrozen = false;
         turnTransitionStartTime = -1f;
@@ -11207,7 +7889,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnGuideReleasedAt = -1f;
         turnGuideGuardBraking = false;
         turnGuideCrawlLogged = false;
-
         activeTurnMode = TurnResolutionMode.None;
         autoHoldTurnPending = false;
         slopeReleaseHoldTurnPending = false;
@@ -11218,24 +7899,19 @@ public float AdvancePredictedSplineDriveReadOnly(
         capturedTurnLandingIntent = default;
         flatEntryFrame = default;
         ClearPendingTurnSnapshot();
-
         Physics.SyncTransforms();
         correspondSubject?.ResetDerivedVelocitySample();
         correspondSubject?.SynchronizeNow(true);
-
         if (logCore || logTurnTransition)
         {
-            Debug.LogWarning(
-                $"[CORE TURN TRANSITION ABORT] reason={reason} " +
-                $"position={(rb ? rb.position : Vector3.zero):F4} " +
-                $"velocity={(rb ? rb.velocity : Vector3.zero):F4}",
-                this);
+            Debug.LogWarning( $"[CORE TURN TRANSITION ABORT] reason={reason} " + $"position={(rb ? rb.position : Vector3.zero):F4} " +
+                $"velocity={(rb ? rb.velocity : Vector3.zero):F4}", this);
         }
     }
-
     void ClearSmoothTurnStateForStageRebuild()
     {
         ResetRouteIntegritySupervisor("stage rebuild");
+        postExtremeNoLeftEdgeStage = -1;
         ClearVerifiedStairCorrection();
         flatStartReleaseCommitInProgress = false;
         ClearPostBDownhillGuard("lifecycle reset");
@@ -11258,9 +7934,7 @@ public float AdvancePredictedSplineDriveReadOnly(
         ResetFlickGesture();
         correspondSubject?.ResetTurnGestureTracking();
         ballVisualSlopeDrive?.CancelTurnHandoffRequest();
-
         correspondSubject?.CancelVisualFrameTurn(false);
-
         turnTransitionActive = false;
         turnBodyFrozen = false;
         turnTransitionStartTime = -1f;
@@ -11272,7 +7946,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         turnGuideReleasedAt = -1f;
         turnGuideGuardBraking = false;
         turnGuideCrawlLogged = false;
-
         activeTurnMode = TurnResolutionMode.None;
         autoHoldTurnPending = false;
         slopeReleaseHoldTurnPending = false;
@@ -11288,61 +7961,37 @@ public float AdvancePredictedSplineDriveReadOnly(
         lastFlatTurnLimitProgress = float.NaN;
         flatEntryFrame = default;
         ClearPendingTurnSnapshot();
-
         if (rb && rb.isKinematic)
             rb.isKinematic = false;
-
         // No valid snapshot: never erase the live body's velocity.
     }
-
-    // 同じFlat上の進行距離で「次の斜面入口へ安全に曲がり終われるか」を判定する。
-    // 従来の前後通過判定とは意味が異なるが、既存の3モードと後続の物理実行は維持。
+    // 同じFlat上の進行距離で「次の斜面入口へ安全に曲がり終われるか」を判定する。 従来の前後通過判定とは意味が異なるが、既存の3モードと後続の物理実行は維持。
     TurnResolutionMode ResolveTurnResolutionMode(Vector3 directionBefore)
     {
         if (BallVisualIsOnSlope || BallVisualIsAir)
             return TurnResolutionMode.FiveLineAfterPop;
-
         if (!BallVisualIsOnFlat)
             return TurnResolutionMode.FiveLineAfterPop;
-
         if (!pendingTurnSnapshotValid || !pendingTurnWasFlat || !pendingTurnTargetValid)
         {
             if (logTurnPolicy)
                 ;
             return TurnResolutionMode.FiveLineAfterEnergyTarget;
         }
-
-        Vector3 measuringDirection = pendingFlatEntryFrame.valid
-            ? pendingFlatEntryFrame.direction
-            : NormalizeFlat(directionBefore, travelDirection);
-
-        lastEnergyTargetForwardDistance = Vector3.Dot(
-            pendingTurnTargetPhysics - pendingTurnFlickPosition,
-            measuringDirection);
-
+        Vector3 measuringDirection = pendingFlatEntryFrame.valid ? pendingFlatEntryFrame.direction : NormalizeFlat(directionBefore, travelDirection);
+        lastEnergyTargetForwardDistance = Vector3.Dot( pendingTurnTargetPhysics - pendingTurnFlickPosition, measuringDirection);
         if (!TryCalculateDynamicEnergyTolerance(out float tolerance))
         {
             if (logTurnPolicy)
                 ;
             return TurnResolutionMode.FiveLineAfterEnergyTarget;
         }
-
         // Apply時に多少進んだ場合も、実際のInCorner開始位置が境界を越えていないか検査。
-        float executionProgress = Vector3.Dot(
-            rb.position - pendingFlatEntryFrame.position,
-            pendingFlatEntryFrame.direction);
-
-        float forwardSpeedAtFlick = Mathf.Max(0f, Vector3.Dot(
-            pendingTurnFlickVelocity, pendingFlatEntryFrame.direction));
+        float executionProgress = Vector3.Dot( rb.position - pendingFlatEntryFrame.position, pendingFlatEntryFrame.direction);
+        float forwardSpeedAtFlick = Mathf.Max(0f, Vector3.Dot( pendingTurnFlickVelocity, pendingFlatEntryFrame.direction));
         float entryNumericalAllowance = Mathf.Max(Eps, forwardSpeedAtFlick * Time.fixedDeltaTime);
-        bool clearanceStillAvailable =
-            executionProgress >= -entryNumericalAllowance &&
-            executionProgress < lastFlatTurnLimitProgress;
-
-        bool useUTurn =
-            lastEnergyTargetForwardDistance > tolerance &&
-            clearanceStillAvailable;
-
+        bool clearanceStillAvailable = executionProgress >= -entryNumericalAllowance && executionProgress < lastFlatTurnLimitProgress;
+        bool useUTurn = lastEnergyTargetForwardDistance > tolerance && clearanceStillAvailable;
         if (useUTurn)
         {
             ;
@@ -11351,65 +8000,43 @@ public float AdvancePredictedSplineDriveReadOnly(
         {
             ;
         }
-
-        return useUTurn
-            ? TurnResolutionMode.UTurnBeforeEnergyTarget
-            : TurnResolutionMode.FiveLineAfterEnergyTarget;
+        return useUTurn ? TurnResolutionMode.UTurnBeforeEnergyTarget : TurnResolutionMode.FiveLineAfterEnergyTarget;
     }
-
     bool TryCalculateDynamicEnergyTolerance(out float tolerance)
     {
         tolerance = float.NaN;
         dynamicEnergyTargetTolerance = float.NaN;
         lastFlatTurnLimitProgress = float.NaN;
-
         FlatEntryFrame entry = pendingFlatEntryFrame;
-        if (!entry.valid || !pendingTurnTargetValid ||
-            !IsFiniteFloat(entry.distanceToNextSlope) ||
-            entry.distanceToNextSlope <= Eps ||
+        if (!entry.valid || !pendingTurnTargetValid || !IsFiniteFloat(entry.distanceToNextSlope) || entry.distanceToNextSlope <= Eps ||
             !currentGuideValid || currentGuide.splineIndex != entry.splineIndex)
             return false;
-        
-        //平面入り口からフリックした距離
-        float entryToFlick = Vector3.Dot(
-            pendingTurnFlickPosition - entry.position, entry.direction);
-        //平面入り口からBallVisualからもらった着地点の距離
-        float entryToTarget = Vector3.Dot(
-            pendingTurnTargetPhysics - entry.position, entry.direction);
-
-        float forwardSpeed = Mathf.Max(0f, Vector3.Dot(
-            pendingTurnFlickVelocity, entry.direction));
+        // 平面入り口からフリックした距離
+        float entryToFlick = Vector3.Dot( pendingTurnFlickPosition - entry.position, entry.direction);
+        // 平面入り口からBallVisualからもらった着地点の距離
+        float entryToTarget = Vector3.Dot( pendingTurnTargetPhysics - entry.position, entry.direction);
+        float forwardSpeed = Mathf.Max(0f, Vector3.Dot( pendingTurnFlickVelocity, entry.direction));
         float motionAllowance = forwardSpeed * Time.fixedDeltaTime;
-
         // InCornerでは旧方向にBezier半径Rを進めない。球のプローブ幅と1物理ステップだけ確保。
         float clearance = ProbeRadius + motionAllowance;
         if (!knotDetector)
             return false;
         knotDetector.TryGetNextSlopePosition();
-
         Vector3 nextSlopePosition = knotDetector.nextSlopePosition;
         if (!IsFiniteVector(nextSlopePosition))
             return false;
         float flatLength = Vector3.Dot(nextSlopePosition - entry.position, entry.direction);
         if (!IsFiniteFloat(flatLength) || flatLength <= Eps)
             return false;
-
         float latestTurnProgress = flatLength - clearance;
-
-        if (!IsFiniteFloat(entryToFlick) || !IsFiniteFloat(entryToTarget) ||
-            latestTurnProgress <= Eps ||
-            entryToFlick < motionAllowance ||
-            entryToFlick > flatLength + motionAllowance
-            )
+        if (!IsFiniteFloat(entryToFlick) || !IsFiniteFloat(entryToTarget) || latestTurnProgress <= Eps || entryToFlick < motionAllowance ||
+            entryToFlick > flatLength + motionAllowance )
             return false;
-
         lastFlatTurnLimitProgress = latestTurnProgress;
         tolerance = entryToTarget - latestTurnProgress;
         dynamicEnergyTargetTolerance = tolerance;
         return IsFiniteFloat(tolerance);
     }
-   
-
     // 同じSplineで次の斜面が確認できた最初のFlat支持フレームを基準にする。
     void UpdateFlatEntryFrame(NearestKnotDetector.GuideFrame guide)
     {
@@ -11418,76 +8045,52 @@ public float AdvancePredictedSplineDriveReadOnly(
             flatEntryFrame = default;
             return;
         }
-
         if (flatEntryFrame.valid && flatEntryFrame.splineIndex == guide.splineIndex)
             return;
-
         flatEntryFrame = default;
-        if (!guide.nextIsSlope ||
-            !IsFiniteFloat(guide.distanceToNextSlope) ||
-            guide.distanceToNextSlope <= Eps)
+        if (!guide.nextIsSlope || !IsFiniteFloat(guide.distanceToNextSlope) || guide.distanceToNextSlope <= Eps)
             return;
-
         Vector3 entryDirection = NormalizeFlat(direction, guide.tangent);
         Vector3 guideDirection = NormalizeFlat(guide.tangent, entryDirection);
         // 距離はSpline沿い、投影は直線方向。非直線Flatを誤判定しないため拒否。
         if (Vector3.Dot(entryDirection, guideDirection) < 0.95f)
             return;
-
         flatEntryFrame = new FlatEntryFrame
         {
-            valid = true,
-            splineIndex = guide.splineIndex,
-            position = rb.position,
-            direction = entryDirection,
-            distanceToNextSlope = guide.distanceToNextSlope
+            valid = true, splineIndex = guide.splineIndex, position = rb.position, direction = entryDirection, distanceToNextSlope = guide.distanceToNextSlope
         };
-
         if (logTurnPolicy)
             ;
     }
-
     void CapturePendingTurnSnapshot()
     {
         ClearPendingTurnSnapshot();
         if (!rb)
             return;
-
         pendingTurnSnapshotValid = true;
         pendingTurnWasFlat = BallVisualIsOnFlat;
         pendingTurnFlickPosition = rb.position;
         pendingTurnFlickVelocity = rb.velocity;
         pendingFlatEntryFrame = flatEntryFrame;
-        
         ;
-
         if (!pendingTurnWasFlat)
             return;
-
         if (!ballVisualSlopeDrive)
             ballVisualSlopeDrive = FindObjectOfType<BallVisualSlopeDrive>(true);
         if (!ballVisualSlopeDrive)
             return;
-
-        if (!ballVisualSlopeDrive.TryGetTurnLandingIntent(
-                out BallVisualSlopeDrive.TurnLandingIntent intent) || !intent.valid)
+        if (!ballVisualSlopeDrive.TryGetTurnLandingIntent( out BallVisualSlopeDrive.TurnLandingIntent intent) || !intent.valid)
             return;
-
         // TargetはVisual座標。座標写像がなければ安全側(FiveLine)へ倒す。
         if (!correspondSubject)
             return;
-
-        Vector3 physicsTarget =
-            correspondSubject.InverseMapPoint(intent.positionVisual);
-
+        Vector3 physicsTarget = correspondSubject.InverseMapPoint(intent.positionVisual);
         if (!IsFiniteVector(physicsTarget))
             return;
-
         pendingTurnTargetValid = true;
         pendingTurnTargetPhysics = physicsTarget;
         pendingTurnLandingIntent = intent;
     }
-
     void ClearPendingTurnSnapshot()
     {
         pendingTurnSnapshotValid = false;
@@ -11499,13 +8102,8 @@ public float AdvancePredictedSplineDriveReadOnly(
         pendingTurnTargetPhysics = default;
         pendingTurnLandingIntent = default;
     }
-
-    static bool IsFiniteFloat(float value) =>
-        !float.IsNaN(value) && !float.IsInfinity(value);
-
-    static bool IsFiniteVector(Vector3 value) =>
-        IsFiniteFloat(value.x) && IsFiniteFloat(value.y) && IsFiniteFloat(value.z);
-
+    static bool IsFiniteFloat(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+    static bool IsFiniteVector(Vector3 value) => IsFiniteFloat(value.x) && IsFiniteFloat(value.y) && IsFiniteFloat(value.z);
     void CaptureTurnLandingIntent()
     {
         capturedTurnLandingIntentValid = false;
@@ -11513,7 +8111,6 @@ public float AdvancePredictedSplineDriveReadOnly(
         lastEnergyTargetForwardDistance = float.PositiveInfinity;
         dynamicEnergyTargetTolerance = float.NaN;
         lastFlatTurnLimitProgress = float.NaN;
-
         if (pendingTurnWasFlat)
         {
             if (pendingTurnTargetValid)
@@ -11523,86 +8120,56 @@ public float AdvancePredictedSplineDriveReadOnly(
             }
             return;
         }
-
         if (!ballVisualSlopeDrive)
             ballVisualSlopeDrive = FindObjectOfType<BallVisualSlopeDrive>(true);
-
-        if (ballVisualSlopeDrive &&
-            ballVisualSlopeDrive.TryGetTurnLandingIntent(
-                out BallVisualSlopeDrive.TurnLandingIntent intent) &&
-            intent.valid)
+        if (ballVisualSlopeDrive && ballVisualSlopeDrive.TryGetTurnLandingIntent( out BallVisualSlopeDrive.TurnLandingIntent intent) && intent.valid)
         {
             capturedTurnLandingIntent = intent;
             capturedTurnLandingIntentValid = true;
         }
     }
-
     bool TryGetCapturedLandingIntentPhysics(out Vector3 targetPhysics)
     {
         targetPhysics = rb ? rb.position : transform.position;
-
         BallVisualSlopeDrive.TurnLandingIntent intent = capturedTurnLandingIntent;
         bool valid = capturedTurnLandingIntentValid;
-
-        // FiveLineAfterPopではターン開始後にEnergy targetが更新される場合があるため、
-        // 補正開始時は最新Intentを優先する。
-        if (ballVisualSlopeDrive &&
-            ballVisualSlopeDrive.TryGetTurnLandingIntent(
-                out BallVisualSlopeDrive.TurnLandingIntent latest) &&
-            latest.valid)
+        // FiveLineAfterPopではターン開始後にEnergy targetが更新される場合があるため、 補正開始時は最新Intentを優先する。
+        if (ballVisualSlopeDrive && ballVisualSlopeDrive.TryGetTurnLandingIntent( out BallVisualSlopeDrive.TurnLandingIntent latest) && latest.valid)
         {
             intent = latest;
             valid = true;
         }
-
         if (!valid)
             return false;
-
-        targetPhysics = correspondSubject
-            ? correspondSubject.InverseMapPoint(intent.positionVisual)
-            : intent.positionVisual;
-
+        targetPhysics = correspondSubject ? correspondSubject.InverseMapPoint(intent.positionVisual) : intent.positionVisual;
         return
-            !float.IsNaN(targetPhysics.x) &&
-            !float.IsNaN(targetPhysics.y) &&
-            !float.IsNaN(targetPhysics.z) &&
-            !float.IsInfinity(targetPhysics.x) &&
-            !float.IsInfinity(targetPhysics.y) &&
-            !float.IsInfinity(targetPhysics.z);
+            !float.IsNaN(targetPhysics.x) && !float.IsNaN(targetPhysics.y) && !float.IsNaN(targetPhysics.z) && !float.IsInfinity(targetPhysics.x) &&
+            !float.IsInfinity(targetPhysics.y) && !float.IsInfinity(targetPhysics.z);
     }
-
     void ApplyDirectFiveLineTurn(float turnDegrees)
     {
         float verticalSpeed = Vector3.Dot(rb.velocity, Vector3.up);
         Vector3 planarVelocity = Vector3.ProjectOnPlane(rb.velocity, Vector3.up);
-
         if (planarVelocity.sqrMagnitude > Eps * Eps)
         {
             Quaternion turn = Quaternion.AngleAxis(turnDegrees, Vector3.up);
             planarVelocity = turn * planarVelocity;
         }
-        Vector3 newSide = Vector3.Cross(Vector3.up,
-            NormalizeFlat(turnTargetDirection, direction)).normalized;
+        Vector3 newSide = Vector3.Cross(Vector3.up, NormalizeFlat(turnTargetDirection, direction)).normalized;
         float sideBefore = Vector3.Dot(planarVelocity, newSide);
-        float permittedSide = Mathf.Max(.8f,
-            Mathf.Min(2f, maxGroundSpeed * .04f));
-        float sideAfter = Mathf.Clamp(sideBefore,
-            -permittedSide, permittedSide);
+        float permittedSide = Mathf.Max(.8f, Mathf.Min(2f, maxGroundSpeed * .04f));
+        float sideAfter = Mathf.Clamp(sideBefore, -permittedSide, permittedSide);
         planarVelocity += newSide * (sideAfter - sideBefore);
         rb.velocity = planarVelocity + Vector3.up * verticalSpeed;
         LateralAuditMarkVelocityWriter("ApplyDirectFiveLineTurn");
         if (Mathf.Abs(sideBefore - sideAfter) > .01f && logTurnTransition)
-            Debug.Log($"[TURN LATERAL CAP] before={sideBefore:F2}m/s " +
-                $"after={sideAfter:F2}m/s cap={permittedSide:F2}m/s " +
-                $"mode={activeTurnMode}", this);
+            Debug.Log($"[TURN LATERAL CAP] before={sideBefore:F2}m/s " + $"after={sideAfter:F2}m/s cap={permittedSide:F2}m/s " + $"mode={activeTurnMode}", this);
         LogDropAuditTurn("FIVELINE-VELOCITY-SET", rb.velocity);
         // 旋回開始前に許可済み。90度の速度変更とheadingは常に揃える。
         direction = turnTargetDirection;
         rb.WakeUp();
     }
-
-    // InCorner: 旧進行方向へ前進する円弧を作らず、旋回開始位置から新方向へ向かう。
-    // 速度の水平大きさとY速度は保持する。FiveLine予約はApplyQuarterTurnで決定済み。
+    // InCorner: 旧進行方向へ前進する円弧を作らず、旋回開始位置から新方向へ向かう。 速度の水平大きさとY速度は保持する。FiveLine予約はApplyQuarterTurnで決定済み。
     void ApplyDirectInCornerTurn(Vector3 originalVelocity)
     {
         float verticalSpeed = Vector3.Dot(originalVelocity, Vector3.up);
@@ -11612,115 +8179,63 @@ public float AdvancePredictedSplineDriveReadOnly(
         LateralAuditMarkVelocityWriter("ApplyDirectInCornerTurn");
         LogDropAuditTurn("INCORNER-VELOCITY-SET", originalVelocity);
         rb.WakeUp();
-
         if (logTurnTransition)
             ;
     }
-
     bool ShouldPreserveOutCornerLine(float turnDegrees)
     {
-        if (!rb ||
-            !knotDetector ||
-            !currentGuideValid ||
-            !currentSurfaceValid)
+        if (!rb || !knotDetector || !currentGuideValid || !currentSurfaceValid)
         {
             return false;
         }
-
-        if (!knotDetector.TryGetFiveLineFrame(
-                currentGuide,
-                currentSurface.side,
-                out NearestKnotDetector.FiveLineFrame frame) ||
-            !frame.valid)
+        if (!knotDetector.TryGetFiveLineFrame( currentGuide, currentSurface.side, out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
         {
             return false;
         }
-
-        Vector3 outwardSide =
-            -Mathf.Sign(turnDegrees) *
+        Vector3 outwardSide = -Mathf.Sign(turnDegrees) *
             currentSurface.side.normalized;
-
-        float outerDistance =
-            Mathf.Max(
-                Vector3.Dot(frame.left - frame.center, outwardSide),
-                Vector3.Dot(frame.right - frame.center, outwardSide));
-
+        float outerDistance = Mathf.Max( Vector3.Dot(frame.left - frame.center, outwardSide), Vector3.Dot(frame.right - frame.center, outwardSide));
         if (outerDistance <= Eps)
             return false;
-
-        float outwardOffset =
-            Vector3.Dot(
-                rb.position - frame.center,
-                outwardSide);
-
+        float outwardOffset = Vector3.Dot( rb.position - frame.center, outwardSide);
         // Centerから最外ラインまでの半分より外なら、既存の横ラインを優先する。
         return outwardOffset >= outerDistance * 0.5f;
     }
-
-    // ================================================================
     // FiveLine landing correction
-    // ================================================================
-
-    void TryBeginPendingFiveLineCorrection(
-        NearestKnotDetector.GuideFrame guide,
-        ref Surface surface)
+    void TryBeginPendingFiveLineCorrection( NearestKnotDetector.GuideFrame guide, ref Surface surface)
     {
-        if (!fiveLineCorrectionPending ||
-            fiveLineCorrectionActive ||
-            waitingForTurnGuide ||
-            turnTransitionActive)
+        if (!fiveLineCorrectionPending || fiveLineCorrectionActive || waitingForTurnGuide || turnTransitionActive)
         {
             return;
         }
-
         if (correspondSubject && correspondSubject.IsVisualFrameTurning)
             return;
-
-        // 上段POP -> 下段ではBallVisualの軌道権威が返るまで待つ。
-        // Flat-after-targetでも同じGateを使うことでPose二重所有を避ける。
-        if (ballVisualSlopeDrive &&
-            !ballVisualSlopeDrive.IsStableForFiveLineCorrection)
+        // 上段POP -> 下段ではBallVisualの軌道権威が返るまで待つ。 Flat-after-targetでも同じGateを使うことでPose二重所有を避ける。
+        if (ballVisualSlopeDrive && !ballVisualSlopeDrive.IsStableForFiveLineCorrection)
         {
             return;
         }
-
         if (!rb || !knotDetector || !guide.valid || !surface.Valid)
             return;
-
         // FiveLineは下階段側でのみ適用する。Flat上ではターゲット選択を急がない。
         if (!guide.isSlope)
             return;
-
-        if (!knotDetector.TryGetFiveLineFrame(
-                guide,
-                surface.side,
-                out NearestKnotDetector.FiveLineFrame frame) ||
-            !frame.valid)
+        if (!knotDetector.TryGetFiveLineFrame( guide, surface.side, out NearestKnotDetector.FiveLineFrame frame) || !frame.valid)
         {
             return;
         }
-
         Vector3 side = surface.side.normalized;
         Vector3 selectorPosition = rb.position;
-
         if (TryGetCapturedLandingIntentPhysics(out Vector3 landingPhysics))
             selectorPosition = landingPhysics;
-
-        NearestKnotDetector.FiveLineGroup selectedGroup =
-            NearestKnotDetector.FiveLineGroup.Center;
-
+        NearestKnotDetector.FiveLineGroup selectedGroup = NearestKnotDetector.FiveLineGroup.Center;
         Vector3 selectedPoint = frame.center;
         float bestAbsSideError = float.PositiveInfinity;
-
         for (int i = 0; i < 5; i++)
         {
-            NearestKnotDetector.FiveLineGroup group =
-                (NearestKnotDetector.FiveLineGroup)i;
-
+            NearestKnotDetector.FiveLineGroup group = (NearestKnotDetector.FiveLineGroup)i;
             Vector3 point = frame.GetPoint(group);
-            float sideError = Mathf.Abs(
-                Vector3.Dot(point - selectorPosition, side));
-
+            float sideError = Mathf.Abs( Vector3.Dot(point - selectorPosition, side));
             if (sideError < bestAbsSideError)
             {
                 bestAbsSideError = sideError;
@@ -11728,15 +8243,8 @@ public float AdvancePredictedSplineDriveReadOnly(
                 selectedPoint = point;
             }
         }
-
-        float rawCorrection =
-            Vector3.Dot(selectedPoint - rb.position, side);
-
-        float correction = Mathf.Clamp(
-            rawCorrection,
-            -Mathf.Max(0.05f, fiveLineMaximumCorrectionMeters),
-            Mathf.Max(0.05f, fiveLineMaximumCorrectionMeters));
-
+        float rawCorrection = Vector3.Dot(selectedPoint - rb.position, side);
+        float correction = Mathf.Clamp( rawCorrection, -Mathf.Max(0.05f, fiveLineMaximumCorrectionMeters), Mathf.Max(0.05f, fiveLineMaximumCorrectionMeters));
         fiveLineTargetGroup = selectedGroup;
         fiveLineCorrectionSide = side;
         fiveLineCorrectionStartPosition = rb.position;
@@ -11744,191 +8252,124 @@ public float AdvancePredictedSplineDriveReadOnly(
         fiveLineCorrectionElapsed = 0f;
         fiveLineCorrectionActive = Mathf.Abs(correction) > 0.001f;
         fiveLineCorrectionPending = false;
-
         if (!fiveLineCorrectionActive)
         {
             CompleteFiveLineCorrection(ref surface);
             return;
         }
-
         if (logCore || logTurnPolicy)
         {
             ;
         }
     }
-
-    // FiveLine uses acceleration, never an instantaneous sideways velocity
-    // overwrite.  The original (targetOffset-currentOffset)/dt produced
-    // 30-230+ m/s when the guide or Rigidbody moved during a correction.
+    // FiveLine uses acceleration, never an instantaneous sideways velocity overwrite. The original (targetOffset-currentOffset)/dt produced 30-230+ m/s when the guide or
+    // Rigidbody moved during a correction.
     void StepFiveLineCorrection(ref Surface surface)
     {
         if (!fiveLineCorrectionActive || !rb || !surface.Valid)
             return;
-
-        // A FiveLine landing correction belongs to the receiving slope.
-        // Never chase its old anchor through a new section/turn or a lost Guide.
-        // A reversed side basis on the same lane is OK: only perpendicular
-        // changes indicate that the original correction frame is stale.
-        if (MainGameManager.OnDead || rb.isKinematic ||
-            turnTransitionActive || waitingForTurnGuide || !currentSupported ||
-            !currentGuideValid || !currentGuide.isSlope ||
-            Mathf.Abs(Vector3.Dot(fiveLineCorrectionSide,
-                surface.side.normalized)) < .70f)
+        // A FiveLine landing correction belongs to the receiving slope. Never chase its old anchor through a new section/turn or a lost Guide. A reversed side basis on the same lane
+        // is OK: only perpendicular changes indicate that the original correction frame is stale.
+        if (MainGameManager.OnDead || rb.isKinematic || turnTransitionActive || waitingForTurnGuide || !currentSupported || !currentGuideValid || !currentGuide.isSlope ||
+            Mathf.Abs(Vector3.Dot(fiveLineCorrectionSide, surface.side.normalized)) < .70f)
         {
             CompleteFiveLineCorrection(ref surface, "guide-or-support-changed");
             return;
         }
-
         float dt = Mathf.Max(Time.fixedDeltaTime, Eps);
         const float maxSideSpeed = 6f;
         const float maxSideAcceleration = 75f;
         const float positionResponse = 12f;
         const float positionTolerance = .06f;
         const float speedTolerance = .50f;
-
-        float currentOffset = Vector3.Dot(
-            rb.position - fiveLineCorrectionStartPosition,
-            fiveLineCorrectionSide);
+        float currentOffset = Vector3.Dot( rb.position - fiveLineCorrectionStartPosition, fiveLineCorrectionSide);
         float error = fiveLineCorrectionTargetOffset - currentOffset;
         float sideSpeed = Vector3.Dot(rb.velocity, fiveLineCorrectionSide);
-
-        // The selected landing correction was clamped to 0.75 m at start.
-        // If contact resolution or a later guide switch moves the body far
-        // outside that frame, the old anchor is invalid. Do not pull the ball
-        // across several metres in an attempt to 'undo' that displacement.
-        float maxAnchorDrift = Mathf.Max(2f,
-            Mathf.Max(.05f, fiveLineMaximumCorrectionMeters) + 1.25f);
-        if (Mathf.Abs(currentOffset) > maxAnchorDrift ||
-            Mathf.Abs(error) > maxAnchorDrift)
+        // The selected landing correction was clamped to 0.75 m at start. If contact resolution or a later guide switch moves the body far outside that frame, the old anchor is
+        // invalid. Do not pull the ball across several metres in an attempt to 'undo' that displacement.
+        float maxAnchorDrift = Mathf.Max(2f, Mathf.Max(.05f, fiveLineMaximumCorrectionMeters) + 1.25f);
+        if (Mathf.Abs(currentOffset) > maxAnchorDrift || Mathf.Abs(error) > maxAnchorDrift)
         {
             CompleteFiveLineCorrection(ref surface, "stale-anchor");
             return;
         }
-
-        // An initial 0.10 s correction is too short to move 0.75 m with
-        // 75 m/s^2 while also braking; allow bounded settling instead.
+        // An initial 0.10 s correction is too short to move 0.75 m with 75 m/s^2 while also braking; allow bounded settling instead.
         fiveLineCorrectionElapsed += dt;
-        float maximumDuration = Mathf.Max(.60f,
-            fiveLineCorrectionDurationSeconds * 5f);
-        // A repeated contact impulse can prevent normal settling. This
-        // correction never owns the ball for longer than one extra brake
-        // window; abandon it instead of applying a persistent sideways motor.
+        float maximumDuration = Mathf.Max(.60f, fiveLineCorrectionDurationSeconds * 5f);
+        // A repeated contact impulse can prevent normal settling. This correction never owns the ball for longer than one extra brake window; abandon it instead of applying a
+        // persistent sideways motor.
         if (fiveLineCorrectionElapsed >= maximumDuration + .40f)
         {
             CompleteFiveLineCorrection(ref surface, "hard-timeout");
             return;
         }
         bool timedOut = fiveLineCorrectionElapsed >= maximumDuration;
-
-        // v^2 <= 2*a*distance: braking is started before the target.
-        // An additional proportional speed target removes near-goal chatter.
-        float brakingSpeed = Mathf.Sqrt(
-            2f * maxSideAcceleration * Mathf.Abs(error));
-        float desiredSideSpeed = timedOut ? 0f :
-            Mathf.Sign(error) * Mathf.Min(maxSideSpeed,
-                Mathf.Min(Mathf.Abs(error) * positionResponse, brakingSpeed));
-
-        // The ONLY FiveLine speed change is caused by a capped physical
-        // acceleration; preserve gravity, forward velocity and inertia.
-        float sideAcceleration = Mathf.Clamp(
-            (desiredSideSpeed - sideSpeed) / dt,
-            -maxSideAcceleration, maxSideAcceleration);
+        // v^2 <= 2*a*distance: braking is started before the target. An additional proportional speed target removes near-goal chatter.
+        float brakingSpeed = Mathf.Sqrt( 2f * maxSideAcceleration * Mathf.Abs(error));
+        float desiredSideSpeed = timedOut ? 0f : Mathf.Sign(error) * Mathf.Min(maxSideSpeed, Mathf.Min(Mathf.Abs(error) * positionResponse, brakingSpeed));
+        // The ONLY FiveLine speed change is caused by a capped physical acceleration; preserve gravity, forward velocity and inertia.
+        float sideAcceleration = Mathf.Clamp( (desiredSideSpeed - sideSpeed) / dt, -maxSideAcceleration, maxSideAcceleration);
         Vector3 sideForce = fiveLineCorrectionSide * sideAcceleration;
-        LateralAuditRecordOtherForce("FiveLineSideAcceleration",
-            sideForce, ForceMode.Acceleration);
+        LateralAuditRecordOtherForce("FiveLineSideAcceleration", sideForce, ForceMode.Acceleration);
         rb.AddForce(sideForce, ForceMode.Acceleration);
         rb.WakeUp();
-
         bool positionSettled = Mathf.Abs(error) <= positionTolerance;
         bool velocitySettled = Mathf.Abs(sideSpeed) <= speedTolerance;
         if (velocitySettled && (positionSettled || timedOut))
-            CompleteFiveLineCorrection(ref surface,
-                timedOut && !positionSettled ? "timeout-decelerated" : "settled");
+            CompleteFiveLineCorrection(ref surface, timedOut && !positionSettled ? "timeout-decelerated" : "settled");
     }
-
-    void CompleteFiveLineCorrection(ref Surface surface,
-        string reason = "settled")
+    void CompleteFiveLineCorrection(ref Surface surface, string reason = "settled")
     {
         bool wasActive = fiveLineCorrectionActive;
         fiveLineCorrectionActive = false;
-
-        // Never erase Rigidbody's entire lateral velocity here. The caller
-        // has already braked it to <= 0.5 m/s, or has abandoned a stale
-        // frame. In both cases the natural momentum belongs to normal motion.
+        // Never erase Rigidbody's entire lateral velocity here. The caller has already braked it to <= 0.5 m/s, or has abandoned a stale frame. In both cases the natural momentum
+        // belongs to normal motion.
         if (wasActive && logLateralJumpAudit && reason != "settled")
-            Debug.LogWarning($"[FIVELINE BOUNDED HANDOFF] " +
-                $"t={Time.fixedTime:F3} reason={reason} " +
-                $"elapsed={fiveLineCorrectionElapsed:F3} " +
-                $"targetOffset={fiveLineCorrectionTargetOffset:F3} " +
-                $"pos={(rb ? rb.position : Vector3.zero):F3} " +
-                $"velocity={(rb ? rb.velocity : Vector3.zero):F3}; " +
-                "no velocity snap / no forced turn", this);
-
+            Debug.LogWarning($"[FIVELINE BOUNDED HANDOFF] " + $"t={Time.fixedTime:F3} reason={reason} " + $"elapsed={fiveLineCorrectionElapsed:F3} " +
+                $"targetOffset={fiveLineCorrectionTargetOffset:F3} " + $"pos={(rb ? rb.position : Vector3.zero):F3} " +
+                $"velocity={(rb ? rb.velocity : Vector3.zero):F3}; " + "no velocity snap / no forced turn", this);
         activeTurnMode = TurnResolutionMode.None;
         capturedTurnLandingIntentValid = false;
         capturedTurnLandingIntent = default;
         ResetBallVisualSplineSession();
-
         if (surface.Valid)
         {
             surface = BuildSplineSurface(currentGuide);
             currentSurface = surface;
             currentSurfaceValid = surface.Valid;
         }
-
         if (logCore || logTurnPolicy)
         {
             ;
         }
     }
-
     bool RotateVisualMapFrameDirect(float visualAngle)
     {
         if (!visualPlayerRoot)
             return false;
-
         Quaternion worldTurn = Quaternion.AngleAxis(visualAngle, Vector3.up);
-        Vector3 pivot = visualRotationPivot
-            ? visualRotationPivot.position
-            : visualPlayerRoot.position;
-
+        Vector3 pivot = visualRotationPivot ? visualRotationPivot.position : visualPlayerRoot.position;
         Vector3 relative = visualPlayerRoot.position - pivot;
-
-        visualPlayerRoot.SetPositionAndRotation(
-            pivot + worldTurn * relative,
-            worldTurn * visualPlayerRoot.rotation);
-
+        visualPlayerRoot.SetPositionAndRotation( pivot + worldTurn * relative, worldTurn * visualPlayerRoot.rotation);
         return true;
     }
-
-    // ================================================================
     // Helpers
-    // ================================================================
-
-    static float Move(float current, float target, float jerk) =>
-        Mathf.MoveTowards(current, target, jerk * Time.fixedDeltaTime);
-
+    static float Move(float current, float target, float jerk) => Mathf.MoveTowards(current, target, jerk * Time.fixedDeltaTime);
     static Vector3 NormalizeFlat(Vector3 value, Vector3 fallback)
     {
         Vector3 flat = Vector3.ProjectOnPlane(value, Vector3.up);
-
         if (flat.sqrMagnitude <= Eps)
             flat = Vector3.ProjectOnPlane(fallback, Vector3.up);
-
         return (flat.sqrMagnitude <= Eps ? Vector3.forward : flat).normalized;
     }
-
     static float SmoothRange01(float value, float start, float end)
     {
         if (end <= start + Eps)
             return value >= end ? 1f : 0f;
-
         float t = Mathf.Clamp01(Mathf.InverseLerp(start, end, value));
         return t * t * t * (t * (t * 6f - 15f) + 10f);
     }
-    
 }
-
 public interface IVisualProxyBindable
 {
     void BindVisualProxy(Transform proxy);

@@ -12,7 +12,19 @@ public class GettingTraffic_Corn : MonoBehaviour
     public GameObject RendererMul;
     public GameObject ReSubject;
     public bool OneOnly = false;
+    public static readonly string isFreshInstallLaunch = "isFreshInstallLaunch";
+    public static readonly string CallForCurrrentScore = "CallForCurrrentScore";
+    public static readonly string CallForCurrrentCoin = "CallForCurrrentCoin";
+    public static readonly string itemList = "itemList";
     public static readonly string CallForBestScore = "CallForBestScore";
+    
+    public static int bestScore = 0;
+
+
+
+    //public static readonly string BallNumber = "ActiveUselessBall";
+    public static readonly string ArchiveBallItem = "SettingBallItem";
+
 
     public MainGameManager mainGameManager;
 
@@ -91,6 +103,12 @@ public class GettingTraffic_Corn : MonoBehaviour
             core.BeginCommandOnTouch = false;
             core.enabled = false;
             MainGameManager.ClashBurst.gameObject.SetActive(true);
+
+            foreach (ParticleSystem ps in MainGameManager.ClashBurst.gameObject.GetComponentsInChildren<ParticleSystem>())
+            {
+                ps.Stop(false, ParticleSystemStopBehavior.StopEmittingAndClear);
+                ps.Play(false);
+            }
             MainGameManager.PointToPlane = 0;
             StartCoroutine(delayResume());
             return;
@@ -106,7 +124,13 @@ public class GettingTraffic_Corn : MonoBehaviour
         MainGameManager.core.AcceleFirstTurn = false;
         Debug.Log("B : 待機開始 " + Time.timeScale);
         AndroidOneOnly.pharseCoin = MainGameManager.Coin;
+        PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
+        Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);  
+        
         AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
+        Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentScore"+MainGameManager.PointToPlane);  
+        AdManager.instance.InterstitialsAdStart();
+
         if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
         {
             PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);

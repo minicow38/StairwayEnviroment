@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dependencies>
+    <androidPackages>
+        <androidPackage spec="com.applovin.mediation:vungle-adapter:7.8.0.0" />
+    </androidPackages>
+    <iosPods>
+        <iosPod name="AppLovinMediationVungleAdapter" version="7.8.0.0" />
+    </iosPods>
+    <remoteSwiftPackage url="https://github.com/AppLovin/AppLovin-MAX-Swift-Package-Liftoff.git" version="7080000.0.0">
+        <swiftPackage name="AppLovinMediationVungleAdapter" replacesPod="AppLovinMediationVungleAdapter" target="All" />
+    </remoteSwiftPackage>
+</dependencies>

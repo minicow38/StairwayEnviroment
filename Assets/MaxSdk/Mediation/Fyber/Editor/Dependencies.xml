@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dependencies>
+    <androidPackages>
+        <androidPackage spec="com.applovin.mediation:fyber-adapter:8.5.1.0"/>
+    </androidPackages>
+    <iosPods>
+        <iosPod name="AppLovinMediationFyberAdapter" version="8.5.2.0"/>
+    </iosPods>
+    <remoteSwiftPackage url="https://github.com/AppLovin/AppLovin-MAX-Swift-Package-Fyber.git" version="8050200.0.0">
+        <swiftPackage name="AppLovinMediationFyberAdapter" replacesPod="AppLovinMediationFyberAdapter" target="All" />
+    </remoteSwiftPackage>
+</dependencies>

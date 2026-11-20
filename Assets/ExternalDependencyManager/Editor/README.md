@@ -3,28 +3,6 @@
 [![openupm](https://img.shields.io/npm/v/com.google.external-dependency-manager?label=openupm&registry_uri=https://package.openupm.com)](https://openupm.com/packages/com.google.external-dependency-manager/)
 [![openupm](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=downloads&query=%24.downloads&suffix=%2Fmonth&url=https%3A%2F%2Fpackage.openupm.com%2Fdownloads%2Fpoint%2Flast-month%2Fcom.google.external-dependency-manager)](https://openupm.com/packages/com.google.external-dependency-manager/)
 
-## External Dependency Manager for Unity (EDM4U) will be Archived.
-
-**Archive Date:** October 26, 2026
-
-**Status:** Read-only / Unsupported
-
-EDM4U will be archived on **October 26, 2026**, in favor of the newly announced **External Dependency Manager (EDM)** from Unity.
-
-#### Why is this happening?
-
-Over the years, EDM4U (formerly the Unity Jar Resolver) has served as a convenient way for managing Android and iOS native dependency linking in Unity projects. To improve the developer experience and bring dependency management natively into the engine, we have collaborated closely with Unity. Unity has now released an officially supported fork of EDM4U, which uses the same xml format and workflows developers have previously been used to.
-
-#### What does this mean for EDM4U?
-
-After the archive date on **October 26, 2026**, this repository will become read-only. While the original code and previous releases will remain accessible in an archived state, there will be **no future updates, bug fixes, or new feature development from Google**.
-
-#### Next Steps & Recommended Action
-
-We strongly recommend transitioning to Unity's officially supported EDM package. Because Unity's package is built directly on top of the original EDM4U foundation.  The transition is designed to be straightforward and remains fully compatible with your existing XML dependency configurations.
-
-You can evaluate and install Unity's External Dependency Manager directly via the **Unity Package Manager (UPM)** for Unity 2022.3 and later. For installation instructions and migration steps, please refer to the [Unity External Dependency Manager documentation](https://docs.unity3d.com/Packages/com.unity.external-dependency-manager@2.1/manual/get-started-with-edm.html).
-
 ## Overview
 
 The External Dependency Manager for Unity (EDM4U) (formerly Play Services
@@ -34,7 +12,7 @@ requires:
 *   Android specific libraries (e.g
     [AARs](https://developer.android.com/studio/projects/android-library.html))
 
-*   iOS [CocoaPods](https://cocoapods.org/), [Swift Packages](https://www.swift.org/packages/)
+*   iOS [CocoaPods](https://cocoapods.org/)
 
 *   Version management of transitive dependencies
 
@@ -324,66 +302,8 @@ Manager > Android Resolver > Display Libraries` menu item.
 
 ### iOS Resolver
 
-The iOS resolver component of this plugin supports both [Swift Packages](https://www.swift.org/packages/) and
-[CocoaPods](https://cocoapods.org/).
-
-#### Swift Package Manager Support
-Swift Packages are a newer way to add dependencies on iOS+ platforms. EDM4U uses Unity's built in ability to add Packages to the generated Xcode project, parsing from the library's Dependencies xml file.
-
-For example, to add the Firebase Analytics package:
-
-```xml
-<dependencies>
-  <remoteSwiftPackage url="https://github.com/firebase/firebase-ios-sdk.git"
-                      version="12.0.0">
-    <swiftPackage name="FirebaseAnalytics"/>
-  </remoteSwiftPackage>
-</dependencies>
-```
-
-##### Replacing Cocoapods
-
-In the Dependencies xml files, libraries can reference both Swift Packages, and Cocoapods. This is useful to give developers the option to fallback to the previous Cocoapods behavior if they want to. To specify which Pods the Package is meant to be replacing in the xml file, so that when the resolution runs, it knows not to add both.
-
-For example, to add the AdMob package to replace the Pod example provided below:
-
-```xml
-<dependencies>
-  <remoteSwiftPackage url="https://github.com/googleads/swift-package-manager-google-mobile-ads.git"
-                      version="12.12.0"
-                      upToNextMajor="true">
-    <swiftPackage name="GoogleMobileAds" replacesPod="Google-Mobiles-Ads-SDK"/>
-  </remoteSwiftPackage>
-</dependencies>
-```
-
-##### Target Selection for Swift Packages
-
-By default, packages are linked to the Unity framework target (`UnityFramework`). Use the `target` attribute on `<swiftPackage>` to specify which Xcode target the library or framework product should be linked to:
-
-```xml
-<dependencies>
-  <iosPods>
-    <remoteSwiftPackage url="https://github.com/firebase/firebase-ios-sdk.git">
-      <package version="10.0.0" />
-      <!-- Linked only to UnityFramework (default) -->
-      <swiftPackage name="FirebaseAnalytics" target="Framework" />
-
-      <!-- Linked only to the main app target (Unity-iPhone) -->
-      <swiftPackage name="FirebaseMessaging" target="Main" />
-
-      <!-- Linked to both UnityFramework and Unity-iPhone -->
-      <swiftPackage name="SharedKit" target="All" />
-
-      <!-- Linked to a custom target by exact target name -->
-      <swiftPackage name="NotificationService" target="NotificationServiceExtension" />
-    </remoteSwiftPackage>
-  </iosPods>
-</dependencies>
-```
-
-#### CocoaPods Support
-A CocoaPods `Podfile` is generated and the
+The iOS resolver component of this plugin manages
+[CocoaPods](https://cocoapods.org/). A CocoaPods `Podfile` is generated and the
 `pod` tool is executed as a post build process step to add dependencies to the
 Xcode project exported by Unity.
 
@@ -400,7 +320,7 @@ For example, to add the AdMob pod, version 7.0 or greater with bitcode enabled:
 </dependencies>
 ```
 
-##### Integration Strategies
+#### Integration Strategies
 
 The `CocoaPods` are either:
 
@@ -425,7 +345,7 @@ using UnityEditor;
 using UnityEditor.Callbacks;
 using UnityEngine;
 
-public class PostProcessIOS
+public class PostProcessIOS : MonoBehaviour
 {
     // Must be between 40 and 50 to ensure that it's not overriden by Podfile generation (40) and
     // that it's added before "pod install" (50).

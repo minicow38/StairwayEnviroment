@@ -105,6 +105,9 @@ public class OnClickChooseBall : MonoBehaviour
                 }
 
                 AndroidOneOnly.activeBallMaterial=transform.GetComponent<PersonalMaterial>().BallMaterial.name;
+                Firebase.Analytics.FirebaseAnalytics.LogEvent("CollectionLinenap[commodityNumber]"+CollectionLinenap[commodityNumber].Find("BlockInBall").transform.GetComponent<PersonalMaterial>().BallMaterial.name);
+                Firebase.Analytics.FirebaseAnalytics.LogEvent("commodityNumber"+commodityNumber.ToString());
+
                 CollectionLinenap[commodityNumber].transform.gameObject.SetActive(true);
                
 
