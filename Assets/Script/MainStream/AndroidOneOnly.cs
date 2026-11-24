@@ -35,17 +35,18 @@ public class AndroidOneOnly : MonoBehaviour
         LinenapItemList = new List<int>();
         Debug.Log("[InitOncePerLaunch]");
         currentScore = PlayerPrefs.GetInt(CallForCurrrentScore,0);
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("GetCallForCurrrentScore"+CallForCurrrentScore);  
+        //Firebase.Analytics.FirebaseAnalytics.LogEvent("GetCallForCurrrentScore"+CallForCurrrentScore);  
 
         bestScore=PlayerPrefs.GetInt(CallForBestScore,0);
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("GetCallForBestScore"+CallForBestScore);  
+        //Firebase.Analytics.FirebaseAnalytics.LogEvent("GetCallForBestScore"+CallForBestScore);  
         
         pharseCoin = PlayerPrefs.GetInt(CallForCurrrentCoin,0);
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("GetCallForCurrrentCoin"+CallForCurrrentCoin);  
+       // Firebase.Analytics.FirebaseAnalytics.LogEvent("GetCallForCurrrentCoin"+CallForCurrrentCoin);  
 
         //UsingBallNow = PlayerPrefs.GetInt(BallNumber,0);
         activeBallMaterial = PlayerPrefs.GetString(ArchiveBallItem, "Airman");
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("GetArchiveBallItem"+ArchiveBallItem);  
+        //Firebase.Analytics.FirebaseAnalytics.LogEvent("GetArchiveBallItem"+ArchiveBallItem);  
+        //購入時
 
 
         MiddleItemList = PlayerPrefs.GetString(itemList,"");
@@ -93,16 +94,16 @@ public class AndroidOneOnly : MonoBehaviour
         if (!hasFocus)
         {
             PlayerPrefs.SetInt(CallForCurrrentScore, MainGameManager.PointToPlane);
-            Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentScore"+MainGameManager.PointToPlane);  
+            //Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentScore"+MainGameManager.PointToPlane);  
 
             PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
-            Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);  
+           // Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);  
 
 
             if (MainGameManager.CurrentPointToPlane > bestScore)
             {
                 PlayerPrefs.SetInt(CallForBestScore, MainGameManager.CurrentPointToPlane);
-                Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForBestScore"+MainGameManager.CurrentPointToPlane);  
+                Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForBestScore"+MainGameManager.CurrentPointToPlane);  
 
             }
 
@@ -113,13 +114,13 @@ public class AndroidOneOnly : MonoBehaviour
             }
 
             PlayerPrefs.SetString(itemList, stringPlus);
-            Firebase.Analytics.FirebaseAnalytics.LogEvent("itemList,"+itemList);  
+            //Firebase.Analytics.FirebaseAnalytics.LogEvent("itemList,"+itemList);  
 
             PlayerPrefs.SetString(ArchiveBallItem, activeBallMaterial);
-            Firebase.Analytics.FirebaseAnalytics.LogEvent("ArchiveBallItem,"+ArchiveBallItem);  
+          //  Firebase.Analytics.FirebaseAnalytics.LogEvent("ArchiveBallItem,"+ArchiveBallItem);  
 
             PlayerPrefs.SetInt(CallForCurrrentCoin, pharseCoin);
-            Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForCurrrentCoin,"+CallForCurrrentCoin);  
+            //Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForCurrrentCoin,"+CallForCurrrentCoin);  
 
             //PlayerPrefs.SetInt(BallNumber,UsingBallNow);
 

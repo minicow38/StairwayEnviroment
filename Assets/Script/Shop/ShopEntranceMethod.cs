@@ -21,13 +21,13 @@ public class ShopEntranceMethod : MonoBehaviour
     {
         int stageNumber = SceneManager.GetActiveScene().buildIndex;
         
-        if(stageNumber==0)
+        if(stageNumber==0 || stageNumber==2)
         {
             SceneManager.LoadScene(1);
         }
         else
         {
-            SceneManager.LoadScene(0);
+            SceneManager.LoadScene(2);
         }
     }
 }

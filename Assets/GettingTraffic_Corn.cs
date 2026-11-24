@@ -125,16 +125,17 @@ public class GettingTraffic_Corn : MonoBehaviour
         Debug.Log("B : 待機開始 " + Time.timeScale);
         AndroidOneOnly.pharseCoin = MainGameManager.Coin;
         PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);  
+        //Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);  
         
         AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentScore"+MainGameManager.PointToPlane);  
+        Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForCurrrentScore"+MainGameManager.PointToPlane);  
         AdManager.instance.InterstitialsAdStart();
 
         if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
         {
             PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
             AndroidOneOnly.bestScore = MainGameManager.CurrentPointToPlane;
+            Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForBestScore"+MainGameManager.CurrentPointToPlane);  
         }
 
         yield return new WaitForSeconds(1f);
