@@ -107,6 +107,9 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
     public GameObject CoinPrefab;
     public GameObject EnemyPrefab;
+
+    [Header("FunCharacter Diagnostics")]
+    [SerializeField] bool debugFunCharacter = true;
     //public GameObject PresonerPrefab;
 
     public GameObject PylonPrefab;
@@ -1795,6 +1798,8 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
 
         generatedPhysicsRoot = GetOrCreateChild(collisionStageRoot, generatedPhysicsName);
         generatedVisualRoot = GetOrCreateChild(renderStageRoot, generatedVisualPlayerName);
+        LogFunRootReset(generatedPhysicsRoot);
+        LogFunRootReset(generatedVisualRoot);
         ResetGeneratedRootTransform(generatedPhysicsRoot);
         ResetGeneratedRootTransform(generatedVisualRoot);
         return true;
@@ -1877,6 +1882,21 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
         child = new GameObject(childName).transform;
         child.SetParent(parent, false);
         return child;
+    }
+
+    // Diagnostics only: report a reset that would actually change an existing root.
+    void LogFunRootReset(Transform root)
+    {
+        if (!debugFunCharacter || !root || root.childCount == 0)
+            return;
+        if (root.localPosition.sqrMagnitude < 0.000001f &&
+            Quaternion.Angle(root.localRotation, Quaternion.identity) < 0.01f &&
+            (root.localScale - Vector3.one).sqrMagnitude < 0.000001f)
+            return;
+        Debug.Log($"[FUN ROOT RESET] frame={Time.frameCount} fixed={Time.fixedTime:F3} " +
+                  $"root={root.name} id={root.GetInstanceID()} children={root.childCount} " +
+                  $"oldLocal={root.localPosition:F3} oldRot={root.localEulerAngles:F3} " +
+                  $"oldScale={root.localScale:F3} newLocal=(0,0,0) newRot=(0,0,0) newScale=(1,1,1)", root);
     }
 
     static void ResetGeneratedRootTransform(Transform generatedRoot)
@@ -2516,7 +2536,25 @@ public class CoreStepInsertSplinePathNatural : MonoBehaviour
             : (UnityEngine.Random.Range(0, 2) == 0 ? 0 : 2);
         Vector3 localPosition = new Vector3(ShiftObj[widthObj].x, 0.125f, 0f);
 
-        SpawnFunCharacter(EnemyPrefab, visualArc, localPosition);
+        GameObject character = SpawnFunCharacter(EnemyPrefab, visualArc, localPosition);
+
+        // Diagnostics only: pass the known pair; never use it to change physics.
+        ActionDall[] dolls = character.GetComponentsInChildren<ActionDall>(true);
+        foreach (ActionDall doll in dolls)
+            doll.BindFunDiagnostic(character, physicsArc, visualArc, debugFunCharacter);
+
+        if (debugFunCharacter)
+        {
+            Debug.Log($"[FUN SPAWN] id={character.GetInstanceID()} name={character.name} " +
+                      $"frame={Time.frameCount} fixed={Time.fixedTime:F3} " +
+                      $"local={character.transform.localPosition:F3} world={character.transform.position:F3} " +
+                      $"physicsArc={physicsArc.name}#{physicsArc.GetInstanceID()} pPos={physicsArc.transform.position:F3} " +
+                      $"pRot={physicsArc.transform.eulerAngles:F3} " +
+                      $"visualArc={visualArc.name}#{visualArc.GetInstanceID()} vPos={visualArc.transform.position:F3} " +
+                      $"vRot={visualArc.transform.eulerAngles:F3} " +
+                      $"pairGap={Vector3.Distance(physicsArc.transform.TransformPoint(localPosition), character.transform.position):F3} " +
+                      $"actionDallCount={dolls.Length}", character);
+        }
 
         return true;
     }
