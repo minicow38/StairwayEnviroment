@@ -368,6 +368,133 @@ public sealed class SlopeStickCore : MonoBehaviour
     [SerializeField] bool autoHoldFallbackTurnRight = false;
     bool autoHoldEligible, autoHoldSawSlope, autoHoldLastHalfValid, autoHoldLeftHalf;
     bool autoHoldTurnPending;
+    // One coordinator for stage identity and input ownership. Gesture classification, physical turn gates,
+    // FiveLine, TapEdge, downhill gravity and visual handoff continue to use their existing implementations.
+    enum TurnCoordinatorOrigin { None, TapEdge, FlatB, StairB, TerminalB, Normal }
+    struct TurnCoordinatorRoute
+    {
+        public TurnCoordinatorOrigin origin;
+        public int previousStair, receivingStair, epoch;
+        public Collider receivingCollider;
+    }
+    struct TurnCoordinatorDeferredRelease
+    {
+        public bool valid, shortFlatTap, horizontalFlick;
+        public Collider pressCollider;
+        public int flatFamily, epoch;
+        public float directionSign;
+    }
+    struct TurnCoordinatorState
+    {
+        public TurnCoordinatorRoute queued;
+        public TurnCoordinatorDeferredRelease deferred;
+    }
+    TurnCoordinatorState turnCoordinator;
+
+    // Capture the RECEIVING physical stage when the finger's command is accepted. Later Handoff may
+    // move the rigidbody from ArcSlab(N) onto StairWay(N), but must not advance the route to N+1.
+    void CoordinatorRegisterQueuedRoute(TurnCoordinatorOrigin origin, Collider receivingCollider)
+    {
+        TurnCoordinatorRoute route = default;
+        route.origin = origin;
+        route.epoch = routeTurnEpoch;
+        route.receivingCollider = receivingCollider;
+        route.previousStair = -1;
+        route.receivingStair = -1;
+        if (receivingCollider && (TryGetStageFamily(receivingCollider, "ArcSlab", out int stage) ||
+                                  TryGetStageFamily(receivingCollider, "StairWay", out stage)))
+        {
+            route.previousStair = stage - 1;
+            route.receivingStair = stage;
+        }
+        turnCoordinator.queued = route;
+        if (logTurnTransition)
+            Debug.Log($"[TURN COORDINATOR QUEUED] t={Time.fixedTime:F3} origin={origin} " +
+                      $"previous={route.previousStair} receiving={route.receivingStair} " +
+                      $"epoch={route.epoch} collider={(receivingCollider ? receivingCollider.name : "-")}", this);
+    }
+
+    void CoordinatorResolveRoute(ref int previousStair, ref int receivingStair)
+    {
+        TurnCoordinatorRoute route = turnCoordinator.queued;
+        if (route.origin == TurnCoordinatorOrigin.None || route.receivingStair < 0 || route.epoch != routeTurnEpoch)
+            return; // The ordinary turn retains the original physical-floor fallback.
+        if (previousStair != route.previousStair || receivingStair != route.receivingStair)
+            Debug.LogWarning($"[TURN COORDINATOR STAGE RECONCILED] t={Time.fixedTime:F3} " +
+                             $"origin={route.origin} physical={previousStair}->{receivingStair} " +
+                             $"queued={route.previousStair}->{route.receivingStair}; " +
+                             "same authorized turn, not an extra turn", this);
+        previousStair = route.previousStair;
+        receivingStair = route.receivingStair;
+    }
+
+    void CoordinatorRememberDeferredFlatRelease(Vector2 releasedPosition)
+    {
+        turnCoordinator.deferred = default;
+        if (!tapEdgePressOnFlat || !flickPressFlatCollider ||
+            !TryGetStageFamily(flickPressFlatCollider, "ArcSlab", out int flatFamily) ||
+            flatFamily != bHoldOriginFlatFamily + 1)
+            return;
+        var releaseSupport = HasGroundSupport();
+        if (!releaseSupport.Item1 || releaseSupport.Item2.collider != flickPressFlatCollider ||
+            !IsTapEdgeSupportedFlat(releaseSupport.Item1, releaseSupport.Item2))
+            return;
+        Vector2 delta = releasedPosition - flickStart;
+        bool horizontal = TryGetAdaptiveFlick(releasedPosition, out float signedPixels);
+        float tapPixels = 1.5f * Mathf.Max(1f, adaptivePixelsPerMm);
+        bool shortTap = !horizontal && Time.unscaledTime - flickPressUnscaledTime <= .30f &&
+            delta.sqrMagnitude <= tapPixels * tapPixels && adaptivePeakHorizontalMm <= 1.5f &&
+            adaptivePeakVerticalMm <= 1.5f;
+        if (!shortTap && !horizontal)
+            return; // Ambiguous/vertical drag is rejected exactly as before.
+        turnCoordinator.deferred = new TurnCoordinatorDeferredRelease
+        {
+            valid = true,
+            shortFlatTap = shortTap,
+            horizontalFlick = horizontal,
+            pressCollider = flickPressFlatCollider,
+            flatFamily = flatFamily,
+            epoch = routeTurnEpoch,
+            directionSign = horizontal ? Mathf.Sign(signedPixels) : 0f
+        };
+        AutoHoldLog("B NEW RELEASE RECORDED", $"flat=ArcSlab{flatFamily} " +
+            $"action={(shortTap ? "TapEdge tap" : "normal horizontal flick")} " +
+            "waiting for previous stair-only B to resolve");
+    }
+
+    // Called ONLY after the old STAIR-only reservation was physically rejected by sustained
+    // ArcSlab(N+1) support. A stored RELEASE is not a turn by itself: repeat the original
+    // physical support and turn-authorization checks before handing it to the existing path.
+    void CoordinatorResolveDeferredFlatRelease(int confirmedFlatFamily)
+    {
+        TurnCoordinatorDeferredRelease pending = turnCoordinator.deferred;
+        turnCoordinator.deferred = default;
+        if (!pending.valid || pending.epoch != routeTurnEpoch || pending.flatFamily != confirmedFlatFamily ||
+            !BeginCommandOnTouch || !Earliest || !AcceleFirstTurn || MainGameManager.OnDead ||
+            HasPendingTurnIntent || turnTransitionActive || waitingForTurnGuide || generalStallRecovering || !rb || rb.isKinematic)
+            return;
+        var floor = HasGroundSupport();
+        if (!floor.Item1 || floor.Item2.collider != pending.pressCollider ||
+            !IsTapEdgeSupportedFlat(floor.Item1, floor.Item2))
+        {
+            AutoHoldLog("B NEW RELEASE EXPIRED", $"flat=ArcSlab{confirmedFlatFamily}; original press floor no longer supports ball");
+            return;
+        }
+        if (pending.shortFlatTap && tapEdgeState == TapEdgeState.None)
+        {
+            tapEdgeState = TapEdgeState.Armed;
+            tapEdgeFlatCollider = pending.pressCollider;
+            TapEdgeLog("ARMED", $"saved flat tap from B handoff collider={pending.pressCollider.name}");
+        }
+        else if (pending.horizontalFlick && tapEdgeState == TapEdgeState.None)
+        {
+            // Existing normal flick authorization + visual handoff still apply. It was RELEASED,
+            // so this is not a prohibited hold-to-turn or an invented post-expiry command.
+            bool queued = QueueQuarterTurn(pending.directionSign);
+            AutoHoldLog(queued ? "B NEW FLICK ADOPTED" : "B NEW FLICK REJECTED",
+                $"flat=ArcSlab{confirmedFlatFamily}; old stair reservation already closed");
+        }
+    }
     // B is keyed to physical stage identity, not intermediate stair contact.
     int bHoldOriginFlatFamily = -1;
     // An accepted release+phase change must not be vetoed by a later floor ray.
@@ -997,6 +1124,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     }
     void OnDisable()
     {
+        turnCoordinator = default;
         stairMicroFlatTapLeftEdgeStage = -1;
         postExtremeNoLeftEdgeStage = -1;
         routeSignVisibleUntil = 0f;
@@ -1555,8 +1683,31 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             // A sustained receiving flat ends the STAIR-only rescue, not the earlier flat tap's left-edge intent. Ordinary player/camera turning remains available here; apply the edge
             // only after it.
             bool carryLeftEdge = stairMicroFlatTapLeftEdgeStage == flatFamily;
+            // The coordinator owns which of the two different fingers survives. The previous
+            // STAIR-only turn has no physical StairWay(N+1), so do not carry it indefinitely.
+            // A CURRENTLY held receiving-flat finger stays a B press; an ALREADY released
+            // short tap/horizontal flick is replayed only through its normal authorization.
+            bool adoptLiveReceivingFlatPress = trackingFlick && !flickConsumed && tapEdgePressOnFlat &&
+                flickPressFlatCollider &&
+                TryGetStageFamily(flickPressFlatCollider, "ArcSlab", out int pressedFlatFamily) && pressedFlatFamily == flatFamily &&
+                IsAutoHoldInputStillDown() && BeginCommandOnTouch && Earliest && AcceleFirstTurn &&
+                !MainGameManager.OnDead && !HasPendingTurnIntent && !turnTransitionActive && !waitingForTurnGuide && !generalStallRecovering;
+            int releasedOriginFamily = bHoldOriginFlatFamily;
             flatStartReleaseCommitInProgress = false;
             CancelAutoHold("stair micro-flick reached next flat");
+            if (adoptLiveReceivingFlatPress)
+            {
+                autoHoldEligible = true;
+                bHoldOriginFlatFamily = flatFamily;
+                Vector3 pressHeading = NormalizeFlat(currentGuideValid ? currentGuide.tangent : direction, direction);
+                Vector3 authoritative = NormalizeFlat(direction, travelDirection);
+                autoHoldPressConfirmedHeading = Vector3.Dot(pressHeading, authoritative) >= .80f ? pressHeading : authoritative;
+                AutoHoldLog("B NEXT FLAT PRESS ADOPTED", $"old=StairWay{releasedOriginFamily} " +
+                    $"new=ArcSlab{flatFamily}; physical flat press remains held, next B only at its own RELEASE+phase");
+                turnCoordinator.deferred = default;
+            }
+            else
+                CoordinatorResolveDeferredFlatRelease(flatFamily);
             if (carryLeftEdge)
                 AutoHoldLog("FLAT TAP LEFT EDGE CARRIED", $"nextStage={flatFamily}; waiting for normal 90-degree turn");
             return;
@@ -1784,6 +1935,15 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             if (TryCommitBReleaseOnObservedPhase())
             {
                 flatStartReleaseCommitInProgress = false;
+                // The old, released finger has now authorized the only turn
+                // on this curve. If another finger began during the seam
+                // check, its later release must not queue a SECOND turn.
+                if (trackingFlick)
+                {
+                    flickConsumed = true;
+                    tapEdgePressOnFlat = false;
+                    AutoHoldLog("B NEW GESTURE CONSUMED", "previous released B committed on verified receiving stage; prevent double turn");
+                }
                 AutoHoldLog("B PHASE TURN QUEUED", "released + next stage");
             }
             else if (MainGameManager.OnDead || !rb || rb.isKinematic || !autoHoldEligible)
@@ -2865,7 +3025,9 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             routeIntegrityNextLogAt = Time.fixedTime + .20f;
             Debug.LogWarning($"[ROUTE INTEGRITY DRIVE BLOCKED] " + $"t={Time.fixedTime:F3} epoch={routeTurnEpoch} " + $"floor={floor.collider.name} " +
                 $"alignment={alignment:F2} drive={driveState:F2} " + $"realForward={realForward:F2} " +
-                $"reason={(wrongPositiveDrive ? "wrong-signed-drive" : "false-brake")} " + $"expected={expected:F3}; gravity/Stick/side retained", this);
+                $"reason={(wrongPositiveDrive ? "wrong-signed-drive" : "false-brake")} " + $"expected={expected:F3} " +
+                $"crossSpeed={(Vector3.ProjectOnPlane(rb.velocity, Vector3.up) - expected * realForward).magnitude:F2}m/s " +
+                $"microB={flatStartReleaseCommitInProgress && stairMicroPhaseTurnPending}; gravity/Stick/side retained", this);
         }
     }
     // Called exclusively when a held flat-start B release did NOT authorize a turn. This is a route lock, not an automatic B turn or a new Guide.
@@ -3461,6 +3623,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     /// </summary>
     void ResetRestartTransientStateSoft()
     {
+        turnCoordinator = default;
         stairMicroFlatTapLeftEdgeStage = -1;
         postExtremeNoLeftEdgeStage = -1;
         ResetRouteIntegritySupervisor("restart");
@@ -3860,6 +4023,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     }
     void BeginFlickGesture(Vector2 position, int fingerId)
     {
+        turnCoordinator.deferred = default; // A newer finger supersedes an older deferred RELEASE, never the queued turn.
         ClearUncommittedRouteGuard("new gesture");
         // Player intent supersedes any general automatic escape immediately.
         ResetGeneralStallRecovery("new player input", true);
@@ -3933,8 +4097,51 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             // This same post-target tap must NOT immediately re-arm a new left-edge route when released on the next flat.
             tapEdgePressOnFlat = false;
         }
+        // A released stair-micro B belongs to its ORIGINAL finger until the
+        // immediately following physical StairWay(N+1) is confirmed or the
+        // short ArcSlab(N+1) seam check finishes.  A fresh press on that
+        // receiving flat must not erase this already-released transaction.
+        // Still record the new finger above; if the stair rescue expires on
+        // this flat, ObserveStairMicroReceivingGroundSupport may adopt that
+        // continuing press as the start of the NEXT B gesture.
+        Collider receivingPressCollider = nearPressFloor ? pressSupport.Item2.collider : null;
+        bool releasedMicroReceivingFlat = receivingPressCollider &&
+            Vector3.Angle(pressSupport.Item2.normal, Vector3.up) <= 18f &&
+            TryGetStageFamily(receivingPressCollider, "ArcSlab", out int receivingPressFlatFamily) &&
+            receivingPressFlatFamily == bHoldOriginFlatFamily + 1;
+        bool releasedMicroReceivingStair = receivingPressCollider && IsAutoHoldStageHit(pressSupport.Item2, float.NaN) &&
+            TryGetStageFamily(receivingPressCollider, "StairWay", out int receivingPressStairFamily) &&
+            receivingPressStairFamily == bHoldOriginFlatFamily + 1;
+        bool protectReleasedMicro = flatStartReleaseCommitInProgress && autoHoldEligible && stairMicroPhaseTurnPending &&
+            !HasPendingTurnIntent && bHoldOriginFlatFamily >= 0 && tapEdgeState == TapEdgeState.None &&
+            (releasedMicroReceivingFlat || releasedMicroReceivingStair);
+        if (protectReleasedMicro)
+        {
+            if (releasedMicroReceivingFlat)
+            {
+                // ArcSlab's physical floor wins over a premature nearest
+                // slope-guide classification for this SAME verified slab.
+                tapEdgePressOnFlat = true;
+                flickPressFlatCollider = receivingPressCollider;
+                flickStartedOnFlat = true;
+            }
+            if (releasedMicroReceivingStair)
+            {
+                // The actual successor stair is already under the ball. The
+                // old released B owns it, even if FixedUpdate has not sampled
+                // this contact yet. A new press is not the turn trigger.
+                autoHoldNextFlatReady = true;
+                autoHoldNextFlatCollider = receivingPressCollider;
+                autoHoldNextFlatLastSupportTime = Time.time;
+                autoHoldNextFlatLastSupportPosition = rb.position;
+            }
+            AutoHoldLog("B RELEASE RESERVATION RETAINED", $"old=StairWay{bHoldOriginFlatFamily} " +
+                $"newPress={receivingPressCollider.name} finger={fingerId}; " +
+                "old released micro owns physically verified receiving-stage check");
+            return; // Do NOT re-arm/clear old B observation yet.
+        }
         if (flatStartReleaseCommitInProgress && autoHoldEligible && !HasPendingTurnIntent)
-            CancelAutoHold("new press interrupted B release recheck");
+            CancelAutoHold("new press outside pending B receiving flat");
         flatStartReleaseCommitInProgress = false;
         ResetAutoHoldObservation(false);
         // B release-only retains its flat-press arming policy, but both lateral halves and both geometric turn directions are valid. A slope-start release is a separate,
@@ -4095,6 +4302,22 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     {
         if (!trackingFlick || flickConsumed)
             return;
+        // One old released stair-micro B owns the next physical stair. A second finger's
+        // RELEASE on the intervening real flat must not be LOST merely because the 0.10s
+        // stair/flat proof is still running. Record its classification once, without turning.
+        bool oldMicroOwnsNewFinger = flatStartReleaseCommitInProgress && autoHoldEligible && stairMicroPhaseTurnPending &&
+            bHoldOriginFlatFamily >= 0 && ((tapEdgePressOnFlat && flickPressFlatCollider &&
+            TryGetStageFamily(flickPressFlatCollider, "ArcSlab", out int protectedFlatFamily) &&
+            protectedFlatFamily == bHoldOriginFlatFamily + 1) ||
+            (autoHoldNextFlatReady && autoHoldNextFlatCollider &&
+            TryGetStageFamily(autoHoldNextFlatCollider, "StairWay", out int protectedStairFamily) &&
+            protectedStairFamily == bHoldOriginFlatFamily + 1));
+        if (oldMicroOwnsNewFinger)
+        {
+            CoordinatorRememberDeferredFlatRelease(position);
+            flickConsumed = true; // The touch ended; it cannot queue a SECOND turn during old B ownership.
+            return;
+        }
         // Extra release-only option on the ORIGINAL post-extreme stair. Once the receiving phase is observed, normal B owns the release. A coherent drag may choose the sign, but no
         // drag is required.
         bool postExtremeLongHold = slopeReleaseHoldArmed && slopeReleaseStartedAfterExtreme && autoHoldEligible && Time.unscaledTime - flickPressUnscaledTime >= .30f &&
@@ -4427,6 +4650,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         {
             ReleaseTapEdgeHandoffHold();
             pendingTurnDegrees = 0f;
+            turnCoordinator.queued = default;
             pendingTurnQueuedTime = -1f;
             pendingTurnFromPassedSlope = false;
             ClearPendingTurnSnapshot();
@@ -6682,6 +6906,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         StopEdgeCruise("early B release");
         ClearPostAutoHoldLeftEdge();
         CapturePendingTurnSnapshot();
+        CoordinatorRegisterQueuedRoute(TurnCoordinatorOrigin.TerminalB, slopeReleaseTerminalStairCollider);
         // A correction belonging to the PREVIOUS turn must not veto the newly released B command. Relinquish only its controller state; do not reposition the ball or overwrite
         // Rigidbody velocity.
         if (fiveLineCorrectionActive || fiveLineCorrectionPending)
@@ -6809,6 +7034,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         bReleaseLastVerifiedPosition = rb.position;
         bReleaseHandoffActive = bReleaseHandoffFlat;
         bReleaseNextLogTime = 0f;
+        CoordinatorRegisterQueuedRoute(TurnCoordinatorOrigin.StairB, bReleaseHandoffFlat);
         // The old turn's lateral correction has no authority over a newly released B. Keep Rigidbody velocity and gravity untouched.
         fiveLineCorrectionActive = false;
         fiveLineCorrectionPending = false;
@@ -7194,6 +7420,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         ResetTapEdge(); // Long Hold wins; no competing tap turn.
         flickConsumed = true; // A release must never generate another turn.
         CapturePendingTurnSnapshot();
+        CoordinatorRegisterQueuedRoute(TurnCoordinatorOrigin.FlatB, autoHoldNextFlatCollider);
         // This MouseUp already won B ownership. A correction from the previous turn must not block its visual/physics handoff. No position or velocity snap is performed here.
         fiveLineCorrectionActive = false;
         fiveLineCorrectionPending = false;
@@ -7390,6 +7617,8 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         pendingTurnQueuedTime = Time.time;
         // Updateで入力を受理した瞬間のPhysics状態を保存する。 Turn Handoff後の位置・Targetで判定をすり替えない。
         CapturePendingTurnSnapshot();
+        CoordinatorRegisterQueuedRoute(sameFlatTapTurn ? TurnCoordinatorOrigin.TapEdge : TurnCoordinatorOrigin.Normal,
+            sameFlatTapTurn ? tapEdgeFlatCollider : null);
         // BallVisualが独立Pose Authority中なら、通常Recoveryを待たず短いTurn Handoffへ入れる。
         RequestTurnHandoffForPendingIntent();
         return true;
@@ -7437,6 +7666,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         slopeReleaseHoldTurnPending = false;
         ClearCommittedBReleaseMetadata();
         pendingTurnDegrees = 0f;
+        turnCoordinator = default; // an expired turn cannot retain a route or a deferred competing finger
         stairMicroFlatTapLeftEdgeStage = -1;
         pendingTurnQueuedTime = -1f;
         pendingTurnFromPassedSlope = false;
@@ -7728,6 +7958,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             AutoHoldLog("B COMMITTED SEAM PROVEN", $"turnFrom={lastStair} to={nextStair} " + $"floor={(preTurnFloor.collider ? preTurnFloor.collider.name : "-")} " +
                 $"pos={rb.position:F3}");
         }
+        CoordinatorResolveRoute(ref lastStair, ref nextStair);
         ClearPostBDownhillGuard("new turn");
         ClearEarlyFlick();
         turnDegrees = Mathf.Sign(turnDegrees) * QuarterTurnDegrees;
@@ -7805,6 +8036,8 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         }
         bool resumedFromRouteHold = routeRecognitionState != RouteRecognitionState.Confirmed;
         ArmRouteIntegrityForTurn(turnTargetDirection, lastStair, nextStair);
+        // This is the only successful physical-turn commit for the queued transaction.
+        turnCoordinator = default;
         SetRouteRecognitionState(RouteRecognitionState.Confirmed, nextStair, "player-authorized turn");
         if (resumedFromRouteHold)
             ShowRouteGameSign("90 DEG TURN", "Normal turn controller engaged", new Color(.20f, 1f, .48f), 1.8f);
@@ -8098,6 +8331,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     }
     void ClearSmoothTurnStateForStageRebuild()
     {
+        turnCoordinator = default;
         ResetRouteIntegritySupervisor("stage rebuild");
         postExtremeNoLeftEdgeStage = -1;
         ClearVerifiedStairCorrection();

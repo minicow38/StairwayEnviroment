@@ -1,10 +1,14 @@
 <dependencies>
   <packages>
+    <package>androidx.appcompat:appcompat:1.1.0</package>
     <package>androidx.constraintlayout:constraintlayout:2.1.4</package>
     <package>androidx.core:core:1.0.0+</package>
     <package>androidx.fragment:fragment:1.7.1</package>
     <package>androidx.lifecycle:lifecycle-process:2.6.2</package>
+    <package>androidx.media3:media3-exoplayer:1.4.1</package>
+    <package>androidx.media3:media3-ui:1.4.1</package>
     <package>androidx.recyclerview:recyclerview:1.2.1</package>
+    <package>com.android.installreferrer:installreferrer:2.2</package>
     <package>com.android.support:customtabs:28.+</package>
     <package>com.android.support:recyclerview-v7:28.+</package>
     <package>com.applovin.mediation:bytedance-adapter:8.4.0.6.0</package>
@@ -16,6 +20,7 @@
     <package>com.applovin.mediation:vungle-adapter:7.8.0.0</package>
     <package>com.applovin:applovin-sdk:13.6.4</package>
     <package>com.google.android.gms:play-services-ads:25.5.0</package>
+    <package>com.google.android.gms:play-services-ads-identifier:17.0.0</package>
     <package>com.google.android.gms:play-services-ads-identifier:18.1.0</package>
     <package>com.google.android.gms:play-services-base:18.11.1</package>
     <package>com.google.android.ump:user-messaging-platform:4.0.0</package>
@@ -23,6 +28,7 @@
     <package>com.google.firebase:firebase-analytics-unity:14.1.0</package>
     <package>com.google.firebase:firebase-app-unity:14.1.0</package>
     <package>com.google.firebase:firebase-common:23.0.0</package>
+    <package>com.google.firebase:firebase-messaging:23.0.0</package>
     <package>com.squareup.picasso:picasso:2.71828</package>
     <package>com.tenjin:android-sdk:1.16.7</package>
   </packages>

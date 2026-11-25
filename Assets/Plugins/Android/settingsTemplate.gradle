@@ -19,6 +19,12 @@ dependencyResolutionManagement {
 // Android Resolver Repos Start
         def unityProjectPath = $/file:///**DIR_UNITYPROJECT**/$.replace("\\", "/")
         maven {
+            url "https://repo.maven.apache.org/maven2" // Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:7
+        }
+        maven {
+            url "https://maven.google.com" // Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:7, Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:12, Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:17, Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:22, Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:27, Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:33, Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:39
+        }
+        maven {
             url (unityProjectPath + "/Assets/GeneratedLocalRepo/Firebase/m2repository") // Assets/Firebase/Editor/AnalyticsDependencies.xml:17, Assets/Firebase/Editor/AppDependencies.xml:21
         }
         maven {
@@ -29,6 +35,9 @@ dependencyResolutionManagement {
         }
         maven {
             url "https://dl-maven-android.mintegral.com/repository/mbridge_android_sdk_oversea" // Assets/MaxSdk/Mediation/Mintegral/Editor/Dependencies.xml:8
+        }
+        maven {
+            url "https://repo1.maven.org/maven2" // Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:33, Assets/ByteBrewSDK/Editor/ByteBrewDependencies.xml:39
         }
         mavenLocal()
 // Android Resolver Repos End

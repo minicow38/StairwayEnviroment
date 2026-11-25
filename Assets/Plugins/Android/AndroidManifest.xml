@@ -21,7 +21,14 @@
             </intent-filter>
 
             <meta-data android:name="unityplayer.UnityActivity" android:value="true" />
+
         </activity>
 
     </application>
+
+    <!-- 追加部分 -->
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
+    <uses-feature android:name="android.hardware.screen.landscape" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+
 </manifest>
