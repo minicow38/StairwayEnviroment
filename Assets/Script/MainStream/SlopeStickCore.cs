@@ -1085,15 +1085,12 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         MainGameManager.OpenChunkStage = true;
         AndroidOneOnly.pharseCoin = MainGameManager.Coin;
         PlayerPrefs.SetInt(CallForCurrrentCoin, MainGameManager.Coin);
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForCurrrentScore"+MainGameManager.PointToPlane);  
         // Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);
         AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
         // Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentScore"+MainGameManager.PointToPlane);
         if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
         {
             PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
-            Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForBestScore"+MainGameManager.CurrentPointToPlane);  
-
             AndroidOneOnly.bestScore = MainGameManager.CurrentPointToPlane;
         }
         MainGameManager.TopTitle.SetActive(true);
@@ -2083,9 +2080,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         {
             // 前のSplineの接線とたまたま平行な遠距離Guideを採用しない。 接地 + 方向 + 距離の3条件を満たして初めてDriveを解禁する。
             float alignment = TurnGuideAxisAlignment(guide);
-            ObserveBReceivingStairWhileWaiting(grounded, hit);
-            // Keep a witness for logging; no turn, force, or new latch here.
-            bool verifiedNormalReceivingStage = IsNormalTurnReceivingStage(guide, grounded, hit);
             bool captured = IsTurnReceivingGuideValid(guide, grounded, hit);
             if (captured && postBDownhillArmed && guide.isSlope && !TryResolvePostBDownhill(guide, surface, hit, out _))
             {
@@ -2097,44 +2091,8 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
                         $"floor={(hit.collider ? hit.collider.name : "-")} " + $"heading={postBDownhillCommittedHeading:F3}", this);
                 }
             }
-            // If the original B receiving stair was physically traversed
-            // without a safe capture, a verified aligned guide on its NEXT
-            // flat can finish the old handoff. Never clear an unsafe guard by
-            // elapsed time or stage number alone.
-            bool successorFlatCapture = !captured && IsBVerifiedSuccessorFlatGuide(guide, grounded, hit);
-            if (successorFlatCapture)
-                captured = true;
             if (!captured)
             {
-                // Log the decisive failed gate on the *real receiving floor*.
-                // No timer-based guard release: the old guide must not drive
-                // when it is perpendicular or physically incompatible.
-                if (logTurnTransition && routeEpochActive && !postBDownhillArmed &&
-                    routeExpectedNextStair >= 0 && grounded && hit.collider &&
-                    Time.fixedTime >= turnHandoffNextAuditTime &&
-                    ( (TryGetStageFamily(hit.collider, "ArcSlab", out int diagnosticFlat) && diagnosticFlat == routeExpectedNextStair) ||
-                      (TryGetStageFamily(hit.collider, "StairWay", out int diagnosticStair) && diagnosticStair == routeExpectedNextStair)))
-                {
-                    bool surfaceMatches = (guide.isSlope && hit.collider.name.StartsWith("StairWay", System.StringComparison.Ordinal)) ||
-                        (!guide.isSlope && hit.collider.name.StartsWith("ArcSlab", System.StringComparison.Ordinal));
-                    float normalDot = guide.normal.sqrMagnitude > Eps && hit.normal.sqrMagnitude > Eps
-                        ? Vector3.Dot(hit.normal.normalized, guide.normal.normalized) : -1f;
-                    float heightGap = guide.valid
-                        ? Mathf.Abs(Vector3.Dot(guide.point - hit.point, hit.normal.normalized)) : float.PositiveInfinity;
-                    float forwardOffset = guide.valid
-                        ? Vector3.Dot(Vector3.ProjectOnPlane(guide.point - rb.position, Vector3.up),
-                                      NormalizeFlat(turnTargetDirection, direction)) : float.NegativeInfinity;
-                    string reason = !guide.valid ? "invalid" : !IsCloseGroundRay(hit, rb.worldCenterOfMass) ? "support" :
-                        !surfaceMatches ? "surface" : alignment < TurnGuideAlignmentMin ? "axis" :
-                        guide.distanceToGuide > ProbeRadius * 5.7f ? "distance" :
-                        normalDot < .40f ? "normal" : heightGap > ProbeRadius * 2f ? "height" :
-                        forwardOffset < -ProbeRadius * 2.5f ? "behind" : "route-or-other";
-                    Debug.Log($"[TURN GUIDE NORMAL STAGE REJECT] t={Time.fixedTime:F3} reason={reason} " +
-                        $"expectedStage={routeExpectedNextStair} floor={hit.collider.name} guideSlope={guide.isSlope} " +
-                        $"dist={guide.distanceToGuide:F2} axis={alignment:F2} normalDot={normalDot:F2} " +
-                        $"heightGap={heightGap:F2} forwardOffset={forwardOffset:F2}", this);
-                    turnHandoffNextAuditTime = Time.fixedTime + .25f;
-                }
                 PauseExtremePointTracking();
                 driveState = 0f;
                 GuardUncapturedTurnGuide(guide, grounded);
@@ -2142,23 +2100,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
                 // Never add a second full-strength old-spline Stick here.
                 return;
             }
-            if (successorFlatCapture)
-            {
-                Debug.Log($"[B TURN GUIDE SUCCESSOR FLAT CAPTURE] t={Time.fixedTime:F3} " +
-                    $"receivingStair={routeExpectedNextStair} floor={hit.collider.name} " +
-                    $"guideDist={guide.distanceToGuide:F2}; verified stage passage", this);
-                ClearPostBDownhillGuard("verified successor flat / stale guide wait finished");
-            }
-            else if (postBDownhillArmed && routeExpectedNextStair >= 0 &&
-                     guide.distanceToGuide > Mathf.Max(supportGraceMaxGuideDistance, ProbeRadius * 2f))
-                Debug.Log($"[B TURN GUIDE STAGE CAPTURE] t={Time.fixedTime:F3} " +
-                    $"stage={routeExpectedNextStair} floor={hit.collider.name} " +
-                    $"guideDist={guide.distanceToGuide:F2}", this);
-            else if (verifiedNormalReceivingStage &&
-                     guide.distanceToGuide > Mathf.Max(supportGraceMaxGuideDistance, ProbeRadius * 2f))
-                Debug.Log($"[TURN GUIDE NORMAL STAGE CAPTURE] t={Time.fixedTime:F3} " +
-                    $"stage={routeExpectedNextStair} floor={hit.collider.name} " +
-                    $"guideDist={guide.distanceToGuide:F2}; verified route epoch", this);
             if (postAutoHoldFastArrival && postAutoHoldReceivingStage >= 0 &&
                 guide.distanceToGuide > Mathf.Max(supportGraceMaxGuideDistance, ProbeRadius * 2f))
                 Debug.Log($"[TURN GUIDE SAME-FLAT STAGE CAPTURE] t={Time.fixedTime:F3} " +
@@ -2411,39 +2352,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         }
         return false;
     }
-    // Ordinary release-based 90-degree turns use the route epoch already
-    // recorded by ApplyQuarterTurn. 2026-11-21: UTurn at 19.980 (stage 7,
-    // guideDist ~2.49m) and FiveLine at 48.080 (stage 8, ~1.86m) both
-    // crossed their real receiving stairs while the generic 1.75m guide
-    // gate remained closed.  Never grant a capture for a different stair,
-    // an unsupported floor, or a perpendicular / height-incompatible guide.
-    // B and TapEdge/micro turns retain their separate, proven capture gates.
-    bool IsNormalTurnReceivingStage(NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit floor)
-    {
-        if (!waitingForTurnGuide || !routeEpochActive || postBDownhillArmed ||
-            routeExpectedNextStair < 0 || routeAuthorizedHeading.sqrMagnitude <= Eps ||
-            !guide.valid || !grounded || !floor.collider ||
-            !IsAutoHoldStageHit(floor, float.NaN) ||
-            !IsCloseGroundRay(floor, rb.worldCenterOfMass) ||
-            (postAutoHoldReceivingStage >= 0 &&
-             (postAutoHoldFastArrival || postAutoHoldUniversalInCorner)) ||
-            Vector3.Dot(NormalizeFlat(turnTargetDirection, direction),
-                        NormalizeFlat(routeAuthorizedHeading, direction)) < .95f)
-            return false;
-        bool receivingSurface = (!guide.isSlope &&
-            TryGetStageFamily(floor.collider, "ArcSlab", out int receivingFlat) &&
-            receivingFlat == routeExpectedNextStair &&
-            Vector3.Angle(floor.normal, Vector3.up) <= 18f) ||
-            (guide.isSlope &&
-             TryGetStageFamily(floor.collider, "StairWay", out int receivingStair) &&
-             receivingStair == routeExpectedNextStair);
-        if (!receivingSurface || guide.normal.sqrMagnitude <= Eps ||
-            floor.normal.sqrMagnitude <= Eps)
-            return false;
-        Vector3 floorNormal = floor.normal.normalized;
-        return Vector3.Dot(floorNormal, guide.normal.normalized) >= .40f &&
-            Mathf.Abs(Vector3.Dot(guide.point - floor.point, floorNormal)) <= ProbeRadius * 2f;
-    }
     // The detector's knot direction may be reversed. A valid receiving guide must still be physically close, forward of the body, and share the floor's actual normal. An axial
     // cosine alone is insufficient.
     bool IsTurnReceivingGuideValid( NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit floor)
@@ -2478,34 +2386,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
               TryGetStageFamily(floor.collider, "StairWay", out int tapStair) &&
               tapStair == postAutoHoldReceivingStage)) &&
             Mathf.Abs(Vector3.Dot(guide.point - floor.point, floor.normal.normalized)) <= ProbeRadius * 1.5f;
-        // Only an ALREADY executed, leftward B InCorner turn: Stage(N+1) is
-        // known from the route epoch. The 2026-11-21 log showed real ArcSlab9
-        // and StairWay9 support with guideDist=2.44-2.45m, but the generic
-        // 1.75m gate kept waitingForTurnGuide armed into ArcSlab11. Preserve
-        // the strict gate for every other turn and every unrelated floor.
-        bool receivingBStage = postBDownhillArmed && routeEpochActive &&
-            routeExpectedNextStair >= 0 && guide.valid && grounded && floor.collider &&
-            IsCloseGroundRay(floor, rb.worldCenterOfMass) &&
-            Vector3.Dot(NormalizeFlat(turnTargetDirection, direction),
-                        NormalizeFlat(postBDownhillCommittedHeading, direction)) >= .95f &&
-            ((!guide.isSlope &&
-              TryGetStageFamily(floor.collider, "ArcSlab", out int bReceivingFlat) &&
-              bReceivingFlat == routeExpectedNextStair &&
-              Vector3.Angle(floor.normal, Vector3.up) <= 18f) ||
-             (guide.isSlope &&
-              TryGetStageFamily(floor.collider, "StairWay", out int bReceivingStair) &&
-              bReceivingStair == routeExpectedNextStair)) &&
-            guide.normal.sqrMagnitude > Eps &&
-            Vector3.Dot(floor.normal.normalized, guide.normal.normalized) >= .40f &&
-            Mathf.Abs(Vector3.Dot(guide.point - floor.point,
-                                  floor.normal.normalized)) <= ProbeRadius * 2f;
         float guideLimit = Mathf.Max(supportGraceMaxGuideDistance, ProbeRadius * 2f);
-        // Same physical-stair gate that recovered the B route, but bound to
-        // a non-B turn's own route epoch.  Do not change the global 1.75m limit.
-        if (IsNormalTurnReceivingStage(guide, grounded, floor))
-            guideLimit = Mathf.Max(guideLimit, ProbeRadius * 5.7f); // ~2.71m, this receiving stage only
-        if (receivingBStage)
-            guideLimit = Mathf.Max(guideLimit, ProbeRadius * 5.7f); // 2.7075m; only verified receiving B stage
         if (receivingMicroStage)
             guideLimit = Mathf.Max(guideLimit, ProbeRadius * 6.6f); // 3.135m; original stair-micro only
         else if (receivingSameFlatTapStage)
@@ -2522,59 +2403,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         if (guide.normal.sqrMagnitude > Eps && Vector3.Dot(floor.normal.normalized, guide.normal.normalized) < .35f)
             return false;
         return true;
-    }
-    // A failed B guide capture must not outlive its receiving stair. Remember
-    // ONLY a physically supported StairWay(N+1) during that one existing guide
-    // wait. Reuse the B downhill family/time fields rather than introducing
-    // another independent phase latch. No force or turn is applied here.
-    void ObserveBReceivingStairWhileWaiting(bool grounded, RaycastHit floor)
-    {
-        if (!waitingForTurnGuide || !postBDownhillArmed || !routeEpochActive ||
-            routeExpectedNextStair < 0 || !grounded || !floor.collider ||
-            !TryGetStageFamily(floor.collider, "StairWay", out int stair) ||
-            stair != routeExpectedNextStair || !IsCloseGroundRay(floor, rb.worldCenterOfMass))
-            return;
-        // A sphere contact and an independent downward ray must agree on
-        // the real stage, including MeshColliders named _Render when enabled.
-        if (!TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit ray) ||
-            !IsCloseGroundRay(ray, rb.worldCenterOfMass) ||
-            !TryGetStageFamily(ray.collider, "StairWay", out int rayStair) ||
-            rayStair != stair)
-            return;
-        if (postBDownhillStairFamily != stair && logTurnTransition)
-            Debug.Log($"[B TURN RECEIVING STAIR WITNESS] t={Time.fixedTime:F3} " +
-                $"stage={stair} floor={floor.collider.name}; no turn or force", this);
-        postBDownhillStairFamily = stair;
-        postBDownhillLastSupportTime = Time.fixedTime;
-    }
-    // Fallback ONLY after the genuine receiving StairWay(N+1) was crossed.
-    // The NEXT real flat must have a usable aligned, floor-compatible guide.
-    // Otherwise keep the guard: clearing waitingForTurnGuide without such a
-    // guide would restore Drive on a potentially unrelated Spline.
-    bool IsBVerifiedSuccessorFlatGuide(NearestKnotDetector.GuideFrame guide, bool grounded, RaycastHit floor)
-    {
-        if (!waitingForTurnGuide || !postBDownhillArmed || !routeEpochActive ||
-            routeExpectedNextStair < 0 ||
-            postBDownhillStairFamily != routeExpectedNextStair ||
-            postBDownhillLastSupportTime < 0f ||
-            Time.fixedTime - postBDownhillLastSupportTime > .55f ||
-            !guide.valid || guide.isSlope || !grounded || !floor.collider ||
-            !TryGetStageFamily(floor.collider, "ArcSlab", out int flat) ||
-            flat != routeExpectedNextStair + 1 ||
-            !IsCloseGroundRay(floor, rb.worldCenterOfMass) ||
-            Vector3.Angle(floor.normal, Vector3.up) > 18f ||
-            TurnGuideAxisAlignment(guide) < TurnGuideAlignmentMin ||
-            guide.distanceToGuide > ProbeRadius * 5.7f ||
-            guide.normal.sqrMagnitude <= Eps ||
-            Vector3.Dot(floor.normal.normalized, guide.normal.normalized) < .85f ||
-            Mathf.Abs(Vector3.Dot(guide.point - floor.point,
-                                  floor.normal.normalized)) > ProbeRadius * 1.5f)
-            return false;
-        // Still require nearby forward geometry, but allow an end knot to sit
-        // slightly behind on a physically verified receiving-successor flat.
-        Vector3 heading = NormalizeFlat(turnTargetDirection, direction);
-        Vector3 toGuide = Vector3.ProjectOnPlane(guide.point - rb.position, Vector3.up);
-        return Vector3.Dot(toGuide, heading) >= -ProbeRadius * 3f;
     }
     // This state is a *physical route witness*, never an alternate steering mode. It cannot outlive the first receiving downhill stair.
     void ClearPostBDownhillGuard(string reason)
@@ -2769,9 +2597,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
                 Debug.Log($"[TURN GUIDE NATURAL COAST] t={Time.fixedTime:F3} " + $"matchingSpline={matchingGuide} closeFloor={closeFloor} " +
                     $"guideValid={guide.valid} alignment={axisAlignment:F2} guideDist={guide.distanceToGuide:F2} " +
                     $"floor={(floorHit.collider ? floorHit.collider.name : "-")} expectedStage={postAutoHoldReceivingStage} " +
-                    $"bExpectedStair={(postBDownhillArmed ? routeExpectedNextStair : -1)} " +
-                    $"bStairWitness={(postBDownhillArmed ? postBDownhillStairFamily : -1)} " +
-                    $"guideSlope={guide.isSlope} " +
                     $"velocity={rb.velocity:F3} omega={rb.angularVelocity.magnitude:F2}", this);
             }
             return;
@@ -4414,19 +4239,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             tapEdgeState = TapEdgeState.Armed;
             tapEdgeFlatCollider = releaseSupport.Item2.collider;
             TapEdgeLog("ARMED", $"short flat tap collider={tapEdgeFlatCollider.name}");
-            // The short tap is NOT a turn command. It only permits the visual owner to start its
-            // existing, non-snapping pose-authority rejoin earlier. The turn sign, physics rotation,
-            // camera rotation and left-edge intent are still decided exclusively on finger RELEASE.
-            // RequestTurnHandoff() defers the actual transition to BallVisualSlopeDrive.FixedUpdate.
-            if (ballVisualSlopeDrive)
-            {
-                bool ownedVisualPose = ballVisualSlopeDrive.OwnsBallVisualPose;
-                if (ownedVisualPose)
-                    ballVisualSlopeDrive.RequestTurnHandoff();
-                TapEdgeLog("VISUAL PREWARM", $"collider={tapEdgeFlatCollider.name} " +
-                    $"ownedPose={ownedVisualPose} ready={ballVisualSlopeDrive.IsReadyForTurnTransition}; " +
-                    "no 90-degree rotation before release");
-            }
             return;
         }
         if (!validFlick || !Earliest)
@@ -4469,11 +4281,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
                     $"support={releaseSupport.Item1} angle={supportAngle:F1} physicalFlat={physicalFlat} " +
                     $"stableFlat={supportedTapFlat} guideFlat={BallVisualIsOnFlat}");
             }
-            // Diagnose whether the tap-time visual prewarm was actually ready by pointer release.
-            // This is read-only; it does not change the release-only turn authorization.
-            if (sameFlatTapTurn && ballVisualSlopeDrive)
-                TapEdgeLog("VISUAL AT RELEASE", $"ready={ballVisualSlopeDrive.IsReadyForTurnTransition} " +
-                    $"ownedPose={ballVisualSlopeDrive.OwnsBallVisualPose}");
             flickConsumed = QueueQuarterTurn(signedTurnPixels, sameFlatTapTurn);
             return;
         }
@@ -4609,11 +4416,6 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     void ResetTapEdge()
     {
         ReleaseTapEdgeHandoffHold();
-        // An unused short tap may have prewarmed visual synchronization. Cancel only that
-        // uncommitted request; never cancel the handoff owned by an accepted turn/B reservation.
-        // BallVisualSlopeDrive finishes an already-running Hermite rejoin safely; it does not rewind.
-        if (tapEdgeState == TapEdgeState.Armed && !HasPendingTurnIntent && !autoHoldTurnPending && !slopeReleaseHoldTurnPending)
-            ballVisualSlopeDrive?.CancelTurnHandoffRequest();
         tapEdgeState = TapEdgeState.None;
         tapEdgeFlatCollider = null;
         tapEdgeFastTurnQueued = false;

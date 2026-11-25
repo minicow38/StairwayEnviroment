@@ -128,7 +128,7 @@ public class GettingTraffic_Corn : MonoBehaviour
         //Firebase.Analytics.FirebaseAnalytics.LogEvent("SetCallForCurrrentCoin"+MainGameManager.Coin);  
         
         AndroidOneOnly.currentScore = MainGameManager.CurrentPointToPlane;
-        Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForCurrrentScore"+MainGameManager.PointToPlane);  
+        Firebase.Analytics.FirebaseAnalytics.LogEvent("CallForCurrentScore"+MainGameManager.PointToPlane);  
         AdManager.instance.InterstitialsAdStart();
 
         if (MainGameManager.CurrentPointToPlane > AndroidOneOnly.bestScore)
