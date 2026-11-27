@@ -765,6 +765,111 @@ public sealed class SlopeStickCore : MonoBehaviour
     const float UncommandedGuideAlignmentMin = 0.65f;
     // No uncommanded seam brake: only input-authorized turn/hold paths may stop the body.
     bool uncommandedGuideGuardLogged;
+    [Header("Legacy Guide Guard / A-B Test")]
+    [Tooltip("OFF: bypass only the legacy uncommanded Guide guard. ON: restore its original behaviour.")]
+    [SerializeField] bool enableLegacyUncommandedGuideJump = false;
+
+    // One successful physical quarter-turn per newly entered StairWay family.
+    // Keep the highest real floor-contact family: old stair re-contact cannot re-arm.
+    int turnQuotaStairFamily = -1;
+    int turnQuotaUsedFamily = -1;
+    bool StairTurnQuotaSpent => turnQuotaStairFamily >= 0 && turnQuotaUsedFamily == turnQuotaStairFamily;
+    // Diagnostic throttle only; no additional turn permission or route state.
+    float spentFlatGuideNextLogAt = -1f;
+    const float SpentFlatGuideAlignment = .85f;
+    const float SpentFlatGuideSearchDistance = 2.5f;
+
+    bool IsSpentFlatGuideAligned(NearestKnotDetector.GuideFrame guide, Vector3 expected)
+    {
+        if (!guide.valid || Vector3.ProjectOnPlane(guide.tangent, Vector3.up).sqrMagnitude <= Eps)
+            return false;
+        return Vector3.Dot(NormalizeFlat(guide.tangent, expected), expected) >= SpentFlatGuideAlignment;
+    }
+
+    // Only a live press started on the receiving ArcSlab of the already-spent stair.
+    // A nearest-line change cannot authorize a second 90-degree turn before release.
+    // The existing direction is authoritative; do not infer it from an impact velocity.
+    bool TryProtectSpentFlatGuide(ref NearestKnotDetector.GuideFrame guide, out RaycastHit floor)
+    {
+        floor = default;
+        // This optional spent-flat guard belongs only to a live press that began
+        // on a real ArcSlab. No input, a stair-start hold, or a released gesture
+        // must not suspend ordinary forward Drive or stall recovery.
+        if (!trackingFlick || flickConsumed || !tapEdgePressOnFlat || !flickPressFlatCollider ||
+            !TryGetStageFamily(flickPressFlatCollider, "ArcSlab", out int pressedFlatFamily))
+            return false;
+        if (!StairTurnQuotaSpent || !rb || rb.isKinematic || !knotDetector || !BeginCommandOnTouch ||
+            MainGameManager.OnDead || turnTransitionActive || turnBodyFrozen || waitingForTurnGuide ||
+            HasPendingTurnIntent || fiveLineCorrectionActive || bReleaseHandoffActive ||
+            slopeReleaseEscapeActive || slopeReleaseHoldHandoffHeld || tapEdgeHandoffHeld)
+            return false;
+        Vector3 expected = NormalizeFlat(direction, travelDirection);
+        if (IsSpentFlatGuideAligned(guide, expected)) return false;
+        if (!TryGetRouteContact(out floor) || !TryGetStageFamily(floor.collider, "ArcSlab", out int flatFamily) ||
+            flatFamily != pressedFlatFamily || flatFamily != turnQuotaStairFamily + 1 ||
+            Vector3.Angle(floor.normal, Vector3.up) > 18f)
+            return false;
+
+        int rejectedSpline = guide.valid ? guide.splineIndex : -1;
+        // Re-query at the CURRENT body position. Never use a stale cached point.
+        bool found = knotDetector.TryFindGuideAlongHeading(rb.position, expected, SpentFlatGuideSearchDistance,
+            out NearestKnotDetector.GuideFrame aligned) && IsSpentFlatGuideAligned(aligned, expected) &&
+            !aligned.isSlope && aligned.distanceToGuide <= SpentFlatGuideSearchDistance &&
+            Mathf.Abs(aligned.point.y - floor.point.y) <= .50f;
+        if (found)
+            guide = aligned;
+        if (logTurnTransition && Time.fixedTime >= spentFlatGuideNextLogAt)
+        {
+            spentFlatGuideNextLogAt = Time.fixedTime + .25f;
+            Debug.Log($"[SPENT FLAT GUIDE {(found ? "RESELECT" : "COAST")}] t={Time.fixedTime:F3} " +
+                $"stair={turnQuotaStairFamily} floor={floor.collider.name} rejected={rejectedSpline} " +
+                $"selected={(found ? aligned.splineIndex : -1)} heading={expected:F3} " +
+                $"forward={Vector3.Dot(rb.velocity, expected):F2}; no automatic turn / velocity snap", this);
+        }
+        // No verified same-direction flat guide: coast on this real floor for this
+        // tick, rather than applying lateral damping along the actual forward axis.
+        // Recheck every tick. Airborne and real stair contact use the normal path.
+        return !found;
+    }
+
+    bool RejectSpentStairTurn(string source)
+    {
+        if (!StairTurnQuotaSpent) return false;
+        if (logTurnTransition)
+            Debug.Log($"[STAIR TURN LIMIT BLOCKED] stair={turnQuotaStairFamily} source={source}; wait for new stair contact", this);
+        return true;
+    }
+    void ObserveStairTurnQuotaContact(Collision collision)
+    {
+        if (!rb || rb.isKinematic || MainGameManager.OnDead || collision == null || !collision.collider ||
+            !collision.collider.name.EndsWith("_Physics", System.StringComparison.Ordinal) ||
+            !TryGetStageFamily(collision.collider, "StairWay", out int family) || family <= turnQuotaStairFamily)
+            return;
+        // Match the existing B receiving-stair solver-contact witness. A wall, a ray,
+        // an ArcSlab, a Spline preview or a different tread of the same stair cannot re-arm.
+        for (int i = 0; i < collision.contactCount; i++)
+        {
+            ContactPoint contact = collision.GetContact(i);
+            if (contact.normal.y < .55f || contact.point.y > rb.worldCenterOfMass.y) continue;
+            turnQuotaStairFamily = family;
+            if (logTurnTransition)
+                Debug.Log($"[STAIR TURN LIMIT ARMED] stair={family}; real floor contact", this);
+            return;
+        }
+    }
+    void ConsumeStairTurnQuota()
+    {
+        if (turnQuotaStairFamily < 0) return; // preserve the pre-first-stair policy
+        turnQuotaUsedFamily = turnQuotaStairFamily;
+        if (logTurnTransition)
+            Debug.Log($"[STAIR TURN LIMIT USED] stair={turnQuotaUsedFamily}; successful 90-degree turn", this);
+    }
+    void ResetStairTurnQuota()
+    {
+        turnQuotaStairFamily = -1;
+        turnQuotaUsedFamily = -1;
+        spentFlatGuideNextLogAt = -1f;
+    }
     // A rejected B release must not allow Evaluate() to traverse successive perpendicular splines (the StairWay9 / ArcSlab9 0->1->2 failure). No turn is created. The
     // press-authorized heading is short-lived and applies only while a close real physical stage is still beneath us.
     const float UncommittedRouteProtectSeconds = 2.80f;
@@ -1221,6 +1326,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             PlayerPrefs.SetInt(CallForBestScore, MainGameManager.PointToPlane);
             AndroidOneOnly.bestScore = MainGameManager.CurrentPointToPlane;
         }
+        AdManager.instance.InterstitialsAdStart();
         MainGameManager.TopTitle.SetActive(true);
         MainGameManager.PreviewIconRoot.SetActive(true);
         MainGameManager.TopLiteral.SetActive(true);
@@ -1511,6 +1617,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     void OnCollisionStay(Collision collision) => RecordStageContactImpulse(collision);
     void RecordStageContactImpulse(Collision collision)
     {
+        ObserveStairTurnQuotaContact(collision);
         LateralAuditRecordCollision(collision);
         ObserveBReceivingPhaseContact(collision);
         if (!rb || collision == null || !collision.collider || !IsGeneratedStageFloor(collision.collider) || collision.contactCount == 0 ||
@@ -2030,7 +2137,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         }
         // Evaluate() is geometric proximity, NOT a 90-degree turn command. Reject a sudden perpendicular nearest-line jump before it can redefine lateralSpeed/crossTrack or pull the
         // ball off the slab.
-        if (GuardUncommandedGuideJump(guide))
+        if (enableLegacyUncommandedGuideJump && GuardUncommandedGuideJump(guide))
         {
             // A nearest-Spline jump cannot create a stage phase. The physical Do not create a separate motor on a rejected Guide. Keep the measured Rigidbody inertia and the established
             // turn guard. The only powered route is evaluated below on a valid Guide. A previous guide must not be reused on a physically DIFFERENT
@@ -2056,6 +2163,23 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
                     ResetGeneralStallWatch();
                 return;
             }
+        }
+        // Before publishing the nearest guide or constructing its lateral basis.
+        // Only a live press begun on this physical flat may enter this coast branch.
+        if (TryProtectSpentFlatGuide(ref guide, out RaycastHit spentFlatFloor))
+        {
+            currentHit = spentFlatFloor;
+            currentSupported = true;
+            currentGuideValid = false;
+            currentSurfaceValid = false;
+            graceTimer = supportGraceSeconds;
+            previousGroundedForDropoutLog = true;
+            ResetGeneralStallWatch();
+            stallPreviousVelocityValid = false;
+            PauseExtremePointTracking();
+            // No wrong-axis Drive, Stick or lateral acceleration. Unity physics
+            // continues; a genuine lost-floor tick follows ordinary DropOut logic.
+            return;
         }
         ObserveAutoHoldGuide(guide);
         // Splineが存在しなければCoreは制御しない。
@@ -2089,6 +2213,21 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         // A long downward SphereCast is not proof that the ball is still touching a straight slab. Require a real local floor witness.
         if (ordinaryStraightFlat && grounded && !IsCloseGroundRay(hit, rb.worldCenterOfMass))
             grounded = false;
+        // A wrong nearest flat is not a turn, nor proof of continued support.
+        // Check only the ordinary mismatched-flat case, not B/edge/turn owners.
+        bool wrongFlatGuide = IsOrdinaryFlatGuideMismatch(guide,
+            grounded ? hit.collider : currentHit.collider, out Vector3 flatHeading);
+        bool wrongFlatFreefall = false;
+        RaycastHit flatForceFloor = default;
+        if (wrongFlatGuide)
+        {
+            if (!grounded || !TryGetRouteContact(out flatForceFloor))
+                wrongFlatFreefall = true;
+            else if (!TryGetStageFamily(flatForceFloor.collider, "ArcSlab", out _))
+                wrongFlatGuide = false; // real stair under the centre: original path
+            else if (Vector3.Angle(flatForceFloor.normal, Vector3.up) > 18f)
+                wrongFlatFreefall = true;
+        }
         RememberAutoHoldRecentPhysicalFlat(guide, grounded, hit);
         RememberEntryFlatSupport(grounded, hit);
         ObserveStairMicroReceivingGroundSupport(grounded, hit);
@@ -2148,15 +2287,20 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         float load = grounded ? 0f : SupportLoad(guide);
         // A straight flat with no pending turn MUST NOT continue exerting Spline Stick/Drive while unsupported: preserve rb.velocity and let Unity gravity carry the ball naturally
         // off its edge.
-        bool grace = !grounded && !ordinaryStraightFlat && graceTimer > 0f && load <= 1f && CanGrace(guide);
-        if (grounded || !ordinaryStraightFlat)
+        bool grace = !grounded && !ordinaryStraightFlat && !wrongFlatFreefall && graceTimer > 0f && load <= 1f && CanGrace(guide);
+        // Do not change the actual ground witness used by DropOut. A sphere
+        // may still touch the lip after the centre ray has left the slab.
+        bool flatFreefall = ordinaryStraightFlat && !grounded || wrongFlatFreefall;
+        if (!flatFreefall)
             straightFlatFallLogged = false;
-        if (!grounded && !grace)
+        if ((!grounded && !grace) || wrongFlatFreefall)
         {
-            if (ordinaryStraightFlat && !straightFlatFallLogged)
+            if (wrongFlatFreefall) graceTimer = 0f;
+            if (flatFreefall && !straightFlatFallLogged)
             {
                 straightFlatFallLogged = true;
-                Debug.Log($"[STRAIGHT FLAT FREEFALL] t={Time.fixedTime:F3} " + $"velocity preserved={rb.velocity:F3}; no Stick/Drive/Grace", this);
+                Debug.Log($"[STRAIGHT FLAT FREEFALL] t={Time.fixedTime:F3} " +
+                    $"velocity preserved={rb.velocity:F3}; no Stick/Drive/Grace; wrongGuide={wrongFlatFreefall}", this);
             }
             ResetUncapturedTurnGuideStallWatch();
             // Safety must execute even if the normal spline controller returns.
@@ -2182,15 +2326,25 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         // B was already stepped at the beginning of this FixedUpdate, before GuardUncommandedGuideJump could return. Do not apply it twice.
         if (committedBReleaseOwnsDrive)
             return;
+        // The ordinary mismatched flat has a separate force basis only.
+        // Keep the original guide/surface for gesture, display and recovery checks.
+        Surface ordinaryFlatForce = wrongFlatGuide
+            ? BuildOrdinaryFlatForceSurface(flatHeading, flatForceFloor.normal) : default;
+        bool useOrdinaryFlatForce = wrongFlatGuide && ordinaryFlatForce.Valid;
         // 平面上の前進速度・横速度を調べる
         if (!guide.isSlope && Time.fixedTime >= nextFlatMotionLogTime)
         {
             nextFlatMotionLogTime = Time.fixedTime + 0.1f;
-            float forwardSpeed = Vector3.Dot(rb.velocity, surface.tangent);
-            float lateralSpeed = Vector3.Dot(rb.velocity, surface.side);
+            Surface motionBasis = useOrdinaryFlatForce ? ordinaryFlatForce : surface;
+            float forwardSpeed = motionBasis.tangentSpeed;
+            float lateralSpeed = motionBasis.lateralSpeed;
             float lateralOffset = Vector3.Dot(rb.position - guide.point, surface.side);
             Debug.Log( $"[FLAT MOTION] " + $"forward={forwardSpeed:F2}m/s " + $"lateral={lateralSpeed:F2}m/s " + $"offset={lateralOffset:F2}m " + $"pos={rb.position:F3} " +
                 $"velocity={rb.velocity:F3}" );
+            if (useOrdinaryFlatForce)
+                Debug.Log($"[FLAT HEADING PRESERVED] t={Time.fixedTime:F3} floor={flatForceFloor.collider.name} " +
+                    $"guide={guide.splineIndex} guideAxis={guide.tangent:F3} heading={motionBasis.tangent:F3} " +
+                    $"forward={forwardSpeed:F2} side={lateralSpeed:F2}; force basis only", this);
         }
         // Slopeへの切替そのものもSpline判定。
         if (guide.isSlope &&BallVisualIsOnSlope)
@@ -2300,6 +2454,13 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         }
         Surface forceSurface = surface;
         bool forceRouteValid = TryBuildPhysicalForceSurface( guide, grounded, hit, surface, out forceSurface);
+        // The existing signed-route builder has priority. Only the rejected
+        // ordinary flat needs a substitute basis, and only on verified support.
+        if (!forceRouteValid && useOrdinaryFlatForce)
+        {
+            forceSurface = ordinaryFlatForce;
+            forceRouteValid = true;
+        }
         if (!forceRouteValid && postBDownhillValid && IsCloseGroundRay(hit, rb.worldCenterOfMass))
         {
             forceSurface = surface;
@@ -2339,7 +2500,8 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             float release = guide.isSlope ? 1f - SmoothRange01(guide.sectionProgress01, ReleaseStart, ReleaseEnd) : 1f;
             float desiredDrive = DesiredDrive( forceRouteValid ? forceSurface : surface, guide, grace) * release;
             driveState = Move(driveState, desiredDrive, AccelerationJerk);
-            float curvature = SplineCurvature(guide);
+            // A perpendicular preview is not the curvature of this physical flat.
+            float curvature = useOrdinaryFlatForce ? 0f : SplineCurvature(guide);
             float desiredStick = DesiredStick( forceRouteValid ? forceSurface : surface, guide, driveState, curvature, grace) * release;
             stickState = Move(stickState, desiredStick, StickJerk);
             bool gentleNewStair = waitingForTurnGuide == false && guide.isSlope && grounded && turnGuideCapturedAt >= 0f &&
@@ -2348,7 +2510,10 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
                 stickState = Mathf.Min(stickState, TurnGuideLandingStickLimit);
             // A completed approach hands off to a gentle, separately verified edge-cruise controller. Only the same existing side-force channel is used; gravity, forward Drive and
             // ordinary fall detection stay.
-            float lateralEarly = StepEarlyFlick(guide, surface, grounded);
+            // Only passive side damping uses the ordinary physical axis.
+            // All intentional side channels retain their original Spline basis.
+            Surface dampingBasis = useOrdinaryFlatForce ? ordinaryFlatForce : surface;
+            float lateralEarly = StepEarlyFlick(guide, dampingBasis, grounded);
             float lateralHold = StepAutoHoldInnerSteering(surface, grounded);
             float lateralPost = StepPostAutoHoldLeftEdge(guide, surface, grounded);
             float lateralCruise = StepEdgeCruise(guide, surface, grounded, hit);
@@ -2360,7 +2525,10 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             // DriveはSpline接線、微調整はSideのみ、Stickは法線方向の既存値。 上から押さえつける計算を弱めたりキャンセルする処理は追加しない。
             if (postBDownhillValid && Vector3.Dot(rb.velocity, postBDownhill) < 4f)
                 stickState = Mathf.Min(stickState, PostBDownhillStickLowSpeedCap);
-            acceleration = (forceRouteValid ? forceSurface.tangent : surface.tangent) * driveState + surface.side * lateralAcceleration
+            Vector3 sideForce = useOrdinaryFlatForce
+                ? dampingBasis.side * lateralEarly + surface.side * (lateralAcceleration - lateralEarly)
+                : surface.side * lateralAcceleration;
+            acceleration = (forceRouteValid ? forceSurface.tangent : surface.tangent) * driveState + sideForce
                 - (forceRouteValid ? forceSurface.normal : surface.normal) * stickState;
             if (gentleNewStair && TryAutoHoldGroundRay(rb.worldCenterOfMass, out RaycastHit newFloor) && IsCloseGroundRay(newFloor, rb.worldCenterOfMass))
                 GuideWaitBalanceSpin(true, newFloor.normal);
@@ -2369,7 +2537,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             GuardRouteIntegrityFinalForce( forceRouteValid ? forceSurface : surface, hit, grounded, ref acceleration);
             // Diagnose the EXACT final acceleration after route protection. GuardRouteIntegrityFinalForce may remove Drive, so compute its remaining applied component rather than
             // reporting requested Drive.
-            LateralAuditRecordMainForce(acceleration, surface.side * lateralAcceleration, -(forceRouteValid ? forceSurface.normal : surface.normal) * stickState,
+            LateralAuditRecordMainForce(acceleration, sideForce, -(forceRouteValid ? forceSurface.normal : surface.normal) * stickState,
                 lateralEarly, lateralHold, lateralPost, lateralCruise);
             rb.AddForce(acceleration, ForceMode.Acceleration);
             dropAuditStickAppliedLastTick = stickState;
@@ -3375,6 +3543,49 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         }
         return true;
     }
+    // Scope the repair to an ordinary physical ArcSlab with a wrong nearest
+    // flat axis. A tap alone is not a turn; active gesture/turn owners retain
+    // their own existing logic. No persistent flag or alternate motor.
+    bool IsOrdinaryFlatGuideMismatch(NearestKnotDetector.GuideFrame guide,
+        Collider floor, out Vector3 heading)
+    {
+        heading = Vector3.zero;
+        if (!rb || rb.isKinematic || !BeginCommandOnTouch || MainGameManager.OnDead ||
+            !guide.valid || guide.isSlope || trackingFlick || autoHoldEligible || slopeReleaseHoldArmed ||
+            autoHoldTurnPending || slopeReleaseHoldTurnPending || stairMicroPhaseTurnPending ||
+            HasPendingTurnIntent || turnTransitionActive || turnBodyFrozen || waitingForTurnGuide ||
+            fiveLineCorrectionPending || fiveLineCorrectionActive || generalStallRecovering ||
+            bReleaseHandoffActive || slopeReleaseEscapeActive || slopeReleaseHoldHandoffHeld ||
+            tapEdgeHandoffHeld || postAutoHoldEdgeActive || edgeCruiseActive || postBDownhillArmed ||
+            !TryGetStageFamily(floor, "ArcSlab", out _))
+            return false;
+        heading = NormalizeFlat(direction, travelDirection);
+        if (routeEpochActive && routeAuthorizedHeading.sqrMagnitude > Eps)
+            heading = NormalizeFlat(routeAuthorizedHeading, heading);
+        // BuildSplineSurface already flips a reversed axis to match direction;
+        // use the same signed orientation rather than treating a knot reversal
+        // on a parallel line as a perpendicular mismatch.
+        Vector3 axis = NormalizeFlat(guide.tangent, heading);
+        if (Vector3.Dot(axis, direction) < 0f) axis = -axis;
+        return Vector3.Dot(axis, heading) < UncommandedGuideAlignmentMin;
+    }
+    Surface BuildOrdinaryFlatForceSurface(Vector3 heading, Vector3 floorNormal)
+    {
+        Vector3 normal = floorNormal.normalized;
+        Vector3 tangent = Vector3.ProjectOnPlane(heading, normal).normalized;
+        if (normal.sqrMagnitude <= Eps || tangent.sqrMagnitude <= Eps) return default;
+        Vector3 side = Vector3.Cross(normal, tangent).normalized;
+        Vector3 velocity = rb.velocity;
+        return new Surface
+        {
+            tangent = tangent, side = side, normal = normal,
+            tangentSpeed = Vector3.Dot(velocity, tangent),
+            lateralSpeed = Vector3.Dot(velocity, side),
+            outwardSpeed = Mathf.Max(0f, Vector3.Dot(velocity, normal)),
+            gravityAlong = Vector3.Dot(Physics.gravity, tangent),
+            gravitySupport = Mathf.Max(0f, Vector3.Dot(Physics.gravity, -normal))
+        };
+    }
     // Spline basis
     Surface BuildSplineSurface(NearestKnotDetector.GuideFrame g)
     {
@@ -3626,6 +3837,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         turnCoordinator = default;
         stairMicroFlatTapLeftEdgeStage = -1;
         postExtremeNoLeftEdgeStage = -1;
+        ResetStairTurnQuota();
         ResetRouteIntegritySupervisor("restart");
         ClearVerifiedStairCorrection();
         ClearPostBDownhillGuard("lifecycle reset");
@@ -4253,6 +4465,18 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         bool receivingStair = stairMicroPhaseTurnPending && TryGetStageFamily(autoHoldNextFlatCollider, "StairWay", out nextFamily);
         if ((!receivingFlat && !receivingStair) || nextFamily != bHoldOriginFlatFamily + 1)
             return false;
+        // A released B targeting a new stair may wait for its actual solver contact;
+        // a duplicate release on the flat is discarded, never replayed at the next stair.
+        if (StairTurnQuotaSpent)
+        {
+            if (receivingStair && nextFamily > turnQuotaStairFamily)
+                return false;
+            RejectSpentStairTurn("B observed phase");
+            flatStartReleaseCommitInProgress = false;
+            CancelAutoHold("one turn per stair");
+            ClearBReleaseHandoff();
+            return false;
+        }
         // If the intermediate stair was jumped, no slope sample exists. Build the lateral frame from the saved PRESS direction instead.
         if (!autoHoldLastHalfValid)
         {
@@ -6270,6 +6494,13 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         }
         // Re-evaluate the live guide each tick. A new 90deg section, a drop, or a stale old segment must never be treated as permission to turn.
         var live = stallRecoveryForUncapturedTurn ? ReadSafeReceivingTurnGuide() : knotDetector.Evaluate(rb.position);
+        // The same input-scoped flat guard applies here; without a live press
+        // on this physical flat, this guard must not cancel ordinary recovery.
+        if (!stallRecoveryForUncapturedTurn && TryProtectSpentFlatGuide(ref live, out _))
+        {
+            ResetGeneralStallRecovery("spent stair: no verified forward flat guide", true);
+            return false;
+        }
         if (!live.valid || live.isSlope != stallRecoveryWasSlope || Vector3.Dot(NormalizeFlat(live.tangent, direction),
                 NormalizeFlat(stallRecoveryHeading, direction)) < .80f || live.distanceToGuide > (stallRecoveryForUncapturedTurn ? 3.6f : 2.5f))
         {
@@ -6888,6 +7119,11 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             CancelAutoHold("early B release lost its physical stair");
             return;
         }
+        if (RejectSpentStairTurn("terminal B"))
+        {
+            CancelAutoHold("one turn per stair");
+            return;
+        }
         // This is optional evidence for RIGHT/LEFT, never a condition for accepting MouseUp. A brief gap or stale spline must not cancel B.
         if (!slopeReleaseHoldStartGuide.valid || !slopeReleaseHoldStartGuide.isSlope)
             TryRefreshSlopeTerminalStairGuide();
@@ -6981,6 +7217,8 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         }
         if (supportedNextPhase)
             slopeReleaseHoldNextFlatCollider = autoHoldNextFlatCollider;
+        if (RejectSpentStairTurn("stair B on flat"))
+            return false;
         // The release on a verified receiving flat owns this B command. Prefer the known next-slope sign, but a brief Guide disagreement must not turn an accepted MouseUp into an
         // indefinite hold.
         if (!TryResolveAutoHoldTurnSign(out float sign, out string signSource))
@@ -7394,6 +7632,11 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             CancelAutoHold("turn blocked");
             return;
         }
+        if (RejectSpentStairTurn("flat B queue"))
+        {
+            CancelAutoHold("one turn per stair");
+            return;
+        }
         if (!TryResolveAutoHoldTurnSign(out float resolvedSign, out string signSource))
         {
             resolvedSign = -1f;
@@ -7547,7 +7790,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     }
     // 極限ポイント通過済みの階段か、従来の平面旋回かを先に確定する。 通過瞬間のOnInifniteは使わず、区間内で保持されるフラグを使う。 A single authorization policy for physics and external visual turns. Do not use the old flat-only
     // StickBeforeNextTurn latch.
-    public bool CanAcceptVisualFrameTurn => CanAcceptQuarterTurn(out _);
+    public bool CanAcceptVisualFrameTurn => !StairTurnQuotaSpent && CanAcceptQuarterTurn(out _);
     bool CanAcceptQuarterTurn(out bool passedSlopeTurn)
     {
         passedSlopeTurn = false;
@@ -7568,6 +7811,8 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         if (!Earliest)
             return false;
         if (Mathf.Abs(directionSign) <= Eps)
+            return false;
+        if (RejectSpentStairTurn("normal/tap turn"))
             return false;
         // The physical slab is authoritative for this specific tap+flick. Normal turns retain their existing authorization policy.
         bool canTurn = CanAcceptQuarterTurn(out bool passedSlopeTurn);
@@ -7715,6 +7960,11 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     {
         if (!HasPendingTurnIntent)
             return;
+        if (RejectSpentStairTurn("pending execution"))
+        {
+            ExpirePendingTurnIntent();
+            return;
+        }
         // Recovery終了後に古い入力が突然実行されることを防ぐ。
         if (IsPendingTurnIntentExpired())
         {
@@ -7894,8 +8144,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         // Keep the release request alive until BeginTurnTransition actually succeeds. A failed transition must never silently consume the turn.
         if (!rb || rb.isKinematic)
             return;
-        ApplyQuarterTurn(turnDegrees);
-        if (!turnTransitionActive)
+        if (!ApplyQuarterTurn(turnDegrees))
         {
             if (autoHoldTurnPending && bReleaseHandoffActive && Time.fixedTime >= bReleaseNextLogTime)
             {
@@ -7916,10 +8165,10 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         autoHoldEdgeSampleValid = false;
         autoHoldEdgeCollider = null;
     }
-    void ApplyQuarterTurn(float turnDegrees)
+    bool ApplyQuarterTurn(float turnDegrees)
     {
         if (!rb || turnTransitionActive)
-            return;
+            return false;
         // Collect the previous physical leg BEFORE deleting the old witness. The same logic applies to every turn initiator (B, slope, flick).
         bool hasTurnFloor = TryGetRouteContact(out RaycastHit preTurnFloor);
         bool noLeftEdgeThisTurn = IsPostExtremeNoLeftEdgeActive( hasTurnFloor ? preTurnFloor.collider : currentHit.collider);
@@ -7966,7 +8215,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         {
             ClearPendingTurnSnapshot();
             Debug.LogError( "[CORE TURN TRANSITION FAILED] InSubject Rigidbodyは通常走行時Dynamicである必要があります。", rb);
-            return;
+            return false;
         }
         Quaternion fullDirectionTurn = Quaternion.AngleAxis(turnDegrees, Vector3.up);
         Vector3 directionBefore = NormalizeFlat(direction, travelDirection);
@@ -8032,7 +8281,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
             if (autoHoldSelected)
                 AutoHoldLog("CANCEL", "could not begin physics turn");
             if (tapEdgeSelected) CancelTapEdge("could not begin physics turn");
-            return;
+            return false;
         }
         bool resumedFromRouteHold = routeRecognitionState != RouteRecognitionState.Confirmed;
         ArmRouteIntegrityForTurn(turnTargetDirection, lastStair, nextStair);
@@ -8143,14 +8392,18 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
         if (!visualTurnStarted)
         {
             AbortTurnTransitionAndRestoreOriginal("VisualTurnStartFailed");
-            return;
+            return false;
         }
+        // Consume only after the physical transition AND visual turn start succeeded.
+        // No quota is consumed by queuing, waiting, expiring, or aborting a failed start.
+        ConsumeStairTurnQuota();
         // Both asynchronous visual turns and synchronous fallback rotations have now started successfully. Only now consume this corner's ban.
         postExtremeNoLeftEdgeStage = -1;
         if (logCore || logTurnPolicy || logTurnTransition)
         {
             ;
         }
+        return true;
     }
     bool BeginTurnTransition(float turnDegrees)
     {
@@ -8332,6 +8585,7 @@ public float AdvancePredictedSplineDriveReadOnly( float currentDrive, float desi
     void ClearSmoothTurnStateForStageRebuild()
     {
         turnCoordinator = default;
+        ResetStairTurnQuota();
         ResetRouteIntegritySupervisor("stage rebuild");
         postExtremeNoLeftEdgeStage = -1;
         ClearVerifiedStairCorrection();

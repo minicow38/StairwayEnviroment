@@ -2,7 +2,7 @@ using DG.Tweening;
 using System;
 using System.Collections;
 using UnityEngine.SceneManagement;
-
+using ByteBrewSDK;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -32,6 +32,8 @@ public class FireBaseAdConversion : MonoBehaviour
 
     [Header("AdStopOnにチェックを入れるとインターステイシャル及びリワード広告再生時にゲームを一時停止します。")]
     [SerializeField] private bool AdStopOn;
+    
+    private bool enableByteBrew => ByteBrew.IsByteBrewInitialized();   
 
     private void Awake()
     {
@@ -51,15 +53,25 @@ public class FireBaseAdConversion : MonoBehaviour
     {
         
         
+        // ByteBrewの初期化開始（他のクラスでは重複して呼ばない）
+        /*ByteBrew.InitializeByteBrew();
+
         float timeout = 5f;
         float timer = 0f;
+        
+        while (!ByteBrew.IsByteBrewInitialized() && timer < timeout)
+        {
+            timer += Time.unscaledDeltaTime;
+            yield return null;
+        }*/
 
-       
+
         InitMax();
         yield break;
     }
     void InitMax()
     {
+
           Firebase.FirebaseApp.CheckAndFixDependenciesAsync().ContinueWith(task =>
         {
             var dependencyStatus = task.Result;
@@ -82,15 +94,49 @@ public class FireBaseAdConversion : MonoBehaviour
 
 
         //SDK初期化
-        MaxSdkCallbacks.OnSdkInitializedEvent += (MaxSdkBase.SdkConfiguration sdkConfiguration) =>
-        {
-            // AppLovin SDK is initialized, start loading ads
-        };
+        // SDK初期化完了イベント
+        MaxSdkCallbacks.OnSdkInitializedEvent +=
+            (MaxSdkBase.SdkConfiguration sdkConfiguration) =>
+            {
+                Debug.Log("[MAX] SDK初期化完了");
+
+                if (!string.IsNullOrEmpty(adInterUnitId))
+                    InitializeInterstitialAds();
+
+                if (!string.IsNullOrEmpty(adRewardUnitId))
+                    InitializeRewardedAds();
+
+                if (!string.IsNullOrEmpty(bannerAdUnitId))
+                {
+                    InitializeBannerAds();
+
+                    if (AutoBannerOn)
+                        Invoke("BannerAd", 3);
+                }
+                else
+                {
+                    AutoBannerOn = false;
+                }
+
+                if (!string.IsNullOrEmpty(mrecAdUnitId))
+                    InitializeMRecAds();
+            };
 
         MaxSdk.SetSdkKey(this.SdkKey);
         MaxSdk.SetUserId("USER_ID");
+
+        if (!string.IsNullOrEmpty(TestDeviceId))
+            MaxSdk.SetTestDeviceAdvertisingIdentifiers(
+                new string[] { this.TestDeviceId });
+
+        MaxSdk.InitializeSdk();
+
+        DOVirtual.DelayedCall(0.5f, () =>
+        {
+            StartCoroutine(ChangeGameScene());
+        });
        
-        if (!string.IsNullOrEmpty(TestDeviceId)) MaxSdk.SetTestDeviceAdvertisingIdentifiers(new string[] { this.TestDeviceId });  //空欄の場合はテストモードオフ
+       if (!string.IsNullOrEmpty(TestDeviceId)) MaxSdk.SetTestDeviceAdvertisingIdentifiers(new string[] { this.TestDeviceId });  //空欄の場合はテストモードオフ
         MaxSdk.InitializeSdk();
         if (!string.IsNullOrEmpty(adInterUnitId)) InitializeInterstitialAds(); //インタースティシャル初期化ロード
         if (!string.IsNullOrEmpty(adRewardUnitId)) InitializeRewardedAds();     //リワード広告初期化ロード
@@ -113,7 +159,6 @@ public class FireBaseAdConversion : MonoBehaviour
 
         DOVirtual.DelayedCall(0.5f, () =>
         {
-            //TenjinSDKSCのステージロードを起動
             StartCoroutine(ChangeGameScene());
         });
     }
@@ -153,6 +198,7 @@ public class FireBaseAdConversion : MonoBehaviour
         MaxSdkCallbacks.Interstitial.OnAdClickedEvent += OnInterstitialClickedEvent;
         MaxSdkCallbacks.Interstitial.OnAdHiddenEvent += OnInterstitialHiddenEvent;
         MaxSdkCallbacks.Interstitial.OnAdDisplayFailedEvent += OnInterstitialAdFailedToDisplayEvent;
+        MaxSdkCallbacks.Interstitial.OnAdRevenuePaidEvent += OnInterstitialAdRevenuePaidEvent;
 
         // Load the first interstitial
         LoadInterstitial();
@@ -160,6 +206,7 @@ public class FireBaseAdConversion : MonoBehaviour
 
     private void LoadInterstitial()
     {
+        Debug.Log("広告ロード要求 ID: " + adInterUnitId);
         MaxSdk.LoadInterstitial(adInterUnitId);
     }
 
@@ -167,12 +214,14 @@ public class FireBaseAdConversion : MonoBehaviour
     {
         // Interstitial ad is ready for you to show. MaxSdk.IsInterstitialReady(adUnitId) now returns 'true'
 
-        // Reset retry attempt
+        Debug.Log("広告準備完了");
         retryAttempt = 0;
     }
 
     private void OnInterstitialLoadFailedEvent(string adUnitId, MaxSdkBase.ErrorInfo errorInfo)
     {
+        Debug.LogError("広告ロード失敗: " + errorInfo);
+
         // Interstitial ad failed to load 
         // AppLovin recommends that you retry with exponentially higher delays, up to a maximum delay (in this case 64 seconds)
 
@@ -287,15 +336,48 @@ public class FireBaseAdConversion : MonoBehaviour
     private void OnRewardedAdReceivedRewardEvent(string adUnitId, MaxSdk.Reward reward, MaxSdkBase.AdInfo adInfo)
     {
         // The rewarded ad displayed and the user should receive the reward.
+       // AdManager.instance.RewardedAdEnd();
 
 
 
 
     }
-
     private void OnRewardedAdRevenuePaidEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
     {
-        // Ad revenue paid. Use this callback to track user revenue.
+        if (!enableByteBrew) return;
+        Debug.Log("Revenue: " + adInfo.Revenue);
+        Debug.Log("Network: " + adInfo.NetworkName);
+
+        ByteBrew.TrackAdEvent(
+            ByteBrewAdTypes.Reward,
+            adInfo.NetworkName,
+            adUnitId,
+            "Rewarded_Complete",   
+            adInfo.Revenue         
+        );
+
+    }
+    private void OnInterstitialAdRevenuePaidEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+        if (!enableByteBrew) return;
+        ByteBrew.TrackAdEvent(
+            ByteBrewAdTypes.Interstitial,
+            adInfo.NetworkName,
+            adUnitId,
+            "Interstitial_Show",
+            adInfo.Revenue
+        );
+    }
+    private void OnBannerAdRevenuePaidEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+        if (!enableByteBrew) return;
+        ByteBrew.TrackAdEvent(
+            ByteBrewAdTypes.Banner,
+            adInfo.NetworkName,
+            adUnitId,
+            "Banner_Impression",
+            adInfo.Revenue
+        );
     }
 
 
@@ -315,12 +397,21 @@ public class FireBaseAdConversion : MonoBehaviour
     //インターステイシャル広告表示メソッド
     public void InterstitialsAd()
     {
-        if (MaxSdk.IsInterstitialReady(adInterUnitId))
+        Debug.Log("InterstitialsAd 到達");
+
+        bool ready = MaxSdk.IsInterstitialReady(adInterUnitId);
+
+        Debug.Log("広告準備状態: " + ready);
+
+        if (ready)
         {
+            
             if (AdStopOn)
             {
                 DOTween.PauseAll();
             }
+            Firebase.Analytics.FirebaseAnalytics.LogEvent("InterstitialsStart");
+
             MaxSdk.ShowInterstitial(adInterUnitId);
         }
     }
@@ -357,3 +448,4 @@ public class FireBaseAdConversion : MonoBehaviour
     }
 
 }
+

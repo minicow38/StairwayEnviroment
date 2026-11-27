@@ -5691,6 +5691,7 @@ MonoBehaviour:
   stallRecoverySideAcceleration: 45
   stallRecoveryForwardAcceleration: 35
   Earliest: 0
+  enableLegacyUncommandedGuideJump: 0
 --- !u!114 &1083418877
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6088,6 +6089,7 @@ GameObject:
   - component: {fileID: 1238057552}
   - component: {fileID: 1238057551}
   - component: {fileID: 1238057550}
+  - component: {fileID: 1238057554}
   m_Layer: 0
   m_Name: Sphere (1)
   m_TagString: Untagged
@@ -6181,6 +6183,23 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1238057554
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1238057549}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fdb805659d27fe24a923e97c080a0811, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  PhysicsMul: {fileID: 0}
+  RendererMul: {fileID: 0}
+  ReSubject: {fileID: 0}
+  OneOnly: 0
+  mainGameManager: {fileID: 0}
 --- !u!1 &1277304413
 GameObject:
   m_ObjectHideFlags: 0
